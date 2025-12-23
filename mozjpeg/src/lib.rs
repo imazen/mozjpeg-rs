@@ -22,6 +22,7 @@ pub mod bitstream;
 pub mod color;
 pub mod consts;
 pub mod dct;
+pub mod encode;
 pub mod entropy;
 pub mod error;
 pub mod huffman;
@@ -88,3 +89,5 @@ pub use progressive::{
 };
 
 pub use marker::MarkerWriter;
+
+pub use encode::Encoder;
