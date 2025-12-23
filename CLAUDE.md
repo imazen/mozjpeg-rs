@@ -10,7 +10,7 @@ Rust port of Mozilla's mozjpeg JPEG encoder, following the jpegli-rs methodology
 
 ## Current Status
 
-**120 tests passing** (116 unit tests + 4 FFI validation tests)
+**134 tests passing** (116 unit + 8 FFI comparison + 6 mozjpeg-sys + 4 ffi_validation)
 
 ### Completed Layers
 - Layer 0: Constants, types, error handling
@@ -20,6 +20,7 @@ Rust port of Mozilla's mozjpeg JPEG encoder, following the jpegli-rs methodology
 - Layer 4: Entropy encoder, trellis quantization
 - Layer 5: Progressive scan generation
 - Layer 6: Marker emission
+- **FFI Validation**: Granular comparison tests against C mozjpeg
 
 ### Remaining Work
 - High-level Encoder struct/builder API
@@ -35,8 +36,11 @@ Rust port of Mozilla's mozjpeg JPEG encoder, following the jpegli-rs methodology
 
 ### Validation Approach
 - Validate equivalence **layer by layer**, not just end-to-end
-- Use `mozjpeg-sys` from crates.io for FFI validation
-- For granular internal function testing, may need to modify C code to export functions
+- Use `mozjpeg-sys` from crates.io for basic FFI validation
+- Use `mozjpeg-sys-local` (in workspace) for granular internal function testing
+  - Builds from local `../mozjpeg` C source with test exports
+  - C code has been instrumented with `mozjpeg_test_*` functions
+  - Tests in `mozjpeg/tests/ffi_comparison.rs` compare Rust vs C implementations
 
 ## Key Learnings
 
@@ -69,33 +73,46 @@ Rust port of Mozilla's mozjpeg JPEG encoder, following the jpegli-rs methodology
 ## Architecture
 
 ```
-mozjpeg/src/
-├── lib.rs          # Module exports, public API
-├── consts.rs       # Layer 0: Constants, tables, markers
-├── types.rs        # Layer 0: ColorSpace, ScanInfo, ComponentInfo, etc.
-├── error.rs        # Error types
-├── quant.rs        # Layer 1: Quantization tables (9 variants)
-├── huffman.rs      # Layer 1: Huffman table construction
-├── dct.rs          # Layer 2: Forward DCT (Loeffler algorithm)
-├── color.rs        # Layer 2: Color conversion (RGB→YCbCr, etc.)
-├── sample.rs       # Layer 2: Chroma subsampling (4:4:4, 4:2:2, 4:2:0)
-├── bitstream.rs    # Layer 3: Bit-level I/O with byte stuffing
-├── entropy.rs      # Layer 4: Huffman entropy encoding
-├── trellis.rs      # Layer 4: Trellis quantization (rate-distortion)
-├── progressive.rs  # Layer 5: Progressive scan generation
-├── marker.rs       # Layer 6: JPEG marker emission
-└── encode.rs       # Layer 6: Encoder pipeline (TODO)
+mozjpeg-rs/
+├── mozjpeg/                    # Main library crate
+│   ├── src/
+│   │   ├── lib.rs              # Module exports, public API
+│   │   ├── consts.rs           # Layer 0: Constants, tables, markers
+│   │   ├── types.rs            # Layer 0: ColorSpace, ScanInfo, etc.
+│   │   ├── error.rs            # Error types
+│   │   ├── quant.rs            # Layer 1: Quantization tables
+│   │   ├── huffman.rs          # Layer 1: Huffman table construction
+│   │   ├── dct.rs              # Layer 2: Forward DCT (Loeffler)
+│   │   ├── color.rs            # Layer 2: RGB→YCbCr conversion
+│   │   ├── sample.rs           # Layer 2: Chroma subsampling
+│   │   ├── bitstream.rs        # Layer 3: Bit-level I/O
+│   │   ├── entropy.rs          # Layer 4: Huffman encoding
+│   │   ├── trellis.rs          # Layer 4: Trellis quantization
+│   │   ├── progressive.rs      # Layer 5: Progressive scans
+│   │   └── marker.rs           # Layer 6: JPEG markers
+│   └── tests/
+│       ├── ffi_validation.rs   # crates.io mozjpeg-sys tests
+│       └── ffi_comparison.rs   # Local FFI granular comparison
+├── mozjpeg-sys/                # Local FFI bindings (builds from ../mozjpeg)
+│   ├── build.rs                # CMake integration
+│   └── src/lib.rs              # FFI declarations + test exports
+└── ../mozjpeg/                 # Instrumented C mozjpeg fork
+    ├── mozjpeg_test_exports.c  # Test export implementations
+    └── mozjpeg_test_exports.h  # Test export declarations
 ```
 
 ## Build & Test
 
 ```bash
-cargo test                    # Run all tests
-cargo test huffman           # Run specific module tests
-cargo test --test ffi_validation  # Run FFI validation only
+cargo test                           # Run all tests
+cargo test huffman                  # Run specific module tests
+cargo test --test ffi_validation    # Run crates.io FFI tests
+cargo test --test ffi_comparison    # Run local FFI comparison tests
+cargo test -p mozjpeg-sys-local     # Run local mozjpeg-sys tests
 ```
 
 ## Dependencies
 
 - `mozjpeg-sys = "2.2"` (dev) - FFI validation against C mozjpeg
+- `mozjpeg-sys-local` (workspace) - Local FFI with granular test exports
 - `bytemuck = "1.14"` - Safe transmutes (for future SIMD)
