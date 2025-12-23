@@ -25,6 +25,7 @@ pub mod dct;
 pub mod entropy;
 pub mod error;
 pub mod huffman;
+pub mod marker;
 pub mod progressive;
 pub mod quant;
 pub mod sample;
@@ -85,3 +86,5 @@ pub use progressive::{
     generate_optimized_progressive_scans, generate_baseline_scan,
     validate_scan_script, is_progressive_script,
 };
+
+pub use marker::MarkerWriter;
