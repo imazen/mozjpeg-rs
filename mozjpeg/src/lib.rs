@@ -26,6 +26,7 @@ pub mod entropy;
 pub mod error;
 pub mod huffman;
 pub mod quant;
+pub mod sample;
 pub mod types;
 
 // Re-export commonly used items
@@ -69,3 +70,8 @@ pub use huffman::{
 pub use bitstream::{BitWriter, VecBitWriter};
 
 pub use entropy::{EntropyEncoder, encode_block_standalone, jpeg_nbits};
+
+pub use sample::{
+    downsample_h2v1_row, downsample_h2v2_rows, downsample_plane,
+    subsampled_dimensions, mcu_aligned_dimensions, expand_to_mcu,
+};
