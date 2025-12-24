@@ -10,7 +10,7 @@ Rust port of Mozilla's mozjpeg JPEG encoder, following the jpegli-rs methodology
 
 ## Current Status
 
-**152 tests passing** (129 unit + 8 codec comparison + 10 FFI comparison + 5 FFI validation)
+**158 tests passing** (129 unit + 8 codec comparison + 10 FFI comparison + 5 FFI validation + 6 mozjpeg-sys-local)
 
 ### Compression Results vs C mozjpeg
 
@@ -78,12 +78,33 @@ let jpeg_data = encoder.encode_rgb(&pixels, width, height)?;
 - **Quality presets** - `max_compression()` and `fastest()`
 
 ### Remaining Work
-- Optional: EOB optimization integration (`trellis_eob_opt` - disabled by default in C mozjpeg)
-- Optional: deringing, arithmetic coding
+- **Overshoot deringing** - Reduce ringing artifacts at sharp edges (mozjpeg feature)
+- **XYB colorspace Huffman optimization** - Perceptual colorspace for better compression
+- EOB optimization integration (`trellis_eob_opt` - disabled by default in C mozjpeg)
+- Arithmetic coding (optional, rarely used)
 - Performance optimization (SIMD)
 
 **Both baseline and progressive modes work correctly!** With trellis + Huffman optimization,
 Rust produces files with quality matching C mozjpeg across all image sizes and subsampling modes.
+
+### Known Issues / Active Investigations
+
+#### Rust vs C Pixel Difference (max diff ~11)
+With identical encoder settings (baseline, no trellis, no Huffman opt), decoded pixels
+differ by up to 11 between Rust and C implementations. Investigation found:
+
+| Component | Match Status | Notes |
+|-----------|--------------|-------|
+| DCT | ✅ Exact | FFI test passes |
+| Quantization | ✅ Exact | FFI test passes |
+| Color conversion | ✅ ±1 | Rounding variance |
+| Downsampling | ✅ Exact | FFI test passes |
+| Quant tables | ✅ Identical | Verified in JPEG output |
+| **Full encoder** | ❌ Max 11 | Pipeline interaction |
+
+Entropy data starts identically then diverges after first few bytes. Root cause TBD -
+likely in block formation, DC prediction ordering, or edge padding interaction with
+the full pipeline. Not a parameter mismatch (verified with unified `TestEncoderConfig`).
 
 ## Workflow Rules
 
@@ -170,10 +191,16 @@ mozjpeg-rs/
 │   │   ├── trellis.rs          # Layer 4: Trellis quantization
 │   │   ├── progressive.rs      # Layer 5: Progressive scans
 │   │   ├── marker.rs           # Layer 6: JPEG markers
-│   │   └── encode.rs           # Layer 6: Encoder pipeline
-│   └── tests/
-│       ├── ffi_validation.rs   # crates.io mozjpeg-sys tests
-│       └── ffi_comparison.rs   # Local FFI granular comparison
+│   │   ├── encode.rs           # Layer 6: Encoder pipeline
+│   │   └── test_encoder.rs     # Unified test API for Rust vs C comparison
+│   ├── tests/
+│   │   ├── ffi_validation.rs   # crates.io mozjpeg-sys tests
+│   │   └── ffi_comparison.rs   # Local FFI granular comparison
+│   └── examples/
+│       ├── encode_permutations.rs  # Generate all flag/quality combinations
+│       ├── test_edge_cropping.rs   # Test non-8-aligned dimensions
+│       ├── debug_rust_vs_c.rs      # Debug encoder differences
+│       └── debug_edge_padding.rs   # Debug padding order
 ├── mozjpeg-sys/                # Local FFI bindings (builds from ../mozjpeg)
 │   ├── build.rs                # CMake integration
 │   └── src/lib.rs              # FFI declarations + test exports
@@ -181,6 +208,33 @@ mozjpeg-rs/
     ├── mozjpeg_test_exports.c  # Test export implementations
     └── mozjpeg_test_exports.h  # Test export declarations
 ```
+
+### Unified Test API (`test_encoder.rs`)
+
+For comparing Rust vs C implementations with guaranteed parameter parity:
+
+```rust
+use mozjpeg::test_encoder::{TestEncoderConfig, encode_rust};
+
+// Configuration shared between both implementations
+let config = TestEncoderConfig {
+    quality: 85,
+    subsampling: Subsampling::S420,
+    progressive: false,
+    optimize_huffman: false,
+    trellis_quant: false,
+    trellis_dc: false,
+    overshoot_deringing: false,
+};
+
+// Encode with Rust
+let rust_jpeg = encode_rust(&rgb, width, height, &config);
+
+// Encode with C (in examples, implement encode_c using mozjpeg_sys)
+let c_jpeg = encode_c(&rgb, width, height, &config);
+```
+
+This ensures apples-to-apples comparison by using identical settings.
 
 ## Build & Test
 

@@ -8,10 +8,13 @@
 //!
 //! Usage: cargo run --example test_edge_cropping
 
-use mozjpeg::{Encoder, Subsampling, TrellisConfig};
+use mozjpeg::test_encoder::{encode_rust, TestEncoderConfig};
+use mozjpeg::Subsampling;
+use mozjpeg_sys::*;
 use png::ColorType;
 use std::fs;
 use std::path::Path;
+use std::ptr;
 
 fn main() {
     let input_path = Path::new("mozjpeg/tests/images/1.png");
@@ -71,25 +74,22 @@ fn main() {
 
             let cropped = crop_rgb(&full_rgb, full_width, 0, 0, width, height);
 
-            // Encode with Rust
-            let rust_jpeg = match Encoder::new()
-                .quality(85)
-                .subsampling(Subsampling::S420)
-                .progressive(false)
-                .trellis(TrellisConfig::disabled())
-                .optimize_huffman(true)
-                .encode_rgb(&cropped, width as u32, height as u32)
-            {
-                Ok(data) => data,
-                Err(e) => {
-                    failures.push((width, height, format!("Rust encode failed: {}", e)));
-                    total_tests += 1;
-                    continue;
-                }
+            // Use identical config for both encoders
+            let config = TestEncoderConfig {
+                quality: 85,
+                subsampling: Subsampling::S420,
+                progressive: false,
+                optimize_huffman: false, // Use standard tables for strict comparison
+                trellis_quant: false,
+                trellis_dc: false,
+                overshoot_deringing: false,
             };
 
-            // Encode with C mozjpeg
-            let c_jpeg = c_encode(&cropped, width as u32, height as u32, 85);
+            // Encode with Rust (using unified API)
+            let rust_jpeg = encode_rust(&cropped, width as u32, height as u32, &config);
+
+            // Encode with C mozjpeg (using unified API)
+            let c_jpeg = encode_c(&cropped, width as u32, height as u32, &config);
 
             // Decode both
             let rust_decoded = match decode_jpeg(&rust_jpeg) {
@@ -124,10 +124,9 @@ fn main() {
                         && bottom_err <= edge_threshold
                         && corner_err <= edge_threshold;
 
-            // Rust vs C will differ due to implementation differences in DCT/quantization.
-            // Max diff of ~32 is normal between JPEG implementations.
-            // We care more about systematic edge degradation than exact pixel matching.
-            let rust_c_match = rust_vs_c_max <= 40 && rust_vs_c_avg <= 10.0;
+            // With identical settings (baseline, no trellis, Huffman opt), decoded pixels
+            // should be identical or differ by at most 1 due to rounding.
+            let rust_c_match = rust_vs_c_max <= 1 && rust_vs_c_avg <= 0.5;
 
             let status = if !edges_ok {
                 edge_worse_count += 1;
@@ -271,11 +270,8 @@ fn decode_jpeg(data: &[u8]) -> Option<(Vec<u8>, usize, usize)> {
     Some((pixels, info.width as usize, info.height as usize))
 }
 
-/// Encode using C mozjpeg via FFI.
-fn c_encode(data: &[u8], width: u32, height: u32, quality: u8) -> Vec<u8> {
-    use mozjpeg_sys::*;
-    use std::ptr;
-
+/// Encode using C mozjpeg via FFI with unified config.
+fn encode_c(data: &[u8], width: u32, height: u32, config: &TestEncoderConfig) -> Vec<u8> {
     unsafe {
         let mut cinfo: jpeg_compress_struct = std::mem::zeroed();
         let mut jerr: jpeg_error_mgr = std::mem::zeroed();
@@ -297,17 +293,52 @@ fn c_encode(data: &[u8], width: u32, height: u32, quality: u8) -> Vec<u8> {
         cinfo.in_color_space = J_COLOR_SPACE::JCS_RGB;
 
         jpeg_set_defaults(&mut cinfo);
-        jpeg_set_quality(&mut cinfo, quality as i32, 1);
 
-        // 4:2:0 subsampling
-        (*cinfo.comp_info.offset(0)).h_samp_factor = 2;
-        (*cinfo.comp_info.offset(0)).v_samp_factor = 2;
+        // Set progressive mode
+        if config.progressive {
+            jpeg_simple_progression(&mut cinfo);
+        } else {
+            // FORCE BASELINE MODE - disable progressive scan script
+            cinfo.num_scans = 0;
+            cinfo.scan_info = ptr::null();
+        }
+
+        jpeg_set_quality(&mut cinfo, config.quality as i32, 1);
+
+        // Set subsampling
+        let (h_samp, v_samp) = match config.subsampling {
+            Subsampling::S444 => (1, 1),
+            Subsampling::S422 => (2, 1),
+            Subsampling::S420 => (2, 2),
+            Subsampling::S440 => (1, 2),
+            Subsampling::Gray => (1, 1),
+        };
+        (*cinfo.comp_info.offset(0)).h_samp_factor = h_samp;
+        (*cinfo.comp_info.offset(0)).v_samp_factor = v_samp;
         (*cinfo.comp_info.offset(1)).h_samp_factor = 1;
         (*cinfo.comp_info.offset(1)).v_samp_factor = 1;
         (*cinfo.comp_info.offset(2)).h_samp_factor = 1;
         (*cinfo.comp_info.offset(2)).v_samp_factor = 1;
 
-        cinfo.optimize_coding = 1;
+        // Set optimization flags
+        cinfo.optimize_coding = if config.optimize_huffman { 1 } else { 0 };
+
+        // Set trellis options
+        jpeg_c_set_bool_param(
+            &mut cinfo,
+            JBOOLEAN_TRELLIS_QUANT,
+            if config.trellis_quant { 1 } else { 0 },
+        );
+        jpeg_c_set_bool_param(
+            &mut cinfo,
+            JBOOLEAN_TRELLIS_QUANT_DC,
+            if config.trellis_dc { 1 } else { 0 },
+        );
+        jpeg_c_set_bool_param(
+            &mut cinfo,
+            JBOOLEAN_OVERSHOOT_DERINGING,
+            if config.overshoot_deringing { 1 } else { 0 },
+        );
 
         jpeg_start_compress(&mut cinfo, 1);
 

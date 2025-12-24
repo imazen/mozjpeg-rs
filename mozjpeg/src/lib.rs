@@ -34,6 +34,11 @@ pub mod sample;
 pub mod trellis;
 pub mod types;
 
+/// Test encoder module for comparing Rust vs C implementations.
+/// Hidden from public API but available for tests.
+#[doc(hidden)]
+pub mod test_encoder;
+
 // Re-export commonly used items
 pub use consts::{
     DCTSIZE, DCTSIZE2,
