@@ -1,0 +1,2 @@
+# Generated JPEG files - regenerate with: cargo run --example encode_permutations
+*.jpg
