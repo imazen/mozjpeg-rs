@@ -299,6 +299,100 @@ fn test_codec_eval_session() {
     println!("test_codec_eval_session is ignored - codec-eval API compatibility issues");
 }
 
+/// Load a PNG image from the test images directory.
+fn load_test_image(name: &str) -> Option<(Vec<u8>, u32, u32)> {
+    let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests")
+        .join("images")
+        .join(name);
+
+    if !path.exists() {
+        return None;
+    }
+
+    let file = std::fs::File::open(&path).ok()?;
+    let decoder = png::Decoder::new(file);
+    let mut reader = decoder.read_info().ok()?;
+    let mut buf = vec![0; reader.output_buffer_size()];
+    let info = reader.next_frame(&mut buf).ok()?;
+    buf.truncate(info.buffer_size());
+
+    // Convert to RGB if needed
+    let rgb_data = match info.color_type {
+        png::ColorType::Rgb => buf,
+        png::ColorType::Rgba => {
+            // Remove alpha channel
+            buf.chunks(4)
+                .flat_map(|chunk| [chunk[0], chunk[1], chunk[2]])
+                .collect()
+        }
+        _ => return None,
+    };
+
+    Some((rgb_data, info.width, info.height))
+}
+
+/// Test with a real photograph (1.png).
+///
+/// This provides a realistic comparison against C mozjpeg using actual
+/// photographic content rather than synthetic test patterns.
+#[test]
+fn test_real_photo_baseline() {
+    println!("\n=== Real Photo Baseline Comparison (1.png) ===\n");
+
+    let (image, width, height) = match load_test_image("1.png") {
+        Some(data) => data,
+        None => {
+            println!("Test image not found, skipping");
+            return;
+        }
+    };
+
+    println!("Image: {}x{} ({} bytes RGB)", width, height, image.len());
+    println!(
+        "{:>7} {:>12} {:>12} {:>8} {:>10} {:>10}",
+        "Quality", "Rust Size", "C Size", "Ratio", "Rust PSNR", "C PSNR"
+    );
+
+    let qualities = [50, 75, 85, 90, 95];
+
+    for quality in qualities {
+        let rust_encoded = rust_encode_baseline(&image, width, height, quality);
+        let c_encoded = c_encode(&image, width, height, quality, false);
+
+        let rust_psnr = decode_and_psnr(&rust_encoded, &image);
+        let c_psnr = decode_and_psnr(&c_encoded, &image);
+
+        let ratio = rust_encoded.len() as f64 / c_encoded.len() as f64;
+
+        println!(
+            "{:>7} {:>12} {:>12} {:>8.2}% {:>10.2} {:>10.2}",
+            quality,
+            rust_encoded.len(),
+            c_encoded.len(),
+            ratio * 100.0,
+            rust_psnr,
+            c_psnr
+        );
+
+        // Verify quality is reasonable (within 2 dB)
+        assert!(
+            (rust_psnr - c_psnr).abs() < 2.0,
+            "PSNR difference too large at Q{}: Rust={:.2}, C={:.2}",
+            quality, rust_psnr, c_psnr
+        );
+
+        // Verify file size is reasonable
+        assert!(
+            ratio < 1.25 && ratio > 0.80,
+            "File size ratio out of range at Q{}: {:.2}%",
+            quality, ratio * 100.0
+        );
+    }
+
+    println!("\nAll quality levels within acceptable range!");
+}
+
 #[test]
 fn test_different_image_types() {
     println!("\n=== Testing Different Image Types ===\n");
