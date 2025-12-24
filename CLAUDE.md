@@ -31,6 +31,23 @@ Rust port of Mozilla's mozjpeg JPEG encoder, following the jpegli-rs methodology
 **Note:** C mozjpeg uses JCP_MAX_COMPRESSION profile by default which enables progressive
 mode. Use `Encoder::max_compression()` for equivalent behavior.
 
+### Performance vs C mozjpeg (512x512 image, release mode)
+
+| Configuration | Rust (ms) | C (ms) | Ratio | Notes |
+|---------------|-----------|--------|-------|-------|
+| Baseline (no opts) | 3.55 | 0.48 | 7.4x slower | C has SIMD DCT |
+| Huffman optimized | 4.24 | 2.10 | 2.0x slower | |
+| Trellis AC | 12.81 | 14.59 | **0.88x faster** | |
+| Trellis AC+DC | 15.18 | 14.49 | ~1.0x same | |
+| Progressive | 4.68 | 11.82 | **0.40x faster** | 2.5x faster! |
+| Max compression | 15.38 | 25.37 | **0.61x faster** | 1.6x faster! |
+
+**Key findings:**
+- Baseline encoding is slower due to lack of SIMD (DCT, color conversion)
+- Trellis quantization is competitive or faster
+- Progressive encoding is significantly faster (2.5x)
+- Max compression mode is 1.6x faster than C
+
 ### Completed Layers
 - Layer 0: Constants, types, error handling
 - Layer 1: Quantization tables, Huffman table construction
