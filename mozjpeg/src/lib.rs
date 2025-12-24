@@ -74,7 +74,7 @@ pub use huffman::{
 
 pub use bitstream::{BitWriter, VecBitWriter};
 
-pub use entropy::{EntropyEncoder, ProgressiveEncoder, SymbolCounter, encode_block_standalone, jpeg_nbits};
+pub use entropy::{EntropyEncoder, ProgressiveEncoder, ProgressiveSymbolCounter, SymbolCounter, encode_block_standalone, jpeg_nbits};
 
 pub use sample::{
     downsample_h2v1_row, downsample_h2v2_rows, downsample_plane,

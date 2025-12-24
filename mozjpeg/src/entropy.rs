@@ -316,15 +316,33 @@ pub struct ProgressiveEncoder<'a, W: Write> {
     last_dc_val: [i16; 4],
     /// End-of-block run count (for EOBRUN encoding)
     eobrun: u16,
+    /// Whether to allow extended EOBRUN (requires optimized Huffman tables)
+    allow_eobrun: bool,
 }
 
 impl<'a, W: Write> ProgressiveEncoder<'a, W> {
     /// Create a new progressive encoder.
+    ///
+    /// By default, allows extended EOBRUN (requires optimized Huffman tables).
     pub fn new(writer: &'a mut BitWriter<W>) -> Self {
         Self {
             writer,
             last_dc_val: [0; 4],
             eobrun: 0,
+            allow_eobrun: true,
+        }
+    }
+
+    /// Create a progressive encoder for use with standard Huffman tables.
+    ///
+    /// Standard tables only include EOB (0x00), not extended EOBRUN symbols
+    /// (0x10, 0x20, etc.). This mode flushes EOB after each block.
+    pub fn new_standard_tables(writer: &'a mut BitWriter<W>) -> Self {
+        Self {
+            writer,
+            last_dc_val: [0; 4],
+            eobrun: 0,
+            allow_eobrun: false,
         }
     }
 
@@ -465,10 +483,16 @@ impl<'a, W: Write> ProgressiveEncoder<'a, W> {
             }
         }
 
-        // If we ended early, accumulate an EOB
-        if run > 0 || kex < ss {
+        // Emit EOB if we didn't encode all coefficients in the band.
+        // This happens when:
+        // - kex < se: last non-zero is before the end of the band
+        // - kex < ss: all coefficients in the band are zero
+        // Both cases are covered by kex < se (since ss <= se).
+        if kex < se {
             self.eobrun += 1;
-            if self.eobrun == 0x7FFF {
+            // Standard tables only have EOB (0x00), not extended EOBRUN symbols.
+            // Flush after each block if EOBRUN is disabled.
+            if !self.allow_eobrun || self.eobrun == 0x7FFF {
                 self.flush_eobrun(ac_table)?;
             }
         }
@@ -559,7 +583,9 @@ impl<'a, W: Write> ProgressiveEncoder<'a, W> {
         // Handle remaining run (EOB)
         if run > 0 {
             self.eobrun += 1;
-            if self.eobrun == 0x7FFF {
+            // Standard tables only have EOB (0x00), not extended EOBRUN symbols.
+            // Flush after each block if EOBRUN is disabled.
+            if !self.allow_eobrun || self.eobrun == 0x7FFF {
                 self.flush_eobrun(ac_table)?;
                 for &bit in &pending_bits {
                     self.writer.put_bits(bit, 1)?;
@@ -617,6 +643,148 @@ impl<'a, W: Write> ProgressiveEncoder<'a, W> {
         }
         self.writer.flush()?;
         Ok(())
+    }
+}
+
+// =============================================================================
+// Progressive Symbol Counter (for Huffman optimization)
+// =============================================================================
+
+/// Count symbol frequencies for progressive JPEG scans.
+///
+/// This handles the different symbol sets needed for progressive encoding:
+/// - DC scans use standard differential DC symbols
+/// - AC scans use EOBRUN symbols (0x00, 0x10, 0x20, etc.) in addition to regular AC symbols
+pub struct ProgressiveSymbolCounter {
+    /// Last DC value for each component
+    last_dc_val: [i16; 4],
+    /// Accumulated EOB run count
+    eobrun: u16,
+}
+
+impl Default for ProgressiveSymbolCounter {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl ProgressiveSymbolCounter {
+    /// Create a new progressive symbol counter.
+    pub fn new() -> Self {
+        Self {
+            last_dc_val: [0; 4],
+            eobrun: 0,
+        }
+    }
+
+    /// Reset state for a new scan.
+    pub fn reset(&mut self) {
+        self.last_dc_val = [0; 4];
+        self.eobrun = 0;
+    }
+
+    /// Count DC symbols for a first scan (Ah=0).
+    pub fn count_dc_first(
+        &mut self,
+        block: &[i16; DCTSIZE2],
+        component: usize,
+        al: u8,
+        dc_counter: &mut FrequencyCounter,
+    ) {
+        let dc = block[0] >> al;
+        let diff = dc.wrapping_sub(self.last_dc_val[component]);
+        self.last_dc_val[component] = dc;
+
+        let nbits = jpeg_nbits(diff);
+        dc_counter.count(nbits);
+    }
+
+    /// Count AC symbols for a first scan (Ah=0).
+    pub fn count_ac_first(
+        &mut self,
+        block: &[i16; DCTSIZE2],
+        ss: u8,
+        se: u8,
+        al: u8,
+        ac_counter: &mut FrequencyCounter,
+    ) {
+        // Find last non-zero coefficient in this band
+        let mut k = se;
+        while k >= ss {
+            if (block[JPEG_NATURAL_ORDER[k as usize]] >> al) != 0 {
+                break;
+            }
+            k -= 1;
+        }
+        let kex = k;
+
+        let mut run = 0u32;
+
+        for k in ss..=se {
+            let coef = block[JPEG_NATURAL_ORDER[k as usize]] >> al;
+
+            if coef == 0 {
+                run += 1;
+                continue;
+            }
+
+            // Flush any pending EOBRUN
+            if self.eobrun > 0 {
+                self.flush_eobrun_count(ac_counter);
+            }
+
+            // Count ZRL codes for runs of 16+ zeros
+            while run >= 16 {
+                ac_counter.count(0xF0); // ZRL
+                run -= 16;
+            }
+
+            // Symbol = (run << 4) | nbits
+            let nbits = jpeg_nbits(coef);
+            let symbol = ((run as u8) << 4) | nbits;
+            ac_counter.count(symbol);
+
+            run = 0;
+
+            if k == kex {
+                break;
+            }
+        }
+
+        // Accumulate EOB if we didn't encode all coefficients in the band
+        if kex < se {
+            self.eobrun += 1;
+            if self.eobrun == 0x7FFF {
+                self.flush_eobrun_count(ac_counter);
+            }
+        }
+    }
+
+    /// Flush and count the EOBRUN symbol.
+    fn flush_eobrun_count(&mut self, ac_counter: &mut FrequencyCounter) {
+        if self.eobrun == 0 {
+            return;
+        }
+
+        // Calculate EOBn symbol (n = log2(EOBRUN))
+        let nbits = if self.eobrun == 1 {
+            0
+        } else {
+            16 - (self.eobrun - 1).leading_zeros() as u8
+        };
+
+        // Symbol for EOBn is nbits << 4 (run=0)
+        let symbol = nbits << 4;
+        ac_counter.count(symbol);
+
+        self.eobrun = 0;
+    }
+
+    /// Finish counting for a scan (flush any pending EOBRUN).
+    pub fn finish_scan(&mut self, ac_counter: Option<&mut FrequencyCounter>) {
+        if let Some(counter) = ac_counter {
+            self.flush_eobrun_count(counter);
+        }
     }
 }
 
