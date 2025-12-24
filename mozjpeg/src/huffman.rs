@@ -252,13 +252,6 @@ pub fn generate_optimal_table(freq: &mut [i64; 257]) -> Result<HuffTable> {
         bits[codesize[i]] += 1;
     }
 
-    // Count symbols with length smaller than i bits (for table construction)
-    let mut p = 0usize;
-    for i in 1..=MAX_CLEN {
-        bit_pos[i] = p;
-        p += bits[i] as usize;
-    }
-
     // Limit code lengths to 16 bits (JPEG requirement)
     // This uses the algorithm from Section K.2 of the JPEG spec
     for i in (17..=MAX_CLEN).rev() {
@@ -292,6 +285,14 @@ pub fn generate_optimal_table(freq: &mut [i64; 257]) -> Result<HuffTable> {
     htbl.bits[0] = 0;
     for i in 1..=16 {
         htbl.bits[i] = bits[i];
+    }
+
+    // Compute bit_pos AFTER depth limiting - cumulative count of symbols at shorter lengths
+    // This gives us the starting position in huffval for each code length
+    let mut p = 0usize;
+    for i in 1..=16 {
+        bit_pos[i] = p;
+        p += bits[i] as usize;
     }
 
     // Create sorted list of symbols by code length.
