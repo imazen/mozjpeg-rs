@@ -254,7 +254,41 @@ pub fn dc_trellis_optimize(
     lambda_log_scale1: f32,
     lambda_log_scale2: f32,
 ) -> i16 {
-    let num_blocks = raw_dct_blocks.len();
+    // Process all blocks as one chain (original behavior)
+    let indices: Vec<usize> = (0..raw_dct_blocks.len()).collect();
+    dc_trellis_optimize_indexed(
+        raw_dct_blocks,
+        quantized_blocks,
+        &indices,
+        dc_quantval,
+        dc_table,
+        last_dc,
+        lambda_log_scale1,
+        lambda_log_scale2,
+    )
+}
+
+/// DC trellis optimization with explicit block indices.
+///
+/// This allows processing blocks in any order (e.g., row order for proper
+/// C mozjpeg parity) while they may be stored in a different order (e.g., MCU order).
+///
+/// # Arguments
+/// * `raw_dct_blocks` - All raw DCT blocks (may be in any storage order)
+/// * `quantized_blocks` - All quantized blocks (same storage order as raw_dct_blocks)
+/// * `indices` - Indices into the block arrays specifying processing order
+/// * Other arguments same as `dc_trellis_optimize`
+pub fn dc_trellis_optimize_indexed(
+    raw_dct_blocks: &[[i32; DCTSIZE2]],
+    quantized_blocks: &mut [[i16; DCTSIZE2]],
+    indices: &[usize],
+    dc_quantval: u16,
+    dc_table: &DerivedTable,
+    last_dc: i16,
+    lambda_log_scale1: f32,
+    lambda_log_scale2: f32,
+) -> i16 {
+    let num_blocks = indices.len();
     if num_blocks == 0 {
         return last_dc;
     }
@@ -274,14 +308,15 @@ pub fn dc_trellis_optimize(
     let mut dc_candidate = vec![vec![0i16; num_blocks]; num_candidates];
 
     for bi in 0..num_blocks {
-        let raw_dc = raw_dct_blocks[bi][0];
+        let block_idx = indices[bi];
+        let raw_dc = raw_dct_blocks[block_idx][0];
         let x = raw_dc.abs();
         let sign = if raw_dc < 0 { -1i16 } else { 1i16 };
 
         // Calculate lambda for this block (simplified - use AC norm from raw block)
         let mut norm: f32 = 0.0;
         for i in 1..DCTSIZE2 {
-            let c = raw_dct_blocks[bi][i] as f32;
+            let c = raw_dct_blocks[block_idx][i] as f32;
             norm += c * c;
         }
         norm /= 63.0;
@@ -367,7 +402,8 @@ pub fn dc_trellis_optimize(
     // Backtrack to assign optimal DC values
     let mut k = best_final;
     for bi in (0..num_blocks).rev() {
-        quantized_blocks[bi][0] = dc_candidate[k][bi];
+        let block_idx = indices[bi];
+        quantized_blocks[block_idx][0] = dc_candidate[k][bi];
         if bi > 0 {
             k = dc_cost_backtrack[k][bi];
         }

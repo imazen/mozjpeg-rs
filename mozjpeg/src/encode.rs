@@ -33,7 +33,7 @@ use crate::huffman::{DerivedTable, HuffTable};
 use crate::marker::MarkerWriter;
 use crate::progressive::{generate_baseline_scan, generate_simple_progressive_scans};
 use crate::quant::{create_quant_tables, quantize_block};
-use crate::trellis::{trellis_quantize_block, dc_trellis_optimize};
+use crate::trellis::{trellis_quantize_block, dc_trellis_optimize_indexed};
 use crate::sample;
 use crate::types::{
     ComponentInfo, Subsampling, TrellisConfig,
@@ -340,26 +340,36 @@ impl Encoder {
             )?;
 
             // Run DC trellis optimization if enabled
+            // C mozjpeg processes DC trellis row by row (each row is an independent chain)
             if dc_trellis_enabled {
+                let h = luma_h as usize;
+                let v = luma_v as usize;
+                let y_block_cols = mcu_cols * h;
+                let y_block_rows = mcu_rows * v;
+
                 if let Some(ref y_raw) = y_raw_dct {
-                    dc_trellis_optimize(
+                    run_dc_trellis_by_row(
                         y_raw, &mut y_blocks,
-                        luma_qtable.values[0], &dc_luma_derived, 0,
+                        luma_qtable.values[0], &dc_luma_derived,
                         self.trellis.lambda_log_scale1, self.trellis.lambda_log_scale2,
+                        y_block_rows, y_block_cols, mcu_cols, h, v,
                     );
                 }
+                // Chroma has 1x1 per MCU, so MCU order = row order
                 if let Some(ref cb_raw) = cb_raw_dct {
-                    dc_trellis_optimize(
+                    run_dc_trellis_by_row(
                         cb_raw, &mut cb_blocks,
-                        chroma_qtable.values[0], &dc_chroma_derived, 0,
+                        chroma_qtable.values[0], &dc_chroma_derived,
                         self.trellis.lambda_log_scale1, self.trellis.lambda_log_scale2,
+                        mcu_rows, mcu_cols, mcu_cols, 1, 1,
                     );
                 }
                 if let Some(ref cr_raw) = cr_raw_dct {
-                    dc_trellis_optimize(
+                    run_dc_trellis_by_row(
                         cr_raw, &mut cr_blocks,
-                        chroma_qtable.values[0], &dc_chroma_derived, 0,
+                        chroma_qtable.values[0], &dc_chroma_derived,
                         self.trellis.lambda_log_scale1, self.trellis.lambda_log_scale2,
+                        mcu_rows, mcu_cols, mcu_cols, 1, 1,
                     );
                 }
             }
@@ -454,26 +464,36 @@ impl Encoder {
             )?;
 
             // Run DC trellis optimization if enabled
+            // C mozjpeg processes DC trellis row by row (each row is an independent chain)
             if dc_trellis_enabled {
+                let h = luma_h as usize;
+                let v = luma_v as usize;
+                let y_block_cols = mcu_cols * h;
+                let y_block_rows = mcu_rows * v;
+
                 if let Some(ref y_raw) = y_raw_dct {
-                    dc_trellis_optimize(
+                    run_dc_trellis_by_row(
                         y_raw, &mut y_blocks,
-                        luma_qtable.values[0], &dc_luma_derived, 0,
+                        luma_qtable.values[0], &dc_luma_derived,
                         self.trellis.lambda_log_scale1, self.trellis.lambda_log_scale2,
+                        y_block_rows, y_block_cols, mcu_cols, h, v,
                     );
                 }
+                // Chroma has 1x1 per MCU, so MCU order = row order
                 if let Some(ref cb_raw) = cb_raw_dct {
-                    dc_trellis_optimize(
+                    run_dc_trellis_by_row(
                         cb_raw, &mut cb_blocks,
-                        chroma_qtable.values[0], &dc_chroma_derived, 0,
+                        chroma_qtable.values[0], &dc_chroma_derived,
                         self.trellis.lambda_log_scale1, self.trellis.lambda_log_scale2,
+                        mcu_rows, mcu_cols, mcu_cols, 1, 1,
                     );
                 }
                 if let Some(ref cr_raw) = cr_raw_dct {
-                    dc_trellis_optimize(
+                    run_dc_trellis_by_row(
                         cr_raw, &mut cr_blocks,
-                        chroma_qtable.values[0], &dc_chroma_derived, 0,
+                        chroma_qtable.values[0], &dc_chroma_derived,
                         self.trellis.lambda_log_scale1, self.trellis.lambda_log_scale2,
+                        mcu_rows, mcu_cols, mcu_cols, 1, 1,
                     );
                 }
             }
@@ -793,25 +813,6 @@ impl Encoder {
     }
 
     /// Process a block: DCT + quantize, storing the result.
-    #[allow(clippy::too_many_arguments)]
-    fn process_block_to_storage(
-        &self,
-        plane: &[u8],
-        plane_width: usize,
-        block_row: usize,
-        block_col: usize,
-        qtable: &[u16; DCTSIZE2],
-        ac_table: &DerivedTable,
-        out_block: &mut [i16; DCTSIZE2],
-        dct_block: &mut [i16; DCTSIZE2],
-    ) -> Result<()> {
-        self.process_block_to_storage_with_raw(
-            plane, plane_width, block_row, block_col,
-            qtable, ac_table, out_block, dct_block, None,
-        )
-    }
-
-    /// Process a block: DCT + quantize, storing the result.
     /// Optionally stores raw DCT coefficients for DC trellis.
     #[allow(clippy::too_many_arguments)]
     fn process_block_to_storage_with_raw(
@@ -1023,6 +1024,74 @@ impl Encoder {
 }
 
 // Helper functions
+
+/// Get MCU-order index for a block at (block_row, block_col) in image coordinates.
+///
+/// For multi-block MCUs (e.g., 4:2:0 luma with 2x2 blocks per MCU), blocks are stored
+/// in MCU order: all blocks for MCU (0,0), then all for MCU (0,1), etc.
+/// Within each MCU, blocks are stored row-by-row: (0,0), (0,1), (1,0), (1,1) for 2x2.
+fn block_to_mcu_index(
+    block_row: usize,
+    block_col: usize,
+    mcu_cols: usize,
+    h_samp: usize,
+    v_samp: usize,
+) -> usize {
+    let mcu_row = block_row / v_samp;
+    let mcu_col = block_col / h_samp;
+    let v = block_row % v_samp;
+    let h = block_col % h_samp;
+    (mcu_row * mcu_cols + mcu_col) * (h_samp * v_samp) + v * h_samp + h
+}
+
+/// Get indices for one row of blocks in row order, mapped to MCU-order storage.
+fn get_row_indices(
+    block_row: usize,
+    block_cols: usize,
+    mcu_cols: usize,
+    h_samp: usize,
+    v_samp: usize,
+) -> Vec<usize> {
+    (0..block_cols)
+        .map(|block_col| block_to_mcu_index(block_row, block_col, mcu_cols, h_samp, v_samp))
+        .collect()
+}
+
+/// Run DC trellis optimization row by row (matching C mozjpeg behavior).
+///
+/// C mozjpeg processes DC trellis one block row at a time, with each row
+/// forming an independent chain. This is different from processing all blocks
+/// as one giant chain.
+fn run_dc_trellis_by_row(
+    raw_blocks: &[[i32; DCTSIZE2]],
+    quantized_blocks: &mut [[i16; DCTSIZE2]],
+    dc_quantval: u16,
+    dc_table: &DerivedTable,
+    lambda_log_scale1: f32,
+    lambda_log_scale2: f32,
+    block_rows: usize,
+    block_cols: usize,
+    mcu_cols: usize,
+    h_samp: usize,
+    v_samp: usize,
+) {
+    // Process each block row independently
+    for block_row in 0..block_rows {
+        let indices = get_row_indices(block_row, block_cols, mcu_cols, h_samp, v_samp);
+
+        // Each row starts with last_dc = 0 (C mozjpeg behavior for trellis pass)
+        dc_trellis_optimize_indexed(
+            raw_blocks,
+            quantized_blocks,
+            &indices,
+            dc_quantval,
+            dc_table,
+            0, // last_dc = 0 for each row
+            lambda_log_scale1,
+            lambda_log_scale2,
+        );
+    }
+}
 
 /// Write an SOS (Start of Scan) marker.
 fn write_sos_marker<W: Write>(
