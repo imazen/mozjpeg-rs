@@ -31,7 +31,8 @@ use crate::huffman::FrequencyCounter;
 use crate::error::{Error, Result};
 use crate::huffman::{DerivedTable, HuffTable};
 use crate::marker::MarkerWriter;
-use crate::progressive::{generate_baseline_scan, generate_simple_progressive_scans, generate_minimal_progressive_scans, generate_dc_only_scan, generate_scan_candidates};
+use crate::progressive::{generate_baseline_scan, generate_minimal_progressive_scans};
+use crate::scan_optimize::{generate_search_scans, ScanSearchConfig, ScanSelector};
 use crate::quant::{create_quant_tables, quantize_block};
 use crate::trellis::{trellis_quantize_block, dc_trellis_optimize_indexed};
 use crate::sample;
@@ -114,12 +115,13 @@ impl Encoder {
     /// Create encoder with fastest settings (libjpeg-turbo compatible).
     ///
     /// Disables all mozjpeg optimizations (trellis, Huffman optimization, deringing).
+    /// Uses ImageMagick quant tables (same as C mozjpeg defaults from jpeg_set_defaults).
     pub fn fastest() -> Self {
         Self {
             quality: 75,
             progressive: false,
             subsampling: Subsampling::S420,
-            quant_table_idx: QuantTableIdx::JpegAnnexK,
+            quant_table_idx: QuantTableIdx::ImageMagick,
             trellis: TrellisConfig::disabled(),
             force_baseline: true,
             optimize_huffman: false,
@@ -413,10 +415,13 @@ impl Encoder {
 
             // Generate progressive scan script
             let scans = if self.optimize_scans {
-                // Try multiple scan configurations and pick the smallest
-                let candidates = generate_scan_candidates(3);
-                self.select_best_scan_config(
-                    &candidates,
+                // Use C mozjpeg-compatible optimize_scans:
+                // 1. Generate 64 individual candidate scans
+                // 2. Trial-encode each to get sizes
+                // 3. Use ScanSelector to find optimal Al levels and frequency splits
+                // 4. Build final scan script from the selection
+                self.optimize_progressive_scans(
+                    3, // num_components
                     &y_blocks, &cb_blocks, &cr_blocks,
                     mcu_rows, mcu_cols,
                     luma_h, luma_v,
@@ -996,13 +1001,17 @@ impl Encoder {
         Ok(())
     }
 
-    /// Select the best scan configuration by trial-encoding each candidate.
+    /// Optimize progressive scan configuration (C mozjpeg-compatible).
     ///
-    /// Returns the scan script that produces the smallest encoded size.
+    /// This implements the optimize_scans feature from C mozjpeg:
+    /// 1. Generate 64 individual candidate scans
+    /// 2. Trial-encode each scan to get its size
+    /// 3. Use ScanSelector to find optimal Al levels and frequency splits
+    /// 4. Build the final scan script from the selection
     #[allow(clippy::too_many_arguments)]
-    fn select_best_scan_config(
+    fn optimize_progressive_scans(
         &self,
-        candidates: &[Vec<crate::types::ScanInfo>],
+        num_components: u8,
         y_blocks: &[[i16; DCTSIZE2]],
         cb_blocks: &[[i16; DCTSIZE2]],
         cr_blocks: &[[i16; DCTSIZE2]],
@@ -1014,58 +1023,77 @@ impl Encoder {
         ac_luma: &DerivedTable,
         ac_chroma: &DerivedTable,
     ) -> Result<Vec<crate::types::ScanInfo>> {
-        if candidates.is_empty() {
-            return Ok(generate_minimal_progressive_scans(3));
+        let config = ScanSearchConfig::default();
+        let candidate_scans = generate_search_scans(num_components, &config);
+
+        // Trial-encode each candidate scan to get its size
+        let mut scan_sizes = Vec::with_capacity(candidate_scans.len());
+
+        for scan in &candidate_scans {
+            let size = self.trial_encode_scan(
+                scan,
+                y_blocks, cb_blocks, cr_blocks,
+                mcu_rows, mcu_cols,
+                h_samp, v_samp,
+                dc_luma, dc_chroma,
+                ac_luma, ac_chroma,
+            )?;
+            scan_sizes.push(size);
         }
 
-        let mut best_scans = candidates[0].clone();
-        let mut best_size = usize::MAX;
+        // Use ScanSelector to find the optimal configuration
+        let selector = ScanSelector::new(num_components, config.clone());
+        let result = selector.select_best(&scan_sizes);
 
-        for scans in candidates {
-            // Trial-encode all scans to measure total size
-            let mut total_size = 0usize;
+        // Build the final scan script from the selection
+        Ok(result.build_final_scans(num_components, &config))
+    }
 
-            for scan in scans {
-                // Encode this scan to a buffer
-                let mut buffer = Vec::new();
-                let mut bit_writer = BitWriter::new(&mut buffer);
-                let mut prog_encoder = ProgressiveEncoder::new(&mut bit_writer);
+    /// Trial-encode a single scan and return its size in bytes.
+    #[allow(clippy::too_many_arguments)]
+    fn trial_encode_scan(
+        &self,
+        scan: &crate::types::ScanInfo,
+        y_blocks: &[[i16; DCTSIZE2]],
+        cb_blocks: &[[i16; DCTSIZE2]],
+        cr_blocks: &[[i16; DCTSIZE2]],
+        mcu_rows: usize,
+        mcu_cols: usize,
+        h_samp: u8, v_samp: u8,
+        dc_luma: &DerivedTable,
+        dc_chroma: &DerivedTable,
+        ac_luma: &DerivedTable,
+        ac_chroma: &DerivedTable,
+    ) -> Result<usize> {
+        let mut buffer = Vec::new();
+        let mut bit_writer = BitWriter::new(&mut buffer);
+        let mut prog_encoder = ProgressiveEncoder::new(&mut bit_writer);
 
-                // Encode the scan
-                self.encode_progressive_scan(
-                    scan,
-                    y_blocks, cb_blocks, cr_blocks,
-                    mcu_rows, mcu_cols,
-                    h_samp, v_samp,
-                    dc_luma, dc_chroma,
-                    ac_luma, ac_chroma,
-                    &mut prog_encoder,
-                )?;
+        // Encode the scan
+        self.encode_progressive_scan(
+            scan,
+            y_blocks, cb_blocks, cr_blocks,
+            mcu_rows, mcu_cols,
+            h_samp, v_samp,
+            dc_luma, dc_chroma,
+            ac_luma, ac_chroma,
+            &mut prog_encoder,
+        )?;
 
-                // Finish the scan (flush any pending EOBRUN)
-                let ac_table = if scan.ss > 0 {
-                    if scan.component_index[0] == 0 {
-                        Some(ac_luma)
-                    } else {
-                        Some(ac_chroma)
-                    }
-                } else {
-                    None
-                };
-                prog_encoder.finish_scan(ac_table)?;
-                bit_writer.flush()?;
-
-                total_size += buffer.len();
+        // Finish the scan (flush any pending EOBRUN)
+        let ac_table = if scan.ss > 0 {
+            if scan.component_index[0] == 0 {
+                Some(ac_luma)
+            } else {
+                Some(ac_chroma)
             }
+        } else {
+            None
+        };
+        prog_encoder.finish_scan(ac_table)?;
+        bit_writer.flush()?;
 
-            // Track best configuration
-            if total_size < best_size {
-                best_size = total_size;
-                best_scans = scans.clone();
-            }
-        }
-
-        Ok(best_scans)
+        Ok(buffer.len())
     }
 
     /// Encode a single progressive scan.

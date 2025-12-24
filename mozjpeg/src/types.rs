@@ -212,6 +212,30 @@ impl ScanInfo {
     pub const fn is_refinement(&self) -> bool {
         self.ah != 0
     }
+
+    /// Create a DC scan for a single component.
+    pub const fn dc_scan_single(component: u8) -> Self {
+        Self {
+            comps_in_scan: 1,
+            component_index: [component, 0, 0, 0],
+            ss: 0,
+            se: 0,
+            ah: 0,
+            al: 0,
+        }
+    }
+
+    /// Create a DC scan for two components (e.g., Cb and Cr).
+    pub const fn dc_scan_pair(comp1: u8, comp2: u8) -> Self {
+        Self {
+            comps_in_scan: 2,
+            component_index: [comp1, comp2, 0, 0],
+            ss: 0,
+            se: 0,
+            ah: 0,
+            al: 0,
+        }
+    }
 }
 
 impl Default for ScanInfo {
