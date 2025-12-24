@@ -19,6 +19,7 @@ png = "0.17"
 proptest = "1.4"
 criterion = "0.5"
 jpeg-decoder = "0.3"
+codec-eval = { path = "../codec-comparison" }
 
 # FFI
 libc = "0.2"

@@ -10,7 +10,7 @@ Rust port of Mozilla's mozjpeg JPEG encoder, following the jpegli-rs methodology
 
 ## Current Status
 
-**142 tests passing** (127 unit + 10 FFI comparison + 5 ffi_validation)
+**147 tests passing** (127 unit + 5 codec comparison + 10 FFI comparison + 5 FFI validation)
 
 ### Compression Results vs C mozjpeg
 
@@ -78,13 +78,16 @@ let jpeg_data = encoder.encode_rgb(&pixels, width, height)?;
 - **Quality presets** - `max_compression()` and `fastest()`
 
 ### Remaining Work
+- **Bug: Progressive encoder MCU column issue** - Progressive encoding produces quality degradation
+  when images have multiple MCU columns (width > 16px with 4:2:0). Tall images (1 MCU column)
+  work correctly. See `mozjpeg/tests/codec_comparison.rs:test_progressive_debug_64x64` for details.
 - Optional: EOB optimization integration (`trellis_eob_opt` - disabled by default in C mozjpeg)
 - Optional: deringing, arithmetic coding
 - Performance optimization (SIMD)
 
-**Compression parity achieved!** With matching settings (progressive + trellis), Rust produces
-files that are actually ~2% smaller than C mozjpeg. The previous gap was due to comparing
-Rust baseline mode against C progressive mode.
+**Baseline mode works well!** With baseline + trellis + Huffman optimization, Rust produces
+files with quality matching C mozjpeg. Progressive mode has a known bug affecting multi-column
+MCU images that needs investigation.
 
 ## Workflow Rules
 
