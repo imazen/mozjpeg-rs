@@ -97,9 +97,9 @@ let jpeg_data = encoder.encode_rgb(&pixels, width, height)?;
 - **Chroma subsampling** - 4:4:4, 4:2:2, 4:2:0 modes
 - **Quality presets** - `max_compression()` and `fastest()`
 - **Overshoot deringing** - Reduce ringing artifacts at sharp edges (see below)
+- **Optimize scans** - Try multiple scan configurations for progressive mode, pick smallest
 
 ### Remaining Work
-- **Optimize scans** - Try multiple scan configurations for progressive mode (required by C mozjpeg)
 - **XYB colorspace Huffman optimization** - Perceptual colorspace for better compression
 - EOB optimization integration (`trellis_eob_opt` - disabled by default in C mozjpeg)
 - Arithmetic coding (optional, rarely used)

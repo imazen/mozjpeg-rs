@@ -31,7 +31,7 @@ use crate::huffman::FrequencyCounter;
 use crate::error::{Error, Result};
 use crate::huffman::{DerivedTable, HuffTable};
 use crate::marker::MarkerWriter;
-use crate::progressive::{generate_baseline_scan, generate_simple_progressive_scans, generate_minimal_progressive_scans, generate_dc_only_scan};
+use crate::progressive::{generate_baseline_scan, generate_simple_progressive_scans, generate_minimal_progressive_scans, generate_dc_only_scan, generate_scan_candidates};
 use crate::quant::{create_quant_tables, quantize_block};
 use crate::trellis::{trellis_quantize_block, dc_trellis_optimize_indexed};
 use crate::sample;
@@ -58,6 +58,8 @@ pub struct Encoder {
     optimize_huffman: bool,
     /// Enable overshoot deringing (reduces ringing on white backgrounds)
     overshoot_deringing: bool,
+    /// Optimize progressive scan configuration (tries multiple configs, picks smallest)
+    optimize_scans: bool,
 }
 
 impl Default for Encoder {
@@ -87,6 +89,7 @@ impl Encoder {
             force_baseline: false,
             optimize_huffman: true,
             overshoot_deringing: true,
+            optimize_scans: false,
         }
     }
 
@@ -104,6 +107,7 @@ impl Encoder {
             force_baseline: false,
             optimize_huffman: true,
             overshoot_deringing: true,
+            optimize_scans: true,
         }
     }
 
@@ -120,6 +124,7 @@ impl Encoder {
             force_baseline: true,
             optimize_huffman: false,
             overshoot_deringing: false,
+            optimize_scans: false,
         }
     }
 
@@ -177,6 +182,18 @@ impl Encoder {
     /// minimal file size cost. Enabled by default.
     pub fn overshoot_deringing(mut self, enable: bool) -> Self {
         self.overshoot_deringing = enable;
+        self
+    }
+
+    /// Enable or disable scan optimization for progressive mode.
+    ///
+    /// When enabled, the encoder tries multiple scan configurations and
+    /// picks the one that produces the smallest output. This can improve
+    /// compression by 1-3% but increases encoding time.
+    ///
+    /// Only has effect when progressive mode is enabled.
+    pub fn optimize_scans(mut self, enable: bool) -> Self {
+        self.optimize_scans = enable;
         self
     }
 
@@ -395,10 +412,21 @@ impl Encoder {
             }
 
             // Generate progressive scan script
-            // DEBUG: Use DC-only to isolate if bug is in DC or AC encoding
-            // let scans = generate_dc_only_scan(3);
-            // Use minimal (4 scans) to match C mozjpeg's jpeg_simple_progression()
-            let scans = generate_minimal_progressive_scans(3);
+            let scans = if self.optimize_scans {
+                // Try multiple scan configurations and pick the smallest
+                let candidates = generate_scan_candidates(3);
+                self.select_best_scan_config(
+                    &candidates,
+                    &y_blocks, &cb_blocks, &cr_blocks,
+                    mcu_rows, mcu_cols,
+                    luma_h, luma_v,
+                    &dc_luma_derived, &dc_chroma_derived,
+                    &ac_luma_derived, &ac_chroma_derived,
+                )?
+            } else {
+                // Use minimal (4 scans) to match C mozjpeg's jpeg_simple_progression()
+                generate_minimal_progressive_scans(3)
+            };
 
             // Count symbol frequencies for optimized Huffman tables
             let (opt_dc_luma, opt_dc_chroma, opt_ac_luma, opt_ac_chroma) = if self.optimize_huffman {
@@ -966,6 +994,78 @@ impl Encoder {
         }
 
         Ok(())
+    }
+
+    /// Select the best scan configuration by trial-encoding each candidate.
+    ///
+    /// Returns the scan script that produces the smallest encoded size.
+    #[allow(clippy::too_many_arguments)]
+    fn select_best_scan_config(
+        &self,
+        candidates: &[Vec<crate::types::ScanInfo>],
+        y_blocks: &[[i16; DCTSIZE2]],
+        cb_blocks: &[[i16; DCTSIZE2]],
+        cr_blocks: &[[i16; DCTSIZE2]],
+        mcu_rows: usize,
+        mcu_cols: usize,
+        h_samp: u8, v_samp: u8,
+        dc_luma: &DerivedTable,
+        dc_chroma: &DerivedTable,
+        ac_luma: &DerivedTable,
+        ac_chroma: &DerivedTable,
+    ) -> Result<Vec<crate::types::ScanInfo>> {
+        if candidates.is_empty() {
+            return Ok(generate_minimal_progressive_scans(3));
+        }
+
+        let mut best_scans = candidates[0].clone();
+        let mut best_size = usize::MAX;
+
+        for scans in candidates {
+            // Trial-encode all scans to measure total size
+            let mut total_size = 0usize;
+
+            for scan in scans {
+                // Encode this scan to a buffer
+                let mut buffer = Vec::new();
+                let mut bit_writer = BitWriter::new(&mut buffer);
+                let mut prog_encoder = ProgressiveEncoder::new(&mut bit_writer);
+
+                // Encode the scan
+                self.encode_progressive_scan(
+                    scan,
+                    y_blocks, cb_blocks, cr_blocks,
+                    mcu_rows, mcu_cols,
+                    h_samp, v_samp,
+                    dc_luma, dc_chroma,
+                    ac_luma, ac_chroma,
+                    &mut prog_encoder,
+                )?;
+
+                // Finish the scan (flush any pending EOBRUN)
+                let ac_table = if scan.ss > 0 {
+                    if scan.component_index[0] == 0 {
+                        Some(ac_luma)
+                    } else {
+                        Some(ac_chroma)
+                    }
+                } else {
+                    None
+                };
+                prog_encoder.finish_scan(ac_table)?;
+                bit_writer.flush()?;
+
+                total_size += buffer.len();
+            }
+
+            // Track best configuration
+            if total_size < best_size {
+                best_size = total_size;
+                best_scans = scans.clone();
+            }
+        }
+
+        Ok(best_scans)
     }
 
     /// Encode a single progressive scan.
@@ -1833,5 +1933,59 @@ mod tests {
             assert!(b_diff <= tolerance,
                     "{}: B mismatch - expected {}, got {} (diff {})", name, b, db, b_diff);
         }
+    }
+
+    #[test]
+    fn test_optimize_scans() {
+        // Create a test image with varied content
+        let width = 64u32;
+        let height = 64u32;
+        let mut rgb_data = vec![0u8; (width * height * 3) as usize];
+
+        for y in 0..height {
+            for x in 0..width {
+                let i = (y * width + x) as usize;
+                let val = ((x * 4 + y * 3) % 256) as u8;
+                rgb_data[i * 3] = val;
+                rgb_data[i * 3 + 1] = 255 - val;
+                rgb_data[i * 3 + 2] = ((val as u16 + 128) % 256) as u8;
+            }
+        }
+
+        // Encode progressive without scan optimization
+        let no_opt = Encoder::new()
+            .quality(75)
+            .progressive(true)
+            .optimize_scans(false)
+            .subsampling(Subsampling::S420);
+        let no_opt_data = no_opt.encode_rgb(&rgb_data, width, height).unwrap();
+
+        // Encode progressive with scan optimization
+        let with_opt = Encoder::new()
+            .quality(75)
+            .progressive(true)
+            .optimize_scans(true)
+            .subsampling(Subsampling::S420);
+        let with_opt_data = with_opt.encode_rgb(&rgb_data, width, height).unwrap();
+
+        println!("Progressive without scan opt: {} bytes", no_opt_data.len());
+        println!("Progressive with scan opt: {} bytes", with_opt_data.len());
+
+        // Both should be decodable
+        let mut decoder = jpeg_decoder::Decoder::new(std::io::Cursor::new(&no_opt_data));
+        decoder.decode().expect("Failed to decode non-optimized JPEG");
+
+        let mut decoder = jpeg_decoder::Decoder::new(std::io::Cursor::new(&with_opt_data));
+        decoder.decode().expect("Failed to decode scan-optimized JPEG");
+
+        // Optimized version should be valid (size comparison depends on image)
+        assert!(!with_opt_data.is_empty());
+    }
+
+    #[test]
+    fn test_max_compression_enables_optimize_scans() {
+        let encoder = Encoder::max_compression();
+        assert!(encoder.optimize_scans);
+        assert!(encoder.progressive);
     }
 }

@@ -184,6 +184,102 @@ pub fn generate_optimized_progressive_scans(num_components: u8) -> Vec<ScanInfo>
     scans
 }
 
+/// Generate candidate scan configurations for optimization.
+///
+/// Returns multiple scan scripts with varying:
+/// - Al (successive approximation) levels for initial AC scans
+/// - Frequency split points for AC bands
+///
+/// The encoder can trial-encode each and pick the smallest.
+///
+/// # Arguments
+/// * `num_components` - Number of color components (1 for grayscale, 3 for YCbCr)
+///
+/// # Returns
+/// Vector of candidate scan scripts, each a Vec<ScanInfo>.
+pub fn generate_scan_candidates(num_components: u8) -> Vec<Vec<ScanInfo>> {
+    let mut candidates = Vec::new();
+
+    // Candidate 1: Simple progressive (no successive approximation)
+    // DC + full AC per component
+    candidates.push(generate_minimal_progressive_scans(num_components));
+
+    // Candidate 2: Standard progressive with Al=1 for DC, Al=2 for AC
+    candidates.push(generate_standard_progressive_scans(num_components));
+
+    // Candidate 3: Optimized progressive with finer frequency bands
+    candidates.push(generate_optimized_progressive_scans(num_components));
+
+    // Candidate 4: Alternative with different frequency splits
+    if num_components >= 3 {
+        let mut scans = Vec::new();
+
+        // DC with Al=1
+        let mut dc_scan = ScanInfo::dc_scan(num_components);
+        dc_scan.al = 1;
+        scans.push(dc_scan);
+
+        // Luma: split at 2, 8, 20 (different from optimized)
+        scans.push(ScanInfo::ac_scan(0, 1, 2, 0, 2));
+        scans.push(ScanInfo::ac_scan(0, 3, 8, 0, 2));
+        scans.push(ScanInfo::ac_scan(0, 9, 20, 0, 2));
+        scans.push(ScanInfo::ac_scan(0, 21, 63, 0, 2));
+
+        // Chroma: single AC band per component
+        for comp in 1..num_components {
+            scans.push(ScanInfo::ac_scan(comp, 1, 63, 0, 2));
+        }
+
+        // Luma refinement
+        scans.push(ScanInfo::ac_scan(0, 1, 63, 2, 1));
+        scans.push(ScanInfo::ac_scan(0, 1, 63, 1, 0));
+
+        // Chroma refinement
+        for comp in 1..num_components {
+            scans.push(ScanInfo::ac_scan(comp, 1, 63, 2, 1));
+            scans.push(ScanInfo::ac_scan(comp, 1, 63, 1, 0));
+        }
+
+        // DC refinement
+        let mut dc_refine = ScanInfo::dc_scan(num_components);
+        dc_refine.ah = 1;
+        dc_refine.al = 0;
+        scans.push(dc_refine);
+
+        candidates.push(scans);
+    }
+
+    // Candidate 5: Minimal with Al=1 (less precision initially, more refinement)
+    {
+        let mut scans = Vec::new();
+
+        // DC with Al=1
+        let mut dc_scan = ScanInfo::dc_scan(num_components);
+        dc_scan.al = 1;
+        scans.push(dc_scan);
+
+        // Full AC with Al=1 for each component
+        for comp in 0..num_components {
+            scans.push(ScanInfo::ac_scan(comp, 1, 63, 0, 1));
+        }
+
+        // Refinement scans
+        for comp in 0..num_components {
+            scans.push(ScanInfo::ac_scan(comp, 1, 63, 1, 0));
+        }
+
+        // DC refinement
+        let mut dc_refine = ScanInfo::dc_scan(num_components);
+        dc_refine.ah = 1;
+        dc_refine.al = 0;
+        scans.push(dc_refine);
+
+        candidates.push(scans);
+    }
+
+    candidates
+}
+
 /// Generate a baseline (non-progressive) scan script.
 ///
 /// This generates a single scan containing all components and all coefficients.
