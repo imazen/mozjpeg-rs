@@ -112,16 +112,8 @@ run_test "cargo test --lib" cargo test --lib -p mozjpeg
 info ""
 info "=== Integration Tests ==="
 run_test "ffi_validation" cargo test --test ffi_validation -p mozjpeg
-
-# codec_comparison has a known failure at Q95, run but don't fail on it
-info "Running codec_comparison tests (known issue at Q95)..."
-if cargo test --test codec_comparison -p mozjpeg 2>&1 | tee /dev/stderr | grep -q "test result:.*0 failed"; then
-    pass "codec_comparison"
-    PASSED=$((PASSED + 1))
-else
-    warn "codec_comparison has expected failures (Q95 InvalidHuffmanTable)"
-    SKIPPED=$((SKIPPED + 1))
-fi
+run_test "encoder_validation" cargo test --test encoder_validation -p mozjpeg
+run_test "codec_comparison" cargo test --test codec_comparison -p mozjpeg
 
 # 4. Examples that work without corpus (use bundled images)
 info ""

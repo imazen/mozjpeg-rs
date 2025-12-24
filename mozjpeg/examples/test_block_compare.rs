@@ -73,10 +73,13 @@ fn main() {
         }
     }
 
-    // Save files for external analysis
-    std::fs::write("/tmp/test_baseline.jpg", &baseline).unwrap();
-    std::fs::write("/tmp/test_progressive.jpg", &progressive).unwrap();
-    println!("\nSaved to /tmp/test_baseline.jpg and /tmp/test_progressive.jpg");
+    // Save files for external analysis (cross-platform temp directory)
+    let temp_dir = std::env::temp_dir();
+    let baseline_path = temp_dir.join("test_baseline.jpg");
+    let progressive_path = temp_dir.join("test_progressive.jpg");
+    std::fs::write(&baseline_path, &baseline).unwrap();
+    std::fs::write(&progressive_path, &progressive).unwrap();
+    println!("\nSaved to {:?} and {:?}", baseline_path, progressive_path);
 }
 
 fn decode_jpeg(data: &[u8]) -> Vec<u8> {
