@@ -40,24 +40,60 @@ let encoder = Encoder::new()
 let jpeg_data = encoder.encode_rgb(&pixels, width, height)?;
 ```
 
-## Performance vs C mozjpeg
+## Compression Quality vs C mozjpeg
+
+Benchmarked against C mozjpeg using the [Kodak](http://r0k.us/graphics/kodak/) (24 images) and [CLIC](https://www.compression.cc/) (32 images) test corpora with perceptual quality metrics.
+
+### Methodology
+
+Both encoders use identical settings:
+- Progressive mode with default scan configuration
+- Trellis quantization (AC + DC)
+- Optimized Huffman tables
+- 4:2:0 chroma subsampling
+
+Quality measured using:
+- **SSIMULACRA2** - Perceptual quality metric (higher = better, 90+ is excellent)
+- **DSSIM** - Structural dissimilarity (lower = better)
+- **BPP** - Bits per pixel (file size normalized by resolution)
+
+### Results
+
+| Quality | Rust BPP | C BPP | Size Δ | Rust SSIM2 | C SSIM2 | SSIM2 Δ |
+|---------|----------|-------|--------|------------|---------|---------|
+| 20 | 0.251 | 0.252 | -0.3% | 21.5 | 21.8 | -0.30 |
+| 50 | 0.534 | 0.532 | +0.4% | 57.3 | 57.5 | -0.18 |
+| 75 | 0.881 | 0.870 | +1.3% | 71.8 | 72.0 | -0.13 |
+| 85 | 1.251 | 1.224 | +2.2% | 77.8 | 77.9 | -0.08 |
+| 95 | 2.367 | 2.270 | +4.3% | 86.1 | 86.1 | -0.03 |
+
+**Summary**: mozjpeg-oxide produces files 0-4% larger than C mozjpeg with nearly identical perceptual quality (SSIM2 within 0.3 points). The quality difference is imperceptible - both encoders are on the same Pareto frontier.
+
+### Pareto Front Visualization
+
+![SSIMULACRA2 vs BPP](../benchmark/pareto_ssimulacra2.svg)
+
+### Reproducibility
+
+Run the benchmark yourself using Docker:
+
+```bash
+docker build -t mozjpeg-oxide-bench benchmark/
+docker run --rm -v $(pwd)/results:/results mozjpeg-oxide-bench
+python3 benchmark/plot_pareto.py results/benchmark_results.csv
+```
+
+## Performance
 
 Tested on 512x512 images in release mode:
 
-| Configuration | Rust | C mozjpeg | Notes |
-|---------------|------|-----------|-------|
-| Baseline (no opts) | 7.5x slower | baseline | C has SIMD DCT |
-| Trellis AC | 0.87x (faster) | baseline | |
-| Max compression | 0.60x (faster) | baseline | |
+| Configuration | vs C mozjpeg | Notes |
+|---------------|--------------|-------|
+| Baseline (no opts) | 7.5x slower | C has SIMD DCT |
+| Trellis AC | 0.87x (faster) | |
+| Max compression | 0.60x (faster) | |
 
-File sizes are within 1% of C mozjpeg at equivalent quality settings.
-
-## Compression Quality
-
-Tested against the Kodak image corpus at Q75:
-
-- Average file size: within 1% of C mozjpeg
-- Average PSNR difference: 0.06 dB (imperceptible)
+Baseline encoding is slower due to lack of SIMD, but trellis quantization (the main feature) is competitive or faster
 
 ## License
 

@@ -1,0 +1,66 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 400">
+<style>
+  .title { font: bold 16px sans-serif; }
+  .axis-label { font: 12px sans-serif; }
+  .legend { font: 12px sans-serif; }
+  .grid { stroke: #e0e0e0; stroke-width: 1; }
+  .rust-line { stroke: #e74c3c; stroke-width: 2; fill: none; }
+  .c-line { stroke: #3498db; stroke-width: 2; fill: none; }
+  .rust-point { fill: #e74c3c; }
+  .c-point { fill: #3498db; }
+</style>
+<text x="300.0" y="25" text-anchor="middle" class="title">mozjpeg-oxide vs C mozjpeg: SSIMULACRA2</text>
+<line x1="80" y1="340" x2="480" y2="340" stroke="black"/>
+<line x1="80" y1="40" x2="80" y2="340" stroke="black"/>
+<text x="300.0" y="385" text-anchor="middle" class="axis-label">Bits per Pixel (BPP)</text>
+<text x="20" y="200.0" text-anchor="middle" class="axis-label" transform="rotate(-90 20 200.0)">SSIMULACRA2 Score (higher is better)</text>
+<line x1="80.0" y1="40" x2="80.0" y2="340" class="grid"/>
+<text x="80.0" y="355" text-anchor="middle" class="axis-label">0.04</text>
+<line x1="80" y1="340.0" x2="480" y2="340.0" class="grid"/>
+<text x="70" y="344.0" text-anchor="end" class="axis-label">15.0103</text>
+<line x1="180.0" y1="40" x2="180.0" y2="340" class="grid"/>
+<text x="180.0" y="355" text-anchor="middle" class="axis-label">0.67</text>
+<line x1="80" y1="265.0" x2="480" y2="265.0" class="grid"/>
+<text x="70" y="269.0" text-anchor="end" class="axis-label">34.4020</text>
+<line x1="280.0" y1="40" x2="280.0" y2="340" class="grid"/>
+<text x="280.0" y="355" text-anchor="middle" class="axis-label">1.31</text>
+<line x1="80" y1="190.0" x2="480" y2="190.0" class="grid"/>
+<text x="70" y="194.0" text-anchor="end" class="axis-label">53.7937</text>
+<line x1="380.0" y1="40" x2="380.0" y2="340" class="grid"/>
+<text x="380.0" y="355" text-anchor="middle" class="axis-label">1.94</text>
+<line x1="80" y1="115.0" x2="480" y2="115.0" class="grid"/>
+<text x="70" y="119.0" text-anchor="end" class="axis-label">73.1855</text>
+<line x1="480.0" y1="40" x2="480.0" y2="340" class="grid"/>
+<text x="480.0" y="355" text-anchor="middle" class="axis-label">2.58</text>
+<line x1="80" y1="40.0" x2="480" y2="40.0" class="grid"/>
+<text x="70" y="44.0" text-anchor="end" class="axis-label">92.5772</text>
+<path d="M 113.33333333333334,315.0 L 129.54227399024117,244.56808421531096 L 144.24270201253205,202.87663003284197 L 157.88648071724168,176.33260837071785 L 173.13189310778142,158.12313290545697 L 195.64295059250426,135.62683889433856 L 212.55655109676252,120.17490646128596 L 238.82874409265094,108.8769170972012 L 270.89763530294465,97.18001371651229 L 331.8863077725192,80.87111172725164 L 446.6666666666667,65.12517564659854" class="rust-line"/>
+<circle cx="113.33333333333334" cy="315.0" r="4" class="rust-point"/>
+<circle cx="129.54227399024117" cy="244.56808421531096" r="4" class="rust-point"/>
+<circle cx="144.24270201253205" cy="202.87663003284197" r="4" class="rust-point"/>
+<circle cx="157.88648071724168" cy="176.33260837071785" r="4" class="rust-point"/>
+<circle cx="173.13189310778142" cy="158.12313290545697" r="4" class="rust-point"/>
+<circle cx="195.64295059250426" cy="135.62683889433856" r="4" class="rust-point"/>
+<circle cx="212.55655109676252" cy="120.17490646128596" r="4" class="rust-point"/>
+<circle cx="238.82874409265094" cy="108.8769170972012" r="4" class="rust-point"/>
+<circle cx="270.89763530294465" cy="97.18001371651229" r="4" class="rust-point"/>
+<circle cx="331.8863077725192" cy="80.87111172725164" r="4" class="rust-point"/>
+<circle cx="446.6666666666667" cy="65.12517564659854" r="4" class="rust-point"/>
+<path d="M 113.45608508887096,313.84983160861304 L 129.64872618541872,243.6430779318 L 144.1519528807706,202.01679608202798 L 157.56155588901052,175.64750055707208 L 172.49420692437909,157.4299185387585 L 194.57051098789717,135.02362014020883 L 210.78644922923723,119.67921687624411 L 235.85790513160106,108.47256367300658 L 266.64197006126136,96.88101523160854 L 323.6620076794537,80.68949423264962 L 431.3869641428441,65.00000000000001" class="c-line"/>
+<circle cx="113.45608508887096" cy="313.84983160861304" r="4" class="c-point"/>
+<circle cx="129.64872618541872" cy="243.6430779318" r="4" class="c-point"/>
+<circle cx="144.1519528807706" cy="202.01679608202798" r="4" class="c-point"/>
+<circle cx="157.56155588901052" cy="175.64750055707208" r="4" class="c-point"/>
+<circle cx="172.49420692437909" cy="157.4299185387585" r="4" class="c-point"/>
+<circle cx="194.57051098789717" cy="135.02362014020883" r="4" class="c-point"/>
+<circle cx="210.78644922923723" cy="119.67921687624411" r="4" class="c-point"/>
+<circle cx="235.85790513160106" cy="108.47256367300658" r="4" class="c-point"/>
+<circle cx="266.64197006126136" cy="96.88101523160854" r="4" class="c-point"/>
+<circle cx="323.6620076794537" cy="80.68949423264962" r="4" class="c-point"/>
+<circle cx="431.3869641428441" cy="65.00000000000001" r="4" class="c-point"/>
+<rect x="490" y="50" width="100" height="50" fill="white" stroke="#ccc"/>
+<circle cx="505" cy="65" r="4" class="rust-point"/>
+<text x="515" y="69" class="legend">Rust</text>
+<circle cx="505" cy="85" r="4" class="c-point"/>
+<text x="515" y="89" class="legend">C mozjpeg</text>
+</svg>
