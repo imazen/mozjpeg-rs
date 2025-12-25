@@ -36,6 +36,8 @@ pub enum Error {
     InternalError(&'static str),
     /// I/O error
     IoError(String),
+    /// Memory allocation failed
+    AllocationFailed,
 }
 
 impl fmt::Display for Error {
@@ -83,6 +85,9 @@ impl fmt::Display for Error {
             Error::IoError(msg) => {
                 write!(f, "I/O error: {}", msg)
             }
+            Error::AllocationFailed => {
+                write!(f, "Memory allocation failed")
+            }
         }
     }
 }
@@ -92,5 +97,11 @@ impl std::error::Error for Error {}
 impl From<std::io::Error> for Error {
     fn from(e: std::io::Error) -> Self {
         Error::IoError(e.to_string())
+    }
+}
+
+impl From<std::collections::TryReserveError> for Error {
+    fn from(_: std::collections::TryReserveError) -> Self {
+        Error::AllocationFailed
     }
 }

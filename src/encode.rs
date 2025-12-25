@@ -40,6 +40,25 @@ use crate::types::{
     ComponentInfo, Subsampling, TrellisConfig,
 };
 
+/// Helper to allocate a Vec with fallible allocation.
+/// Returns Error::AllocationFailed if allocation fails.
+#[inline]
+fn try_alloc_vec<T: Clone>(value: T, len: usize) -> Result<Vec<T>> {
+    let mut v = Vec::new();
+    v.try_reserve_exact(len)?;
+    v.resize(len, value);
+    Ok(v)
+}
+
+/// Helper to allocate a Vec of arrays with fallible allocation.
+#[inline]
+fn try_alloc_vec_array<T: Copy + Default, const N: usize>(len: usize) -> Result<Vec<[T; N]>> {
+    let mut v = Vec::new();
+    v.try_reserve_exact(len)?;
+    v.resize(len, [T::default(); N]);
+    Ok(v)
+}
+
 /// JPEG encoder with configurable quality and features.
 #[derive(Debug, Clone)]
 pub struct Encoder {
@@ -209,7 +228,17 @@ impl Encoder {
     /// # Returns
     /// JPEG-encoded data as a Vec<u8>
     pub fn encode_rgb(&self, rgb_data: &[u8], width: u32, height: u32) -> Result<Vec<u8>> {
-        let expected_len = width as usize * height as usize * 3;
+        // Validate dimensions: must be non-zero
+        if width == 0 || height == 0 {
+            return Err(Error::InvalidDimensions { width, height });
+        }
+
+        // Use checked arithmetic to prevent overflow
+        let expected_len = (width as usize)
+            .checked_mul(height as usize)
+            .and_then(|n| n.checked_mul(3))
+            .ok_or(Error::InvalidDimensions { width, height })?;
+
         if rgb_data.len() != expected_len {
             return Err(Error::BufferSizeMismatch {
                 expected: expected_len,
@@ -234,10 +263,14 @@ impl Encoder {
         let height = height as usize;
 
         // Step 1: Convert RGB to YCbCr
-        let num_pixels = width * height;
-        let mut y_plane = vec![0u8; num_pixels];
-        let mut cb_plane = vec![0u8; num_pixels];
-        let mut cr_plane = vec![0u8; num_pixels];
+        // Use checked arithmetic for num_pixels calculation
+        let num_pixels = width
+            .checked_mul(height)
+            .ok_or(Error::InvalidDimensions { width: width as u32, height: height as u32 })?;
+
+        let mut y_plane = try_alloc_vec(0u8, num_pixels)?;
+        let mut cb_plane = try_alloc_vec(0u8, num_pixels)?;
+        let mut cr_plane = try_alloc_vec(0u8, num_pixels)?;
 
         color::convert_rgb_to_ycbcr(
             rgb_data,
@@ -255,8 +288,11 @@ impl Encoder {
             luma_h as usize, luma_v as usize,
         );
 
-        let mut cb_subsampled = vec![0u8; chroma_width * chroma_height];
-        let mut cr_subsampled = vec![0u8; chroma_width * chroma_height];
+        let chroma_size = chroma_width
+            .checked_mul(chroma_height)
+            .ok_or(Error::AllocationFailed)?;
+        let mut cb_subsampled = try_alloc_vec(0u8, chroma_size)?;
+        let mut cr_subsampled = try_alloc_vec(0u8, chroma_size)?;
 
         sample::downsample_plane(
             &cb_plane, width, height,
@@ -276,9 +312,15 @@ impl Encoder {
         );
         let (mcu_chroma_w, mcu_chroma_h) = (mcu_width / luma_h as usize, mcu_height / luma_v as usize);
 
-        let mut y_mcu = vec![0u8; mcu_width * mcu_height];
-        let mut cb_mcu = vec![0u8; mcu_chroma_w * mcu_chroma_h];
-        let mut cr_mcu = vec![0u8; mcu_chroma_w * mcu_chroma_h];
+        let mcu_y_size = mcu_width
+            .checked_mul(mcu_height)
+            .ok_or(Error::AllocationFailed)?;
+        let mcu_chroma_size = mcu_chroma_w
+            .checked_mul(mcu_chroma_h)
+            .ok_or(Error::AllocationFailed)?;
+        let mut y_mcu = try_alloc_vec(0u8, mcu_y_size)?;
+        let mut cb_mcu = try_alloc_vec(0u8, mcu_chroma_size)?;
+        let mut cr_mcu = try_alloc_vec(0u8, mcu_chroma_size)?;
 
         sample::expand_to_mcu(&y_plane, width, height, &mut y_mcu, mcu_width, mcu_height);
         sample::expand_to_mcu(&cb_subsampled, chroma_width, chroma_height, &mut cb_mcu, mcu_chroma_w, mcu_chroma_h);
@@ -314,11 +356,13 @@ impl Encoder {
         // APP0 (JFIF)
         marker_writer.write_jfif_app0(1, 72, 72)?;
 
-        // DQT (quantization tables in zigzag order)
+        // DQT (quantization tables in zigzag order) - combined into single marker
         let luma_qtable_zz = natural_to_zigzag(&luma_qtable.values);
         let chroma_qtable_zz = natural_to_zigzag(&chroma_qtable.values);
-        marker_writer.write_dqt(0, &luma_qtable_zz, false)?;
-        marker_writer.write_dqt(1, &chroma_qtable_zz, false)?;
+        marker_writer.write_dqt_multiple(&[
+            (0, &luma_qtable_zz, false),
+            (1, &chroma_qtable_zz, false),
+        ])?;
 
         // SOF
         marker_writer.write_sof(
@@ -332,38 +376,47 @@ impl Encoder {
         // DHT (Huffman tables) - written here for non-optimized modes,
         // or later after frequency counting for optimized modes
         if !self.optimize_huffman {
-            marker_writer.write_dht(0, false, &dc_luma_huff)?;
-            marker_writer.write_dht(1, false, &dc_chroma_huff)?;
-            marker_writer.write_dht(0, true, &ac_luma_huff)?;
-            marker_writer.write_dht(1, true, &ac_chroma_huff)?;
+            // Combine all tables into single DHT marker for smaller file size
+            marker_writer.write_dht_multiple(&[
+                (0, false, &dc_luma_huff),
+                (1, false, &dc_chroma_huff),
+                (0, true, &ac_luma_huff),
+                (1, true, &ac_chroma_huff),
+            ])?;
         }
 
         if self.progressive {
             // Progressive mode: Store all blocks, then encode multiple scans
             let mcu_rows = mcu_height / (DCTSIZE * luma_v as usize);
             let mcu_cols = mcu_width / (DCTSIZE * luma_h as usize);
-            let num_y_blocks = mcu_rows * mcu_cols * luma_h as usize * luma_v as usize;
-            let num_chroma_blocks = mcu_rows * mcu_cols;
+            let num_y_blocks = mcu_rows
+                .checked_mul(mcu_cols)
+                .and_then(|n| n.checked_mul(luma_h as usize))
+                .and_then(|n| n.checked_mul(luma_v as usize))
+                .ok_or(Error::AllocationFailed)?;
+            let num_chroma_blocks = mcu_rows
+                .checked_mul(mcu_cols)
+                .ok_or(Error::AllocationFailed)?;
 
             // Collect all quantized blocks
-            let mut y_blocks = vec![[0i16; DCTSIZE2]; num_y_blocks];
-            let mut cb_blocks = vec![[0i16; DCTSIZE2]; num_chroma_blocks];
-            let mut cr_blocks = vec![[0i16; DCTSIZE2]; num_chroma_blocks];
+            let mut y_blocks = try_alloc_vec_array::<i16, DCTSIZE2>(num_y_blocks)?;
+            let mut cb_blocks = try_alloc_vec_array::<i16, DCTSIZE2>(num_chroma_blocks)?;
+            let mut cr_blocks = try_alloc_vec_array::<i16, DCTSIZE2>(num_chroma_blocks)?;
 
             // Optionally collect raw DCT for DC trellis
             let dc_trellis_enabled = self.trellis.enabled && self.trellis.dc_enabled;
             let mut y_raw_dct = if dc_trellis_enabled {
-                Some(vec![[0i32; DCTSIZE2]; num_y_blocks])
+                Some(try_alloc_vec_array::<i32, DCTSIZE2>(num_y_blocks)?)
             } else {
                 None
             };
             let mut cb_raw_dct = if dc_trellis_enabled {
-                Some(vec![[0i32; DCTSIZE2]; num_chroma_blocks])
+                Some(try_alloc_vec_array::<i32, DCTSIZE2>(num_chroma_blocks)?)
             } else {
                 None
             };
             let mut cr_raw_dct = if dc_trellis_enabled {
-                Some(vec![[0i32; DCTSIZE2]; num_chroma_blocks])
+                Some(try_alloc_vec_array::<i32, DCTSIZE2>(num_chroma_blocks)?)
             } else {
                 None
             };
@@ -486,11 +539,13 @@ impl Encoder {
                 let opt_ac_luma_huff = ac_luma_freq.generate_table()?;
                 let opt_ac_chroma_huff = ac_chroma_freq.generate_table()?;
 
-                // Write DHT with optimized tables
-                marker_writer.write_dht(0, false, &opt_dc_luma_huff)?;
-                marker_writer.write_dht(1, false, &opt_dc_chroma_huff)?;
-                marker_writer.write_dht(0, true, &opt_ac_luma_huff)?;
-                marker_writer.write_dht(1, true, &opt_ac_chroma_huff)?;
+                // Write DHT with optimized tables - combined into single marker
+                marker_writer.write_dht_multiple(&[
+                    (0, false, &opt_dc_luma_huff),
+                    (1, false, &opt_dc_chroma_huff),
+                    (0, true, &opt_ac_luma_huff),
+                    (1, true, &opt_ac_chroma_huff),
+                ])?;
 
                 // Create derived tables for encoding
                 (
@@ -563,27 +618,33 @@ impl Encoder {
             // Pass 1: Collect blocks and count frequencies
             let mcu_rows = mcu_height / (DCTSIZE * luma_v as usize);
             let mcu_cols = mcu_width / (DCTSIZE * luma_h as usize);
-            let num_y_blocks = mcu_rows * mcu_cols * luma_h as usize * luma_v as usize;
-            let num_chroma_blocks = mcu_rows * mcu_cols;
+            let num_y_blocks = mcu_rows
+                .checked_mul(mcu_cols)
+                .and_then(|n| n.checked_mul(luma_h as usize))
+                .and_then(|n| n.checked_mul(luma_v as usize))
+                .ok_or(Error::AllocationFailed)?;
+            let num_chroma_blocks = mcu_rows
+                .checked_mul(mcu_cols)
+                .ok_or(Error::AllocationFailed)?;
 
-            let mut y_blocks = vec![[0i16; DCTSIZE2]; num_y_blocks];
-            let mut cb_blocks = vec![[0i16; DCTSIZE2]; num_chroma_blocks];
-            let mut cr_blocks = vec![[0i16; DCTSIZE2]; num_chroma_blocks];
+            let mut y_blocks = try_alloc_vec_array::<i16, DCTSIZE2>(num_y_blocks)?;
+            let mut cb_blocks = try_alloc_vec_array::<i16, DCTSIZE2>(num_chroma_blocks)?;
+            let mut cr_blocks = try_alloc_vec_array::<i16, DCTSIZE2>(num_chroma_blocks)?;
 
             // Optionally collect raw DCT for DC trellis
             let dc_trellis_enabled = self.trellis.enabled && self.trellis.dc_enabled;
             let mut y_raw_dct = if dc_trellis_enabled {
-                Some(vec![[0i32; DCTSIZE2]; num_y_blocks])
+                Some(try_alloc_vec_array::<i32, DCTSIZE2>(num_y_blocks)?)
             } else {
                 None
             };
             let mut cb_raw_dct = if dc_trellis_enabled {
-                Some(vec![[0i32; DCTSIZE2]; num_chroma_blocks])
+                Some(try_alloc_vec_array::<i32, DCTSIZE2>(num_chroma_blocks)?)
             } else {
                 None
             };
             let mut cr_raw_dct = if dc_trellis_enabled {
-                Some(vec![[0i32; DCTSIZE2]; num_chroma_blocks])
+                Some(try_alloc_vec_array::<i32, DCTSIZE2>(num_chroma_blocks)?)
             } else {
                 None
             };
@@ -670,11 +731,13 @@ impl Encoder {
             let opt_ac_luma = DerivedTable::from_huff_table(&opt_ac_luma_huff, false)?;
             let opt_ac_chroma = DerivedTable::from_huff_table(&opt_ac_chroma_huff, false)?;
 
-            // Write DHT with optimized tables
-            marker_writer.write_dht(0, false, &opt_dc_luma_huff)?;
-            marker_writer.write_dht(1, false, &opt_dc_chroma_huff)?;
-            marker_writer.write_dht(0, true, &opt_ac_luma_huff)?;
-            marker_writer.write_dht(1, true, &opt_ac_chroma_huff)?;
+            // Write DHT with optimized tables - combined into single marker
+            marker_writer.write_dht_multiple(&[
+                (0, false, &opt_dc_luma_huff),
+                (1, false, &opt_dc_chroma_huff),
+                (0, true, &opt_ac_luma_huff),
+                (1, true, &opt_ac_chroma_huff),
+            ])?;
 
             // Write SOS and encode
             let scans = generate_baseline_scan(3);
@@ -1753,6 +1816,34 @@ mod tests {
         let encoder = Encoder::new();
         let result = encoder.encode_rgb(&rgb_data, 16, 16);
 
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_encode_zero_dimensions() {
+        let encoder = Encoder::new();
+
+        // Zero width
+        let result = encoder.encode_rgb(&[], 0, 16);
+        assert!(matches!(result, Err(Error::InvalidDimensions { width: 0, height: 16 })));
+
+        // Zero height
+        let result = encoder.encode_rgb(&[], 16, 0);
+        assert!(matches!(result, Err(Error::InvalidDimensions { width: 16, height: 0 })));
+
+        // Both zero
+        let result = encoder.encode_rgb(&[], 0, 0);
+        assert!(matches!(result, Err(Error::InvalidDimensions { width: 0, height: 0 })));
+    }
+
+    #[test]
+    fn test_encode_overflow_dimensions() {
+        let encoder = Encoder::new();
+
+        // Very large dimensions that would overflow usize multiplication
+        // On 64-bit, this won't overflow but buffer size check will fail
+        // On 32-bit, the checked_mul should catch it
+        let result = encoder.encode_rgb(&[], u32::MAX, u32::MAX);
         assert!(result.is_err());
     }
 
