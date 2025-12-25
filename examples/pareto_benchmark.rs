@@ -1,7 +1,6 @@
 //! Pareto Front Benchmark: Rust mozjpeg-oxide vs C mozjpeg
 //!
-//! Generates quality vs file size data for Pareto front visualization.
-//! Measures SSIMULACRA2, DSSIM, and Butteraugli perceptual quality metrics.
+//! Uses codec-eval for unified codec comparison with perceptual quality metrics.
 //!
 //! Usage:
 //!   cargo run --release --example pareto_benchmark -- [OPTIONS]
@@ -13,29 +12,23 @@
 //!   --kodak-only     Only use Kodak corpus
 //!   --clic-only      Only use CLIC corpus
 
-use butteraugli::{compute_butteraugli, ButteraugliParams};
+use codec_eval::{EvalConfig, EvalSession, ImageData, MetricConfig, ViewingCondition};
 use mozjpeg_oxide::Encoder;
 use mozjpeg_sys::*;
 use std::fs::{self, File};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::ptr;
-use std::time::Instant;
-
-// Re-export ssimulacra2 types
-use ssimulacra2::{
-    compute_frame_ssimulacra2, ColorPrimaries, Rgb as Ssim2Rgb, TransferCharacteristic,
-};
 
 /// Result of encoding a single image at a specific quality
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 struct EncodingResult {
     corpus: String,
     image: String,
     encoder: String,
     quality: u8,
     file_size: usize,
-    bpp: f64, // bits per pixel
+    bpp: f64,
     ssimulacra2: f64,
     dssim: f64,
     butteraugli: f64,
@@ -144,6 +137,67 @@ fn main() {
     );
     println!();
 
+    // Create codec-eval session with perceptual metrics
+    let config = EvalConfig::builder()
+        .report_dir("./benchmark")
+        .viewing(ViewingCondition::desktop())
+        .metrics(MetricConfig::perceptual()) // DSSIM, SSIMULACRA2, Butteraugli
+        .quality_levels(qualities.iter().map(|&q| q as f64).collect())
+        .build();
+
+    let mut session = EvalSession::new(config);
+
+    // Register Rust mozjpeg-oxide encoder
+    session.add_codec_with_decode(
+        "rust",
+        env!("CARGO_PKG_VERSION"),
+        Box::new(|image, request| {
+            let rgb = image.to_rgb8_vec();
+            let width = image.width() as u32;
+            let height = image.height() as u32;
+            let quality = request.quality as u8;
+            encode_rust(&rgb, width, height, quality)
+                .map_err(|e: mozjpeg_oxide::Error| codec_eval::Error::Codec {
+                    codec: "rust".to_string(),
+                    message: e.to_string(),
+                })
+        }),
+        Box::new(|data| {
+            let decoded = decode_jpeg(data);
+            let decoder = jpeg_decoder::Decoder::new(std::io::Cursor::new(data));
+            let info = decoder.info().unwrap();
+            Ok(ImageData::RgbSlice {
+                data: decoded,
+                width: info.width as usize,
+                height: info.height as usize,
+            })
+        }),
+    );
+
+    // Register C mozjpeg encoder
+    session.add_codec_with_decode(
+        "c",
+        "4.1.1", // mozjpeg-sys version
+        Box::new(|image, request| {
+            let rgb = image.to_rgb8_vec();
+            let width = image.width() as u32;
+            let height = image.height() as u32;
+            let quality = request.quality as u8;
+            Ok(encode_c(&rgb, width, height, quality))
+        }),
+        Box::new(|data| {
+            let decoded = decode_jpeg(data);
+            let decoder = jpeg_decoder::Decoder::new(std::io::Cursor::new(data));
+            let info = decoder.info().unwrap();
+            Ok(ImageData::RgbSlice {
+                data: decoded,
+                width: info.width as usize,
+                height: info.height as usize,
+            })
+        }),
+    );
+
+    // Process each image and collect results
     let mut results: Vec<EncodingResult> = Vec::new();
     let total = images.len() * qualities.len() * 2;
     let mut completed = 0;
@@ -163,72 +217,45 @@ fn main() {
             .unwrap()
             .to_string_lossy()
             .to_string();
-        let pixels = (width * height) as f64;
 
-        for &quality in &qualities {
-            // Encode with Rust
-            let start = Instant::now();
-            let rust_jpeg = encode_rust(&rgb, width, height, quality);
-            let rust_time = start.elapsed().as_secs_f64() * 1000.0;
+        let image_data = ImageData::RgbSlice {
+            data: rgb,
+            width: width as usize,
+            height: height as usize,
+        };
 
-            // Decode Rust JPEG and compute metrics
-            let rust_decoded = decode_jpeg(&rust_jpeg);
-            let (rust_ssim2, rust_dssim, rust_butteraugli) =
-                compute_metrics(&rgb, &rust_decoded, width, height);
+        // Evaluate with codec-eval
+        match session.evaluate_image(&image_name, image_data) {
+            Ok(report) => {
+                for result in &report.results {
+                    let quality = result.quality as u8;
 
-            results.push(EncodingResult {
-                corpus: corpus.clone(),
-                image: image_name.clone(),
-                encoder: "rust".to_string(),
-                quality,
-                file_size: rust_jpeg.len(),
-                bpp: (rust_jpeg.len() * 8) as f64 / pixels,
-                ssimulacra2: rust_ssim2,
-                dssim: rust_dssim,
-                butteraugli: rust_butteraugli,
-                encode_time_ms: rust_time,
-            });
+                    results.push(EncodingResult {
+                        corpus: corpus.clone(),
+                        image: image_name.clone(),
+                        encoder: result.codec_id.clone(),
+                        quality,
+                        file_size: result.file_size,
+                        bpp: result.bits_per_pixel,
+                        ssimulacra2: result.metrics.ssimulacra2.unwrap_or(0.0),
+                        dssim: result.metrics.dssim.unwrap_or(0.0),
+                        butteraugli: result.metrics.butteraugli.unwrap_or(0.0),
+                        encode_time_ms: result.encode_time.as_secs_f64() * 1000.0,
+                    });
 
-            completed += 1;
-            print!(
-                "\rProgress: {}/{} ({:.1}%)",
-                completed,
-                total,
-                100.0 * completed as f64 / total as f64
-            );
-            std::io::stdout().flush().ok();
-
-            // Encode with C mozjpeg
-            let start = Instant::now();
-            let c_jpeg = encode_c(&rgb, width, height, quality);
-            let c_time = start.elapsed().as_secs_f64() * 1000.0;
-
-            // Decode C JPEG and compute metrics
-            let c_decoded = decode_jpeg(&c_jpeg);
-            let (c_ssim2, c_dssim, c_butteraugli) =
-                compute_metrics(&rgb, &c_decoded, width, height);
-
-            results.push(EncodingResult {
-                corpus: corpus.clone(),
-                image: image_name.clone(),
-                encoder: "c".to_string(),
-                quality,
-                file_size: c_jpeg.len(),
-                bpp: (c_jpeg.len() * 8) as f64 / pixels,
-                ssimulacra2: c_ssim2,
-                dssim: c_dssim,
-                butteraugli: c_butteraugli,
-                encode_time_ms: c_time,
-            });
-
-            completed += 1;
-            print!(
-                "\rProgress: {}/{} ({:.1}%)",
-                completed,
-                total,
-                100.0 * completed as f64 / total as f64
-            );
-            std::io::stdout().flush().ok();
+                    completed += 1;
+                    print!(
+                        "\rProgress: {}/{} ({:.1}%)",
+                        completed,
+                        total,
+                        100.0 * completed as f64 / total as f64
+                    );
+                    std::io::stdout().flush().ok();
+                }
+            }
+            Err(e) => {
+                eprintln!("\nError evaluating {}: {}", image_name, e);
+            }
         }
     }
 
@@ -283,7 +310,7 @@ fn load_png(path: &Path) -> Option<(Vec<u8>, u32, u32)> {
     Some((rgb, info.width, info.height))
 }
 
-fn encode_rust(rgb: &[u8], width: u32, height: u32, quality: u8) -> Vec<u8> {
+fn encode_rust(rgb: &[u8], width: u32, height: u32, quality: u8) -> Result<Vec<u8>, mozjpeg_oxide::Error> {
     use mozjpeg_oxide::TrellisConfig;
 
     // Use settings that match C mozjpeg configuration:
@@ -300,7 +327,6 @@ fn encode_rust(rgb: &[u8], width: u32, height: u32, quality: u8) -> Vec<u8> {
         .trellis(TrellisConfig::default()) // Enable trellis AC + DC
         .optimize_scans(false) // Disabled for fair comparison
         .encode_rgb(rgb, width, height)
-        .expect("Rust encoding failed")
 }
 
 #[allow(unsafe_code)]
@@ -370,88 +396,6 @@ fn encode_c(rgb: &[u8], width: u32, height: u32, quality: u8) -> Vec<u8> {
 fn decode_jpeg(data: &[u8]) -> Vec<u8> {
     let mut decoder = jpeg_decoder::Decoder::new(std::io::Cursor::new(data));
     decoder.decode().expect("JPEG decode failed")
-}
-
-fn compute_metrics(original: &[u8], decoded: &[u8], width: u32, height: u32) -> (f64, f64, f64) {
-    use dssim::Dssim;
-    use rgb::RGB8;
-
-    // Convert to RGB8 format for dssim
-    let orig_rgb: Vec<RGB8> = original
-        .chunks(3)
-        .map(|c| RGB8 {
-            r: c[0],
-            g: c[1],
-            b: c[2],
-        })
-        .collect();
-    let dec_rgb: Vec<RGB8> = decoded
-        .chunks(3)
-        .map(|c| RGB8 {
-            r: c[0],
-            g: c[1],
-            b: c[2],
-        })
-        .collect();
-
-    // Compute DSSIM
-    let dssim = Dssim::new();
-    let orig_img = dssim
-        .create_image_rgb(&orig_rgb, width as usize, height as usize)
-        .expect("Failed to create DSSIM image");
-    let dec_img = dssim
-        .create_image_rgb(&dec_rgb, width as usize, height as usize)
-        .expect("Failed to create DSSIM image");
-    let (dssim_val, _) = dssim.compare(&orig_img, dec_img);
-
-    // Compute SSIMULACRA2 - convert u8 RGB to f32 RGB (0.0-1.0 range)
-    let orig_f32: Vec<[f32; 3]> = original
-        .chunks(3)
-        .map(|c| {
-            [
-                c[0] as f32 / 255.0,
-                c[1] as f32 / 255.0,
-                c[2] as f32 / 255.0,
-            ]
-        })
-        .collect();
-    let dec_f32: Vec<[f32; 3]> = decoded
-        .chunks(3)
-        .map(|c| {
-            [
-                c[0] as f32 / 255.0,
-                c[1] as f32 / 255.0,
-                c[2] as f32 / 255.0,
-            ]
-        })
-        .collect();
-
-    let orig_ssim = Ssim2Rgb::new(
-        orig_f32,
-        width as usize,
-        height as usize,
-        TransferCharacteristic::SRGB,
-        ColorPrimaries::BT709,
-    )
-    .expect("Failed to create SSIM2 source image");
-
-    let dec_ssim = Ssim2Rgb::new(
-        dec_f32,
-        width as usize,
-        height as usize,
-        TransferCharacteristic::SRGB,
-        ColorPrimaries::BT709,
-    )
-    .expect("Failed to create SSIM2 distorted image");
-
-    let ssim2 = compute_frame_ssimulacra2(orig_ssim, dec_ssim).unwrap_or(0.0);
-
-    // Compute Butteraugli
-    let params = ButteraugliParams::default();
-    let butteraugli_result =
-        compute_butteraugli(original, decoded, width as usize, height as usize, &params);
-
-    (ssim2, dssim_val.into(), butteraugli_result.score)
 }
 
 fn write_csv(path: &Path, results: &[EncodingResult]) -> std::io::Result<()> {
