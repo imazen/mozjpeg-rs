@@ -1,10 +1,343 @@
-//! Encoding benchmarks for mozjpeg-rs.
+//! Encoding benchmarks for mozjpeg-oxide using criterion.
+//!
+//! Compares Rust encoder performance across configurations and against C mozjpeg.
+//!
+//! Run with: cargo bench
 
-use criterion::{criterion_group, criterion_main, Criterion};
+use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
+use mozjpeg_oxide::test_encoder::{encode_rust, TestEncoderConfig};
+use mozjpeg_oxide::{Encoder, Subsampling};
+use mozjpeg_sys::*;
+use std::ptr;
 
-fn encode_benchmark(_c: &mut Criterion) {
-    // TODO: Add encoding benchmarks once encoder is implemented
+/// Create a synthetic test image with gradient and noise.
+fn create_test_image(width: usize, height: usize) -> Vec<u8> {
+    let mut rgb = vec![0u8; width * height * 3];
+    for y in 0..height {
+        for x in 0..width {
+            let idx = (y * width + x) * 3;
+            let noise = ((x * 7 + y * 13) % 50) as u8;
+            rgb[idx] = ((x * 255 / width) as u8).saturating_add(noise);
+            rgb[idx + 1] = ((y * 255 / height) as u8).saturating_add(noise);
+            rgb[idx + 2] = (((x + y) * 255 / (width + height)) as u8).saturating_add(noise);
+        }
+    }
+    rgb
 }
 
-criterion_group!(benches, encode_benchmark);
+/// Encode with C mozjpeg FFI.
+fn encode_c(rgb: &[u8], width: u32, height: u32, config: &TestEncoderConfig) -> Vec<u8> {
+    unsafe {
+        let mut cinfo: jpeg_compress_struct = std::mem::zeroed();
+        let mut jerr: jpeg_error_mgr = std::mem::zeroed();
+
+        cinfo.common.err = jpeg_std_error(&mut jerr);
+        jpeg_CreateCompress(
+            &mut cinfo,
+            JPEG_LIB_VERSION as i32,
+            std::mem::size_of::<jpeg_compress_struct>(),
+        );
+
+        let mut outbuffer: *mut u8 = ptr::null_mut();
+        let mut outsize: libc::c_ulong = 0;
+        jpeg_mem_dest(&mut cinfo, &mut outbuffer, &mut outsize);
+
+        cinfo.image_width = width;
+        cinfo.image_height = height;
+        cinfo.input_components = 3;
+        cinfo.in_color_space = J_COLOR_SPACE::JCS_RGB;
+
+        jpeg_set_defaults(&mut cinfo);
+
+        if config.progressive {
+            jpeg_simple_progression(&mut cinfo);
+        } else {
+            cinfo.num_scans = 0;
+            cinfo.scan_info = ptr::null();
+        }
+
+        jpeg_set_quality(&mut cinfo, config.quality as i32, 1);
+
+        let (h_samp, v_samp) = match config.subsampling {
+            Subsampling::S444 => (1, 1),
+            Subsampling::S422 => (2, 1),
+            Subsampling::S420 => (2, 2),
+            Subsampling::S440 => (1, 2),
+            Subsampling::Gray => (1, 1),
+        };
+        (*cinfo.comp_info.offset(0)).h_samp_factor = h_samp;
+        (*cinfo.comp_info.offset(0)).v_samp_factor = v_samp;
+        (*cinfo.comp_info.offset(1)).h_samp_factor = 1;
+        (*cinfo.comp_info.offset(1)).v_samp_factor = 1;
+        (*cinfo.comp_info.offset(2)).h_samp_factor = 1;
+        (*cinfo.comp_info.offset(2)).v_samp_factor = 1;
+
+        cinfo.optimize_coding = if config.optimize_huffman { 1 } else { 0 };
+
+        jpeg_c_set_bool_param(
+            &mut cinfo,
+            JBOOLEAN_TRELLIS_QUANT,
+            if config.trellis_quant { 1 } else { 0 },
+        );
+        jpeg_c_set_bool_param(
+            &mut cinfo,
+            JBOOLEAN_TRELLIS_QUANT_DC,
+            if config.trellis_dc { 1 } else { 0 },
+        );
+        jpeg_c_set_bool_param(
+            &mut cinfo,
+            JBOOLEAN_OVERSHOOT_DERINGING,
+            if config.overshoot_deringing { 1 } else { 0 },
+        );
+        jpeg_c_set_bool_param(
+            &mut cinfo,
+            JBOOLEAN_OPTIMIZE_SCANS,
+            if config.optimize_scans { 1 } else { 0 },
+        );
+
+        jpeg_start_compress(&mut cinfo, 1);
+
+        let row_stride = width as usize * 3;
+        while cinfo.next_scanline < cinfo.image_height {
+            let row_idx = cinfo.next_scanline as usize;
+            let row_ptr = rgb.as_ptr().add(row_idx * row_stride);
+            jpeg_write_scanlines(&mut cinfo, &row_ptr as *const *const u8, 1);
+        }
+
+        jpeg_finish_compress(&mut cinfo);
+        jpeg_destroy_compress(&mut cinfo);
+
+        let result = std::slice::from_raw_parts(outbuffer, outsize as usize).to_vec();
+        libc::free(outbuffer as *mut libc::c_void);
+        result
+    }
+}
+
+/// Benchmark different encoder configurations.
+fn bench_encoder_configs(c: &mut Criterion) {
+    let width = 512u32;
+    let height = 512u32;
+    let rgb = create_test_image(width as usize, height as usize);
+
+    let configs = [
+        (
+            "baseline",
+            TestEncoderConfig {
+                quality: 85,
+                subsampling: Subsampling::S420,
+                progressive: false,
+                optimize_huffman: false,
+                trellis_quant: false,
+                trellis_dc: false,
+                overshoot_deringing: false,
+                optimize_scans: false,
+            },
+        ),
+        (
+            "huffman_opt",
+            TestEncoderConfig {
+                quality: 85,
+                subsampling: Subsampling::S420,
+                progressive: false,
+                optimize_huffman: true,
+                trellis_quant: false,
+                trellis_dc: false,
+                overshoot_deringing: false,
+                optimize_scans: false,
+            },
+        ),
+        (
+            "trellis_ac",
+            TestEncoderConfig {
+                quality: 85,
+                subsampling: Subsampling::S420,
+                progressive: false,
+                optimize_huffman: true,
+                trellis_quant: true,
+                trellis_dc: false,
+                overshoot_deringing: false,
+                optimize_scans: false,
+            },
+        ),
+        (
+            "trellis_ac_dc",
+            TestEncoderConfig {
+                quality: 85,
+                subsampling: Subsampling::S420,
+                progressive: false,
+                optimize_huffman: true,
+                trellis_quant: true,
+                trellis_dc: true,
+                overshoot_deringing: false,
+                optimize_scans: false,
+            },
+        ),
+        (
+            "progressive",
+            TestEncoderConfig {
+                quality: 85,
+                subsampling: Subsampling::S420,
+                progressive: true,
+                optimize_huffman: true,
+                trellis_quant: false,
+                trellis_dc: false,
+                overshoot_deringing: false,
+                optimize_scans: false,
+            },
+        ),
+        (
+            "max_compression",
+            TestEncoderConfig {
+                quality: 85,
+                subsampling: Subsampling::S420,
+                progressive: true,
+                optimize_huffman: true,
+                trellis_quant: true,
+                trellis_dc: true,
+                overshoot_deringing: false,
+                optimize_scans: false,
+            },
+        ),
+    ];
+
+    let mut group = c.benchmark_group("rust_configs");
+    group.throughput(Throughput::Elements((width * height) as u64));
+
+    for (name, config) in &configs {
+        group.bench_with_input(BenchmarkId::new("rust", name), config, |b, cfg| {
+            b.iter(|| encode_rust(black_box(&rgb), width, height, cfg))
+        });
+    }
+
+    group.finish();
+}
+
+/// Benchmark Rust vs C at different configurations.
+fn bench_rust_vs_c(c: &mut Criterion) {
+    let width = 512u32;
+    let height = 512u32;
+    let rgb = create_test_image(width as usize, height as usize);
+
+    let configs = [
+        (
+            "baseline",
+            TestEncoderConfig {
+                quality: 85,
+                subsampling: Subsampling::S420,
+                progressive: false,
+                optimize_huffman: false,
+                trellis_quant: false,
+                trellis_dc: false,
+                overshoot_deringing: false,
+                optimize_scans: false,
+            },
+        ),
+        (
+            "trellis",
+            TestEncoderConfig {
+                quality: 85,
+                subsampling: Subsampling::S420,
+                progressive: false,
+                optimize_huffman: true,
+                trellis_quant: true,
+                trellis_dc: true,
+                overshoot_deringing: false,
+                optimize_scans: false,
+            },
+        ),
+    ];
+
+    let mut group = c.benchmark_group("rust_vs_c");
+    group.throughput(Throughput::Elements((width * height) as u64));
+
+    for (name, config) in &configs {
+        group.bench_with_input(BenchmarkId::new("rust", name), config, |b, cfg| {
+            b.iter(|| encode_rust(black_box(&rgb), width, height, cfg))
+        });
+        group.bench_with_input(BenchmarkId::new("c", name), config, |b, cfg| {
+            b.iter(|| encode_c(black_box(&rgb), width, height, cfg))
+        });
+    }
+
+    group.finish();
+}
+
+/// Benchmark across different image sizes.
+fn bench_image_sizes(c: &mut Criterion) {
+    let sizes: [(u32, u32); 4] = [(256, 256), (512, 512), (1024, 1024), (2048, 2048)];
+
+    let mut group = c.benchmark_group("image_sizes");
+
+    for (width, height) in sizes {
+        let rgb = create_test_image(width as usize, height as usize);
+        let size_label = format!("{}x{}", width, height);
+
+        group.throughput(Throughput::Elements((width * height) as u64));
+
+        // Fastest mode (no optimizations)
+        group.bench_with_input(
+            BenchmarkId::new("fastest", &size_label),
+            &rgb,
+            |b, rgb_data| {
+                let encoder = Encoder::fastest().quality(85);
+                b.iter(|| encoder.encode_rgb(black_box(rgb_data), width, height).unwrap())
+            },
+        );
+
+        // Default mode (trellis + huffman opt)
+        group.bench_with_input(
+            BenchmarkId::new("default", &size_label),
+            &rgb,
+            |b, rgb_data| {
+                let encoder = Encoder::new().quality(85);
+                b.iter(|| encoder.encode_rgb(black_box(rgb_data), width, height).unwrap())
+            },
+        );
+
+        // Max compression
+        group.bench_with_input(
+            BenchmarkId::new("max_compression", &size_label),
+            &rgb,
+            |b, rgb_data| {
+                let encoder = Encoder::max_compression().quality(85);
+                b.iter(|| encoder.encode_rgb(black_box(rgb_data), width, height).unwrap())
+            },
+        );
+    }
+
+    group.finish();
+}
+
+/// Benchmark subsampling modes.
+fn bench_subsampling(c: &mut Criterion) {
+    let width = 512u32;
+    let height = 512u32;
+    let rgb = create_test_image(width as usize, height as usize);
+
+    let subsamplings = [
+        ("4:4:4", Subsampling::S444),
+        ("4:2:2", Subsampling::S422),
+        ("4:2:0", Subsampling::S420),
+    ];
+
+    let mut group = c.benchmark_group("subsampling");
+    group.throughput(Throughput::Elements((width * height) as u64));
+
+    for (name, subsampling) in subsamplings {
+        group.bench_with_input(BenchmarkId::from_parameter(name), &subsampling, |b, &ss| {
+            let encoder = Encoder::new().quality(85).subsampling(ss);
+            b.iter(|| encoder.encode_rgb(black_box(&rgb), width, height).unwrap())
+        });
+    }
+
+    group.finish();
+}
+
+criterion_group!(
+    benches,
+    bench_encoder_configs,
+    bench_rust_vs_c,
+    bench_image_sizes,
+    bench_subsampling
+);
 criterion_main!(benches);
