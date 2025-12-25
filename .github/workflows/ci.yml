@@ -37,7 +37,11 @@ jobs:
           # Windows x64
           - os: Windows
             arch: x64
-            runner: windows-latest
+            runner: windows-2022
+          # Windows ARM64
+          - os: Windows
+            arch: arm64
+            runner: windows-11-arm
 
     steps:
       - uses: actions/checkout@v4
