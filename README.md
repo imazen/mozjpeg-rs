@@ -29,18 +29,40 @@ Pure Rust JPEG encoder based on Mozilla's [mozjpeg](https://github.com/mozilla/m
 
 ## Benchmark Results
 
-Tested on [Kodak](http://r0k.us/graphics/kodak/) + [CLIC](https://www.compression.cc/) corpora (56 images total).
+Tested on [Kodak](http://r0k.us/graphics/kodak/) corpus (24 images).
 Settings: progressive mode, trellis quantization, optimized Huffman, 4:2:0 subsampling.
 
-| Quality | Rust BPP | C BPP | Size Δ | Rust SSIM2 | C SSIM2 | Quality Δ |
-|---------|----------|-------|--------|------------|---------|-----------|
-| 20 | 0.251 | 0.252 | **-0.3%** | 21.5 | 21.8 | -0.30 |
-| 50 | 0.534 | 0.532 | +0.4% | 57.3 | 57.5 | -0.18 |
-| 75 | 0.881 | 0.870 | +1.3% | 71.8 | 72.0 | -0.13 |
-| 85 | 1.251 | 1.224 | +2.2% | 77.8 | 77.9 | -0.08 |
-| 95 | 2.367 | 2.270 | +4.3% | 86.1 | 86.1 | -0.03 |
+| Quality | Rust BPP | C BPP | Size Δ | Rust SSIM2 | C SSIM2 | Butteraugli |
+|---------|----------|-------|--------|------------|---------|-------------|
+| 5 | 0.081 | 0.080 | +1.3% | -58.6 | -58.5 | 18.8 |
+| 10 | 0.157 | 0.157 | +0.1% | -23.7 | -23.4 | 11.3 |
+| 15 | 0.231 | 0.233 | **-0.5%** | 2.6 | 3.0 | 8.4 |
+| 20 | 0.301 | 0.303 | **-0.7%** | 19.6 | 20.0 | 6.9 |
+| 25 | 0.368 | 0.370 | **-0.7%** | 31.0 | 31.4 | 6.2 |
+| 30 | 0.430 | 0.432 | **-0.6%** | 38.7 | 39.0 | 5.5 |
+| 35 | 0.490 | 0.492 | **-0.4%** | 45.2 | 45.5 | 5.0 |
+| 40 | 0.546 | 0.548 | **-0.3%** | 49.7 | 50.0 | 4.8 |
+| 45 | 0.600 | 0.601 | **-0.2%** | 53.3 | 53.5 | 4.5 |
+| 50 | 0.654 | 0.654 | **-0.0%** | 56.9 | 57.2 | 4.3 |
+| 55 | 0.715 | 0.713 | +0.2% | 59.7 | 60.0 | 4.1 |
+| 60 | 0.774 | 0.771 | +0.3% | 61.9 | 62.1 | 3.8 |
+| 65 | 0.856 | 0.851 | +0.6% | 65.4 | 65.5 | 3.8 |
+| 70 | 0.948 | 0.943 | +0.5% | 67.9 | 68.1 | 3.5 |
+| 75 | 1.077 | 1.068 | +0.9% | 71.8 | 71.9 | 3.3 |
+| 80 | 1.277 | 1.259 | +1.4% | 75.2 | 75.3 | 3.0 |
+| 85 | 1.519 | 1.492 | +1.8% | 78.5 | 78.5 | 2.6 |
+| 90 | 1.968 | 1.915 | +2.8% | 82.7 | 82.8 | 2.2 |
+| 92 | 2.204 | 2.140 | +3.0% | 84.1 | 84.1 | 2.0 |
+| 95 | 2.826 | 2.721 | +3.9% | 87.0 | 87.0 | 1.7 |
+| 97 | 3.772 | 3.580 | +5.4% | 89.3 | 89.3 | 1.5 |
 
-**Summary**: Files are 0-4% larger than C mozjpeg with imperceptible quality difference (SSIM2 within 0.3 points).
+**Summary**: At Q15-Q50, Rust produces **smaller files**. At Q55+, files are 0.2-5% larger. Quality (SSIM2, Butteraugli) is virtually identical across all levels.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="benchmark/pareto_ssimulacra2.svg">
+  <source media="(prefers-color-scheme: light)" srcset="benchmark/pareto_ssimulacra2.svg">
+  <img alt="SSIMULACRA2 vs BPP Pareto curve" src="benchmark/pareto_ssimulacra2.svg">
+</picture>
 
 ### Reproduce Benchmarks
 

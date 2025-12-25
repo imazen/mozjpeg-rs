@@ -1,66 +1,113 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 400">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 700 450">
 <style>
-  .title { font: bold 16px sans-serif; }
-  .axis-label { font: 12px sans-serif; }
-  .legend { font: 12px sans-serif; }
-  .grid { stroke: #e0e0e0; stroke-width: 1; }
-  .rust-line { stroke: #e74c3c; stroke-width: 2; fill: none; }
-  .c-line { stroke: #3498db; stroke-width: 2; fill: none; }
+  :root {
+    --bg-color: #ffffff;
+    --text-color: #1a1a1a;
+    --grid-color: #e0e0e0;
+    --axis-color: #333333;
+    --legend-bg: #ffffff;
+    --legend-border: #cccccc;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg-color: #1a1a1a;
+      --text-color: #e0e0e0;
+      --grid-color: #404040;
+      --axis-color: #b0b0b0;
+      --legend-bg: #2a2a2a;
+      --legend-border: #505050;
+    }
+  }
+  .background { fill: var(--bg-color); }
+  .title { font: bold 18px system-ui, sans-serif; fill: var(--text-color); }
+  .axis-label { font: 13px system-ui, sans-serif; fill: var(--text-color); }
+  .tick-label { font: 11px system-ui, sans-serif; fill: var(--text-color); }
+  .legend { font: 13px system-ui, sans-serif; fill: var(--text-color); }
+  .grid { stroke: var(--grid-color); stroke-width: 1; }
+  .axis { stroke: var(--axis-color); stroke-width: 1.5; }
+  .rust-line { stroke: #e74c3c; stroke-width: 2.5; fill: none; }
+  .c-line { stroke: #3498db; stroke-width: 2.5; fill: none; }
   .rust-point { fill: #e74c3c; }
   .c-point { fill: #3498db; }
+  .legend-bg { fill: var(--legend-bg); stroke: var(--legend-border); }
 </style>
-<text x="300.0" y="25" text-anchor="middle" class="title">mozjpeg-oxide vs C mozjpeg: DSSIM</text>
-<line x1="80" y1="340" x2="480" y2="340" stroke="black"/>
-<line x1="80" y1="40" x2="80" y2="340" stroke="black"/>
-<text x="300.0" y="385" text-anchor="middle" class="axis-label">Bits per Pixel (BPP)</text>
-<text x="20" y="200.0" text-anchor="middle" class="axis-label" transform="rotate(-90 20 200.0)">DSSIM (lower is better)</text>
-<line x1="80.0" y1="40" x2="80.0" y2="340" class="grid"/>
-<text x="80.0" y="355" text-anchor="middle" class="axis-label">0.04</text>
-<line x1="80" y1="40.0" x2="480" y2="40.0" class="grid"/>
-<text x="70" y="44.0" text-anchor="end" class="axis-label">-0.0011</text>
-<line x1="180.0" y1="40" x2="180.0" y2="340" class="grid"/>
-<text x="180.0" y="355" text-anchor="middle" class="axis-label">0.67</text>
-<line x1="80" y1="115.0" x2="480" y2="115.0" class="grid"/>
-<text x="70" y="119.0" text-anchor="end" class="axis-label">0.0033</text>
-<line x1="280.0" y1="40" x2="280.0" y2="340" class="grid"/>
-<text x="280.0" y="355" text-anchor="middle" class="axis-label">1.31</text>
-<line x1="80" y1="190.0" x2="480" y2="190.0" class="grid"/>
-<text x="70" y="194.0" text-anchor="end" class="axis-label">0.0077</text>
-<line x1="380.0" y1="40" x2="380.0" y2="340" class="grid"/>
-<text x="380.0" y="355" text-anchor="middle" class="axis-label">1.94</text>
-<line x1="80" y1="265.0" x2="480" y2="265.0" class="grid"/>
-<text x="70" y="269.0" text-anchor="end" class="axis-label">0.0121</text>
-<line x1="480.0" y1="40" x2="480.0" y2="340" class="grid"/>
-<text x="480.0" y="355" text-anchor="middle" class="axis-label">2.58</text>
-<line x1="80" y1="340.0" x2="480" y2="340.0" class="grid"/>
-<text x="70" y="344.0" text-anchor="end" class="axis-label">0.0165</text>
-<path d="M 113.33333333333334,315.0 L 129.54227399024117,215.0314017926424 L 144.24270201253205,168.15557619341473 L 157.88648071724168,141.9835521693173 L 173.13189310778142,124.29591125992091 L 195.64295059250426,105.71219962240863 L 212.55655109676252,95.72265975841485 L 238.82874409265094,87.25014816489377 L 270.89763530294465,79.84175683849719 L 331.8863077725192,71.55130782249539 L 446.6666666666667,65.01842438091514" class="rust-line"/>
-<circle cx="113.33333333333334" cy="315.0" r="4" class="rust-point"/>
-<circle cx="129.54227399024117" cy="215.0314017926424" r="4" class="rust-point"/>
-<circle cx="144.24270201253205" cy="168.15557619341473" r="4" class="rust-point"/>
-<circle cx="157.88648071724168" cy="141.9835521693173" r="4" class="rust-point"/>
-<circle cx="173.13189310778142" cy="124.29591125992091" r="4" class="rust-point"/>
-<circle cx="195.64295059250426" cy="105.71219962240863" r="4" class="rust-point"/>
-<circle cx="212.55655109676252" cy="95.72265975841485" r="4" class="rust-point"/>
-<circle cx="238.82874409265094" cy="87.25014816489377" r="4" class="rust-point"/>
-<circle cx="270.89763530294465" cy="79.84175683849719" r="4" class="rust-point"/>
-<circle cx="331.8863077725192" cy="71.55130782249539" r="4" class="rust-point"/>
-<circle cx="446.6666666666667" cy="65.01842438091514" r="4" class="rust-point"/>
-<path d="M 113.45608508887096,312.23277163054706 L 129.64872618541872,213.35308152429596 L 144.1519528807706,166.9826234656532 L 157.56155588901052,141.14724535495412 L 172.49420692437909,123.6202487948237 L 194.57051098789717,105.24374499752547 L 210.78644922923723,95.36677073850271 L 235.85790513160106,87.02512387807099 L 266.64197006126136,79.68389249033109 L 323.6620076794537,71.48091269574569 L 431.3869641428441,65.0" class="c-line"/>
-<circle cx="113.45608508887096" cy="312.23277163054706" r="4" class="c-point"/>
-<circle cx="129.64872618541872" cy="213.35308152429596" r="4" class="c-point"/>
-<circle cx="144.1519528807706" cy="166.9826234656532" r="4" class="c-point"/>
-<circle cx="157.56155588901052" cy="141.14724535495412" r="4" class="c-point"/>
-<circle cx="172.49420692437909" cy="123.6202487948237" r="4" class="c-point"/>
-<circle cx="194.57051098789717" cy="105.24374499752547" r="4" class="c-point"/>
-<circle cx="210.78644922923723" cy="95.36677073850271" r="4" class="c-point"/>
-<circle cx="235.85790513160106" cy="87.02512387807099" r="4" class="c-point"/>
-<circle cx="266.64197006126136" cy="79.68389249033109" r="4" class="c-point"/>
-<circle cx="323.6620076794537" cy="71.48091269574569" r="4" class="c-point"/>
-<circle cx="431.3869641428441" cy="65.0" r="4" class="c-point"/>
-<rect x="490" y="50" width="100" height="50" fill="white" stroke="#ccc"/>
-<circle cx="505" cy="65" r="4" class="rust-point"/>
-<text x="515" y="69" class="legend">Rust</text>
-<circle cx="505" cy="85" r="4" class="c-point"/>
-<text x="515" y="89" class="legend">C mozjpeg</text>
+<rect class="background" width="700" height="450"/>
+<text x="350.0" y="30" text-anchor="middle" class="title">mozjpeg-oxide vs C mozjpeg: DSSIM</text>
+<line x1="90.0" y1="50" x2="90.0" y2="380" class="grid"/>
+<line x1="90" y1="50.0" x2="560" y2="50.0" class="grid"/>
+<line x1="184.0" y1="50" x2="184.0" y2="380" class="grid"/>
+<line x1="90" y1="116.0" x2="560" y2="116.0" class="grid"/>
+<line x1="278.0" y1="50" x2="278.0" y2="380" class="grid"/>
+<line x1="90" y1="182.0" x2="560" y2="182.0" class="grid"/>
+<line x1="372.0" y1="50" x2="372.0" y2="380" class="grid"/>
+<line x1="90" y1="248.0" x2="560" y2="248.0" class="grid"/>
+<line x1="465.99999999999994" y1="50" x2="465.99999999999994" y2="380" class="grid"/>
+<line x1="90" y1="314.0" x2="560" y2="314.0" class="grid"/>
+<line x1="560.0" y1="50" x2="560.0" y2="380" class="grid"/>
+<line x1="90" y1="380.0" x2="560" y2="380.0" class="grid"/>
+<line x1="90" y1="380" x2="560" y2="380" class="axis"/>
+<line x1="90" y1="50" x2="90" y2="380" class="axis"/>
+<text x="90.0" y="400" text-anchor="middle" class="tick-label">-0.10</text>
+<text x="80" y="54.0" text-anchor="end" class="tick-label">-0.00460</text>
+<text x="184.0" y="400" text-anchor="middle" class="tick-label">0.71</text>
+<text x="80" y="120.0" text-anchor="end" class="tick-label">0.01673</text>
+<text x="278.0" y="400" text-anchor="middle" class="tick-label">1.52</text>
+<text x="80" y="186.0" text-anchor="end" class="tick-label">0.03807</text>
+<text x="372.0" y="400" text-anchor="middle" class="tick-label">2.33</text>
+<text x="80" y="252.0" text-anchor="end" class="tick-label">0.05941</text>
+<text x="465.99999999999994" y="400" text-anchor="middle" class="tick-label">3.14</text>
+<text x="80" y="318.0" text-anchor="end" class="tick-label">0.08074</text>
+<text x="560.0" y="400" text-anchor="middle" class="tick-label">3.96</text>
+<text x="80" y="384.0" text-anchor="end" class="tick-label">0.10208</text>
+<text x="350.0" y="430" text-anchor="middle" class="axis-label">Bits per Pixel (BPP) →</text>
+<text x="25" y="225.0" text-anchor="middle" class="axis-label" transform="rotate(-90 25 225.0)">DSSIM (lower is better) →</text>
+<path d="M 111.48,365.00 L 120.24,194.72 L 128.89,143.03 L 136.90,118.74 L 144.63,105.31 L 151.83,97.07 L 158.84,91.03 L 165.30,86.99 L 171.51,84.01 L 177.79,81.34 L 184.79,79.18 L 191.63,77.55 L 201.17,75.35 L 211.77,73.62 L 226.76,71.63 L 249.91,69.82 L 277.92,68.31 L 329.88,66.72 L 357.15,66.26 L 429.16,65.49 L 538.64,65.00" class="rust-line"/>
+<circle cx="111.48" cy="365.00" r="5" class="rust-point"/>
+<circle cx="120.24" cy="194.72" r="5" class="rust-point"/>
+<circle cx="128.89" cy="143.03" r="5" class="rust-point"/>
+<circle cx="136.90" cy="118.74" r="5" class="rust-point"/>
+<circle cx="144.63" cy="105.31" r="5" class="rust-point"/>
+<circle cx="151.83" cy="97.07" r="5" class="rust-point"/>
+<circle cx="158.84" cy="91.03" r="5" class="rust-point"/>
+<circle cx="165.30" cy="86.99" r="5" class="rust-point"/>
+<circle cx="171.51" cy="84.01" r="5" class="rust-point"/>
+<circle cx="177.79" cy="81.34" r="5" class="rust-point"/>
+<circle cx="184.79" cy="79.18" r="5" class="rust-point"/>
+<circle cx="191.63" cy="77.55" r="5" class="rust-point"/>
+<circle cx="201.17" cy="75.35" r="5" class="rust-point"/>
+<circle cx="211.77" cy="73.62" r="5" class="rust-point"/>
+<circle cx="226.76" cy="71.63" r="5" class="rust-point"/>
+<circle cx="249.91" cy="69.82" r="5" class="rust-point"/>
+<circle cx="277.92" cy="68.31" r="5" class="rust-point"/>
+<circle cx="329.88" cy="66.72" r="5" class="rust-point"/>
+<circle cx="357.15" cy="66.26" r="5" class="rust-point"/>
+<circle cx="429.16" cy="65.49" r="5" class="rust-point"/>
+<circle cx="538.64" cy="65.00" r="5" class="rust-point"/>
+<path d="M 111.36,362.53 L 120.23,193.44 L 129.02,142.02 L 137.13,117.96 L 144.92,104.71 L 152.11,96.61 L 159.04,90.67 L 165.48,86.68 L 171.66,83.76 L 177.81,81.13 L 184.62,79.00 L 191.35,77.38 L 200.55,75.23 L 211.28,73.52 L 225.67,71.56 L 247.85,69.78 L 274.81,68.29 L 323.70,66.71 L 349.80,66.26 L 416.93,65.49 L 516.42,65.00" class="c-line"/>
+<circle cx="111.36" cy="362.53" r="5" class="c-point"/>
+<circle cx="120.23" cy="193.44" r="5" class="c-point"/>
+<circle cx="129.02" cy="142.02" r="5" class="c-point"/>
+<circle cx="137.13" cy="117.96" r="5" class="c-point"/>
+<circle cx="144.92" cy="104.71" r="5" class="c-point"/>
+<circle cx="152.11" cy="96.61" r="5" class="c-point"/>
+<circle cx="159.04" cy="90.67" r="5" class="c-point"/>
+<circle cx="165.48" cy="86.68" r="5" class="c-point"/>
+<circle cx="171.66" cy="83.76" r="5" class="c-point"/>
+<circle cx="177.81" cy="81.13" r="5" class="c-point"/>
+<circle cx="184.62" cy="79.00" r="5" class="c-point"/>
+<circle cx="191.35" cy="77.38" r="5" class="c-point"/>
+<circle cx="200.55" cy="75.23" r="5" class="c-point"/>
+<circle cx="211.28" cy="73.52" r="5" class="c-point"/>
+<circle cx="225.67" cy="71.56" r="5" class="c-point"/>
+<circle cx="247.85" cy="69.78" r="5" class="c-point"/>
+<circle cx="274.81" cy="68.29" r="5" class="c-point"/>
+<circle cx="323.70" cy="66.71" r="5" class="c-point"/>
+<circle cx="349.80" cy="66.26" r="5" class="c-point"/>
+<circle cx="416.93" cy="65.49" r="5" class="c-point"/>
+<circle cx="516.42" cy="65.00" r="5" class="c-point"/>
+<rect x="575" y="55" width="115" height="60" rx="4" class="legend-bg"/>
+<circle cx="590" cy="75" r="5" class="rust-point"/>
+<text x="603" y="79" class="legend">mozjpeg-oxide</text>
+<circle cx="590" cy="100" r="5" class="c-point"/>
+<text x="603" y="104" class="legend">C mozjpeg</text>
 </svg>

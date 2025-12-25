@@ -1,0 +1,113 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 700 450">
+<style>
+  :root {
+    --bg-color: #ffffff;
+    --text-color: #1a1a1a;
+    --grid-color: #e0e0e0;
+    --axis-color: #333333;
+    --legend-bg: #ffffff;
+    --legend-border: #cccccc;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg-color: #1a1a1a;
+      --text-color: #e0e0e0;
+      --grid-color: #404040;
+      --axis-color: #b0b0b0;
+      --legend-bg: #2a2a2a;
+      --legend-border: #505050;
+    }
+  }
+  .background { fill: var(--bg-color); }
+  .title { font: bold 18px system-ui, sans-serif; fill: var(--text-color); }
+  .axis-label { font: 13px system-ui, sans-serif; fill: var(--text-color); }
+  .tick-label { font: 11px system-ui, sans-serif; fill: var(--text-color); }
+  .legend { font: 13px system-ui, sans-serif; fill: var(--text-color); }
+  .grid { stroke: var(--grid-color); stroke-width: 1; }
+  .axis { stroke: var(--axis-color); stroke-width: 1.5; }
+  .rust-line { stroke: #e74c3c; stroke-width: 2.5; fill: none; }
+  .c-line { stroke: #3498db; stroke-width: 2.5; fill: none; }
+  .rust-point { fill: #e74c3c; }
+  .c-point { fill: #3498db; }
+  .legend-bg { fill: var(--legend-bg); stroke: var(--legend-border); }
+</style>
+<rect class="background" width="700" height="450"/>
+<text x="350.0" y="30" text-anchor="middle" class="title">mozjpeg-oxide vs C mozjpeg: Butteraugli</text>
+<line x1="90.0" y1="50" x2="90.0" y2="380" class="grid"/>
+<line x1="90" y1="50.0" x2="560" y2="50.0" class="grid"/>
+<line x1="184.0" y1="50" x2="184.0" y2="380" class="grid"/>
+<line x1="90" y1="116.0" x2="560" y2="116.0" class="grid"/>
+<line x1="278.0" y1="50" x2="278.0" y2="380" class="grid"/>
+<line x1="90" y1="182.0" x2="560" y2="182.0" class="grid"/>
+<line x1="372.0" y1="50" x2="372.0" y2="380" class="grid"/>
+<line x1="90" y1="248.0" x2="560" y2="248.0" class="grid"/>
+<line x1="465.99999999999994" y1="50" x2="465.99999999999994" y2="380" class="grid"/>
+<line x1="90" y1="314.00000000000006" x2="560" y2="314.00000000000006" class="grid"/>
+<line x1="560.0" y1="50" x2="560.0" y2="380" class="grid"/>
+<line x1="90" y1="380.0" x2="560" y2="380.0" class="grid"/>
+<line x1="90" y1="380" x2="560" y2="380" class="axis"/>
+<line x1="90" y1="50" x2="90" y2="380" class="axis"/>
+<text x="90.0" y="400" text-anchor="middle" class="tick-label">-0.10</text>
+<text x="80" y="54.0" text-anchor="end" class="tick-label">0.57</text>
+<text x="184.0" y="400" text-anchor="middle" class="tick-label">0.71</text>
+<text x="80" y="120.0" text-anchor="end" class="tick-label">4.56</text>
+<text x="278.0" y="400" text-anchor="middle" class="tick-label">1.52</text>
+<text x="80" y="186.0" text-anchor="end" class="tick-label">8.54</text>
+<text x="372.0" y="400" text-anchor="middle" class="tick-label">2.33</text>
+<text x="80" y="252.0" text-anchor="end" class="tick-label">12.52</text>
+<text x="465.99999999999994" y="400" text-anchor="middle" class="tick-label">3.14</text>
+<text x="80" y="318.00000000000006" text-anchor="end" class="tick-label">16.50</text>
+<text x="560.0" y="400" text-anchor="middle" class="tick-label">3.96</text>
+<text x="80" y="384.0" text-anchor="end" class="tick-label">20.48</text>
+<text x="350.0" y="430" text-anchor="middle" class="axis-label">Bits per Pixel (BPP) →</text>
+<text x="25" y="225.0" text-anchor="middle" class="axis-label" transform="rotate(-90 25 225.0)">Butteraugli Score (lower is better) →</text>
+<path d="M 111.48,352.06 L 120.24,227.23 L 128.89,179.97 L 136.90,154.56 L 144.63,143.15 L 151.83,132.05 L 158.84,123.32 L 165.30,119.35 L 171.51,114.89 L 177.79,111.59 L 184.79,108.27 L 191.63,104.20 L 201.17,103.20 L 211.77,99.01 L 226.76,95.50 L 249.91,89.74 L 277.92,83.78 L 329.88,76.90 L 357.15,74.42 L 429.16,68.29 L 538.64,65.00" class="rust-line"/>
+<circle cx="111.48" cy="352.06" r="5" class="rust-point"/>
+<circle cx="120.24" cy="227.23" r="5" class="rust-point"/>
+<circle cx="128.89" cy="179.97" r="5" class="rust-point"/>
+<circle cx="136.90" cy="154.56" r="5" class="rust-point"/>
+<circle cx="144.63" cy="143.15" r="5" class="rust-point"/>
+<circle cx="151.83" cy="132.05" r="5" class="rust-point"/>
+<circle cx="158.84" cy="123.32" r="5" class="rust-point"/>
+<circle cx="165.30" cy="119.35" r="5" class="rust-point"/>
+<circle cx="171.51" cy="114.89" r="5" class="rust-point"/>
+<circle cx="177.79" cy="111.59" r="5" class="rust-point"/>
+<circle cx="184.79" cy="108.27" r="5" class="rust-point"/>
+<circle cx="191.63" cy="104.20" r="5" class="rust-point"/>
+<circle cx="201.17" cy="103.20" r="5" class="rust-point"/>
+<circle cx="211.77" cy="99.01" r="5" class="rust-point"/>
+<circle cx="226.76" cy="95.50" r="5" class="rust-point"/>
+<circle cx="249.91" cy="89.74" r="5" class="rust-point"/>
+<circle cx="277.92" cy="83.78" r="5" class="rust-point"/>
+<circle cx="329.88" cy="76.90" r="5" class="rust-point"/>
+<circle cx="357.15" cy="74.42" r="5" class="rust-point"/>
+<circle cx="429.16" cy="68.29" r="5" class="rust-point"/>
+<circle cx="538.64" cy="65.00" r="5" class="rust-point"/>
+<path d="M 111.36,365.00 L 120.23,225.88 L 129.02,178.29 L 137.13,153.22 L 144.92,139.10 L 152.11,130.56 L 159.04,122.59 L 165.48,117.22 L 171.66,113.97 L 177.81,110.22 L 184.62,107.68 L 191.35,104.14 L 200.55,103.28 L 211.28,98.64 L 225.67,94.51 L 247.85,89.32 L 274.81,83.49 L 323.70,76.72 L 349.80,73.87 L 416.93,68.37 L 516.42,65.03" class="c-line"/>
+<circle cx="111.36" cy="365.00" r="5" class="c-point"/>
+<circle cx="120.23" cy="225.88" r="5" class="c-point"/>
+<circle cx="129.02" cy="178.29" r="5" class="c-point"/>
+<circle cx="137.13" cy="153.22" r="5" class="c-point"/>
+<circle cx="144.92" cy="139.10" r="5" class="c-point"/>
+<circle cx="152.11" cy="130.56" r="5" class="c-point"/>
+<circle cx="159.04" cy="122.59" r="5" class="c-point"/>
+<circle cx="165.48" cy="117.22" r="5" class="c-point"/>
+<circle cx="171.66" cy="113.97" r="5" class="c-point"/>
+<circle cx="177.81" cy="110.22" r="5" class="c-point"/>
+<circle cx="184.62" cy="107.68" r="5" class="c-point"/>
+<circle cx="191.35" cy="104.14" r="5" class="c-point"/>
+<circle cx="200.55" cy="103.28" r="5" class="c-point"/>
+<circle cx="211.28" cy="98.64" r="5" class="c-point"/>
+<circle cx="225.67" cy="94.51" r="5" class="c-point"/>
+<circle cx="247.85" cy="89.32" r="5" class="c-point"/>
+<circle cx="274.81" cy="83.49" r="5" class="c-point"/>
+<circle cx="323.70" cy="76.72" r="5" class="c-point"/>
+<circle cx="349.80" cy="73.87" r="5" class="c-point"/>
+<circle cx="416.93" cy="68.37" r="5" class="c-point"/>
+<circle cx="516.42" cy="65.03" r="5" class="c-point"/>
+<rect x="575" y="55" width="115" height="60" rx="4" class="legend-bg"/>
+<circle cx="590" cy="75" r="5" class="rust-point"/>
+<text x="603" y="79" class="legend">mozjpeg-oxide</text>
+<circle cx="590" cy="100" r="5" class="c-point"/>
+<text x="603" y="104" class="legend">C mozjpeg</text>
+</svg>
