@@ -22,11 +22,27 @@ use dssim::Dssim;
 
 /// Encode using Rust mozjpeg with specific settings.
 fn rust_encode_baseline(data: &[u8], width: u32, height: u32, quality: u8) -> Vec<u8> {
+    // Rust encoder with default optimizations (trellis + deringing + Huffman opt)
+    // These optimizations typically produce smaller files than C's baseline
     mozjpeg_oxide::Encoder::new()
         .quality(quality)
         .subsampling(mozjpeg_oxide::Subsampling::S420)
         .progressive(false)
         .optimize_huffman(true)
+        .encode_rgb(data, width, height)
+        .expect("Rust encoding failed")
+}
+
+/// Encode using Rust mozjpeg with strict baseline (no trellis/deringing).
+fn rust_encode_strict_baseline(data: &[u8], width: u32, height: u32, quality: u8) -> Vec<u8> {
+    // Minimal baseline encoder matching C mozjpeg without extra optimizations
+    mozjpeg_oxide::Encoder::new()
+        .quality(quality)
+        .subsampling(mozjpeg_oxide::Subsampling::S420)
+        .progressive(false)
+        .optimize_huffman(true)
+        .trellis(mozjpeg_oxide::TrellisConfig::disabled())
+        .overshoot_deringing(false)
         .encode_rgb(data, width, height)
         .expect("Rust encoding failed")
 }
@@ -303,9 +319,9 @@ fn compare_decoded_pixels(jpeg_a: &[u8], jpeg_b: &[u8]) -> (u8, f64, usize) {
 
 /// Test baseline mode comparison.
 ///
-/// Note: C mozjpeg-sys defaults to progressive mode, so we're actually comparing
-/// Rust baseline against C progressive. The file sizes will differ due to different
-/// entropy coding organization, but quality should be similar at the same quality.
+/// Compares Rust with optimizations (trellis + deringing) vs C without them.
+/// Rust typically produces similar or smaller files due to trellis quantization.
+/// Primary metric is DSSIM quality, not file size.
 #[test]
 fn test_rust_vs_c_baseline_quality_sweep() {
     println!("\n=== Rust vs C mozjpeg: Baseline Mode Quality Sweep ===\n");
@@ -361,9 +377,11 @@ fn test_rust_vs_c_baseline_quality_sweep() {
                 );
             }
 
-            // File size tolerance - C uses progressive, Rust uses baseline
+            // File size tolerance - Rust with trellis vs C without
+            // Rust is typically smaller due to trellis, but can be larger at high quality
+            // where trellis prioritizes quality over size
             assert!(
-                ratio < 1.25 && ratio > 0.80,
+                ratio < 1.15 && ratio > 0.88,
                 "File size ratio out of range: {:.2}% for {}x{} Q{}",
                 ratio * 100.0, width, height, quality
             );
@@ -556,9 +574,9 @@ fn test_real_photo_baseline() {
             quality, rust_vs_c_dssim
         );
 
-        // Verify file size is reasonable
+        // Verify file size is within 5% of C mozjpeg (strict for real photos)
         assert!(
-            ratio < 1.25 && ratio > 0.80,
+            ratio < 1.05 && ratio > 0.95,
             "File size ratio out of range at Q{}: {:.2}%",
             quality, ratio * 100.0
         );

@@ -131,13 +131,9 @@ fn test_rgb_to_ycbcr_matches_c() {
             );
         }
 
-        // Allow tolerance of 1 due to different rounding strategies
-        let y_diff = (rust_y as i32 - c_y).abs();
-        let cb_diff = (rust_cb as i32 - c_cb).abs();
-        let cr_diff = (rust_cr as i32 - c_cr).abs();
-
+        // Exact match required - Rust now uses identical formula to C mozjpeg
         assert!(
-            y_diff <= 1 && cb_diff <= 1 && cr_diff <= 1,
+            rust_y as i32 == c_y && rust_cb as i32 == c_cb && rust_cr as i32 == c_cr,
             "RGB({},{},{}) -> YCbCr mismatch: Rust=({},{},{}), C=({},{},{})",
             r, g, b, rust_y, rust_cb, rust_cr, c_y, c_cb, c_cr
         );
@@ -174,10 +170,10 @@ fn test_rgb_to_ycbcr_exhaustive() {
         }
     }
 
-    // Report max differences (should all be <= 1)
+    // Exact match required - Rust now uses identical formula to C mozjpeg
     assert!(
-        max_y_diff <= 1 && max_cb_diff <= 1 && max_cr_diff <= 1,
-        "Max differences: Y={}, Cb={}, Cr={} (should all be <= 1)",
+        max_y_diff == 0 && max_cb_diff == 0 && max_cr_diff == 0,
+        "Max differences: Y={}, Cb={}, Cr={} (should all be 0)",
         max_y_diff, max_cb_diff, max_cr_diff
     );
 }
@@ -452,14 +448,13 @@ fn test_deringing_matches_c() {
             ffi::mozjpeg_test_preprocess_deringing(c_data.as_mut_ptr(), 16);
         }
 
-        // Compare each coefficient
+        // Compare each coefficient - exact match required
         let mut max_diff = 0i16;
         for i in 0..64 {
             let diff = (rust_data[i] - c_data[i]).abs();
             max_diff = max_diff.max(diff);
-            // Allow up to 1 difference due to floating point rounding
             assert!(
-                diff <= 1,
+                diff == 0,
                 "Deringing mismatch at index {} (natural order): Rust={}, C={}, diff={}",
                 i, rust_data[i], c_data[i], diff
             );
@@ -494,11 +489,11 @@ fn test_deringing_matches_c() {
             ffi::mozjpeg_test_preprocess_deringing(c_data.as_mut_ptr(), dc_quant);
         }
 
-        // Compare
+        // Compare - exact match required
         for i in 0..64 {
             let diff = (rust_data[i] - c_data[i]).abs();
             assert!(
-                diff <= 1,
+                diff == 0,
                 "DC quant {} mismatch at {}: Rust={}, C={}, diff={}",
                 dc_quant, i, rust_data[i], c_data[i], diff
             );

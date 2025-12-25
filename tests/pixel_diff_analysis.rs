@@ -3,6 +3,7 @@
 //! This test verifies that the Rust encoder produces valid, decodable
 //! JPEGs with reasonable quality characteristics.
 
+use dssim::Dssim;
 use mozjpeg_oxide::{Encoder, Subsampling, TrellisConfig};
 
 /// Test that encoded JPEGs are valid and decodable across multiple configurations.
@@ -66,6 +67,16 @@ fn test_encoder_produces_valid_output() {
             name,
             psnr
         );
+
+        // DSSIM perceptual quality check
+        // <0.003 is noticeable, <0.001 is marginal
+        let dssim = calculate_dssim(&rgb, &decoded, width, height);
+        assert!(
+            dssim < 0.003,
+            "{}: DSSIM too high ({:.6}), perceptual quality issue",
+            name,
+            dssim
+        );
     }
 }
 
@@ -98,6 +109,15 @@ fn test_progressive_encoder_valid() {
     let psnr = calculate_psnr(&rgb, &decoded);
     // Note: PSNR of 25+ dB is acceptable for Q85 with synthetic patterns
     assert!(psnr > 20.0, "Progressive PSNR too low: {:.1}", psnr);
+
+    // DSSIM perceptual quality check - lenient threshold for synthetic patterns
+    // (modular pattern is difficult for JPEG to compress well)
+    let dssim = calculate_dssim(&rgb, &decoded, width, height);
+    assert!(
+        dssim < 0.01,
+        "Progressive DSSIM too high: {:.6}",
+        dssim
+    );
 }
 
 fn calculate_psnr(original: &[u8], decoded: &[u8]) -> f64 {
@@ -117,4 +137,31 @@ fn calculate_psnr(original: &[u8], decoded: &[u8]) -> f64 {
     }
 
     10.0 * (255.0 * 255.0 / mse).log10()
+}
+
+/// Calculate DSSIM between original and decoded RGB data.
+/// Returns DSSIM value (0 = identical, higher = worse).
+fn calculate_dssim(original: &[u8], decoded: &[u8], width: u32, height: u32) -> f64 {
+    use rgb::RGB8;
+
+    let attr = Dssim::new();
+
+    let orig_rgb: Vec<RGB8> = original
+        .chunks(3)
+        .map(|c| RGB8::new(c[0], c[1], c[2]))
+        .collect();
+    let orig_img = attr
+        .create_image_rgb(&orig_rgb, width as usize, height as usize)
+        .expect("Failed to create original image");
+
+    let dec_rgb: Vec<RGB8> = decoded
+        .chunks(3)
+        .map(|c| RGB8::new(c[0], c[1], c[2]))
+        .collect();
+    let dec_img = attr
+        .create_image_rgb(&dec_rgb, width as usize, height as usize)
+        .expect("Failed to create decoded image");
+
+    let (dssim_val, _) = attr.compare(&orig_img, dec_img);
+    dssim_val.into()
 }

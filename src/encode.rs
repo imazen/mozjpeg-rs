@@ -1615,6 +1615,7 @@ fn create_std_ac_chroma_table() -> HuffTable {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use dssim::Dssim;
 
     #[test]
     fn test_encoder_defaults() {
@@ -2000,8 +2001,8 @@ mod tests {
             let dg = decoded[1];
             let db = decoded[2];
 
-            // Allow tolerance of 10 for JPEG lossy compression
-            let tolerance = 10i16;
+            // Solid colors at Q95 with 4:4:4 should have minimal loss
+            let tolerance = 2i16;
             let r_diff = (dr as i16 - *r as i16).abs();
             let g_diff = (dg as i16 - *g as i16).abs();
             let b_diff = (db as i16 - *b as i16).abs();
@@ -2138,6 +2139,21 @@ mod tests {
                 "{}x{}: Progressive PSNR ({:.1}) differs from baseline ({:.1}) by {:.1} dB",
                 size, size, prog_psnr, base_psnr, diff
             );
+
+            // DSSIM perceptual quality check - both modes should be high quality
+            // Note: non-MCU-aligned images with 4:2:0 have higher DSSIM due to edge effects
+            let base_dssim = calculate_dssim(&rgb, &base_dec, size, size);
+            let prog_dssim = calculate_dssim(&rgb, &prog_dec, size, size);
+            assert!(
+                base_dssim < 0.01,
+                "{}x{}: Baseline DSSIM too high: {:.6}",
+                size, size, base_dssim
+            );
+            assert!(
+                prog_dssim < 0.01,
+                "{}x{}: Progressive DSSIM too high: {:.6}",
+                size, size, prog_dssim
+            );
         }
     }
 
@@ -2186,6 +2202,20 @@ mod tests {
             "4:2:2 17x17: Progressive PSNR ({:.1}) differs from baseline ({:.1}) by {:.1} dB",
             prog_psnr, base_psnr, diff
         );
+
+        // DSSIM perceptual quality check - non-MCU-aligned has higher DSSIM
+        let base_dssim = calculate_dssim(&rgb, &base_dec, size, size);
+        let prog_dssim = calculate_dssim(&rgb, &prog_dec, size, size);
+        assert!(
+            base_dssim < 0.01,
+            "4:2:2 17x17: Baseline DSSIM too high: {:.6}",
+            base_dssim
+        );
+        assert!(
+            prog_dssim < 0.01,
+            "4:2:2 17x17: Progressive DSSIM too high: {:.6}",
+            prog_dssim
+        );
     }
 
     fn calculate_psnr(orig: &[u8], decoded: &[u8]) -> f64 {
@@ -2203,5 +2233,30 @@ mod tests {
             return f64::INFINITY;
         }
         10.0 * (255.0_f64 * 255.0 / mse).log10()
+    }
+
+    fn calculate_dssim(original: &[u8], decoded: &[u8], width: u32, height: u32) -> f64 {
+        use rgb::RGB8;
+
+        let attr = Dssim::new();
+
+        let orig_rgb: Vec<RGB8> = original
+            .chunks(3)
+            .map(|c| RGB8::new(c[0], c[1], c[2]))
+            .collect();
+        let orig_img = attr
+            .create_image_rgb(&orig_rgb, width as usize, height as usize)
+            .expect("Failed to create original image");
+
+        let dec_rgb: Vec<RGB8> = decoded
+            .chunks(3)
+            .map(|c| RGB8::new(c[0], c[1], c[2]))
+            .collect();
+        let dec_img = attr
+            .create_image_rgb(&dec_rgb, width as usize, height as usize)
+            .expect("Failed to create decoded image");
+
+        let (dssim_val, _) = attr.compare(&orig_img, dec_img);
+        dssim_val.into()
     }
 }

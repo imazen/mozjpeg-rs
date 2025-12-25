@@ -3,6 +3,7 @@
 //! These tests verify encoder correctness across various configurations.
 //! Some tests require corpus images and are skipped if unavailable.
 
+use dssim::Dssim;
 use mozjpeg_oxide::{Encoder, Subsampling, TrellisConfig};
 use std::io::Cursor;
 
@@ -30,6 +31,34 @@ fn calculate_psnr(original: &[u8], decoded: &[u8]) -> f64 {
         return f64::INFINITY;
     }
     10.0 * (255.0_f64 * 255.0 / mse).log10()
+}
+
+/// Helper to calculate DSSIM between original and decoded RGB data.
+/// Returns DSSIM value (0 = identical, higher = worse).
+/// DSSIM thresholds: <0.0003 imperceptible, <0.001 marginal, <0.003 noticeable.
+fn calculate_dssim(original: &[u8], decoded: &[u8], width: u32, height: u32) -> f64 {
+    use rgb::RGB8;
+
+    let attr = Dssim::new();
+
+    let orig_rgb: Vec<RGB8> = original
+        .chunks(3)
+        .map(|c| RGB8::new(c[0], c[1], c[2]))
+        .collect();
+    let orig_img = attr
+        .create_image_rgb(&orig_rgb, width as usize, height as usize)
+        .expect("Failed to create original image");
+
+    let dec_rgb: Vec<RGB8> = decoded
+        .chunks(3)
+        .map(|c| RGB8::new(c[0], c[1], c[2]))
+        .collect();
+    let dec_img = attr
+        .create_image_rgb(&dec_rgb, width as usize, height as usize)
+        .expect("Failed to create decoded image");
+
+    let (dssim_val, _) = attr.compare(&orig_img, dec_img);
+    dssim_val.into()
 }
 
 /// Load bundled test image (1.png from tests/images)
@@ -140,6 +169,18 @@ fn test_edge_cropping_non_aligned_dimensions() {
                 psnr > 15.0,
                 "PSNR extremely low ({:.2} dB) for {}x{} with {} - possible encoding bug",
                 psnr,
+                target_w,
+                target_h,
+                config_name
+            );
+
+            // DSSIM check - perceptual quality metric
+            // <0.003 noticeable, <0.01 acceptable for small crops with edge artifacts
+            let dssim = calculate_dssim(&cropped, &decoded, target_w, target_h);
+            assert!(
+                dssim < 0.01,
+                "DSSIM too high ({:.6}) for {}x{} with {} - perceptual quality issue",
+                dssim,
                 target_w,
                 target_h,
                 config_name
@@ -511,6 +552,22 @@ fn test_progressive_baseline_quality_parity() {
         psnr_diff,
         baseline_psnr,
         progressive_psnr
+    );
+
+    // DSSIM perceptual quality checks
+    // <0.001 is marginal (hard to see difference)
+    let baseline_dssim = calculate_dssim(&rgb_data, &baseline_decoded, width, height);
+    let progressive_dssim = calculate_dssim(&rgb_data, &progressive_decoded, width, height);
+
+    assert!(
+        baseline_dssim < 0.003,
+        "Baseline DSSIM too high: {:.6} (should be < 0.003 for Q85)",
+        baseline_dssim
+    );
+    assert!(
+        progressive_dssim < 0.003,
+        "Progressive DSSIM too high: {:.6} (should be < 0.003 for Q85)",
+        progressive_dssim
     );
 }
 

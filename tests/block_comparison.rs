@@ -3,6 +3,7 @@
 //! Verifies that both encoding modes produce valid, decodable JPEGs
 //! with consistent quality characteristics.
 
+use dssim::Dssim;
 use std::io::Cursor;
 
 /// Test baseline vs progressive encoding for small images.
@@ -65,6 +66,14 @@ fn test_baseline_vs_progressive_small() {
     // Both should have reasonable quality
     assert!(base_psnr > 30.0, "Baseline PSNR too low: {:.2}", base_psnr);
     assert!(prog_psnr > 30.0, "Progressive PSNR too low: {:.2}", prog_psnr);
+
+    // DSSIM perceptual quality check
+    let base_dssim = calculate_dssim(&rgb_data, &base_dec, width, height);
+    let prog_dssim = calculate_dssim(&rgb_data, &prog_dec, width, height);
+    println!("Baseline DSSIM:    {:.6}", base_dssim);
+    println!("Progressive DSSIM: {:.6}", prog_dssim);
+    assert!(base_dssim < 0.003, "Baseline DSSIM too high: {:.6}", base_dssim);
+    assert!(prog_dssim < 0.003, "Progressive DSSIM too high: {:.6}", prog_dssim);
 
     // Check decoded data similarity
     if base_dec == prog_dec {
@@ -162,6 +171,14 @@ fn test_baseline_vs_progressive_420() {
     assert!(base_psnr > 30.0, "Baseline PSNR too low");
     assert!(prog_psnr > 30.0, "Progressive PSNR too low");
 
+    // DSSIM perceptual quality check
+    let base_dssim = calculate_dssim(&rgb_data, &base_dec, width, height);
+    let prog_dssim = calculate_dssim(&rgb_data, &prog_dec, width, height);
+    println!("Baseline DSSIM:    {:.6}", base_dssim);
+    println!("Progressive DSSIM: {:.6}", prog_dssim);
+    assert!(base_dssim < 0.003, "Baseline DSSIM too high: {:.6}", base_dssim);
+    assert!(prog_dssim < 0.003, "Progressive DSSIM too high: {:.6}", prog_dssim);
+
     // Count scans in progressive
     let base_scans = baseline.windows(2).filter(|w| *w == [0xFF, 0xDA]).count();
     let prog_scans = progressive
@@ -196,4 +213,29 @@ fn calculate_psnr(original: &[u8], decoded: &[u8]) -> f64 {
         return f64::INFINITY;
     }
     10.0 * (255.0_f64 * 255.0 / mse).log10()
+}
+
+fn calculate_dssim(original: &[u8], decoded: &[u8], width: u32, height: u32) -> f64 {
+    use rgb::RGB8;
+
+    let attr = Dssim::new();
+
+    let orig_rgb: Vec<RGB8> = original
+        .chunks(3)
+        .map(|c| RGB8::new(c[0], c[1], c[2]))
+        .collect();
+    let orig_img = attr
+        .create_image_rgb(&orig_rgb, width as usize, height as usize)
+        .expect("Failed to create original image");
+
+    let dec_rgb: Vec<RGB8> = decoded
+        .chunks(3)
+        .map(|c| RGB8::new(c[0], c[1], c[2]))
+        .collect();
+    let dec_img = attr
+        .create_image_rgb(&dec_rgb, width as usize, height as usize)
+        .expect("Failed to create decoded image");
+
+    let (dssim_val, _) = attr.compare(&orig_img, dec_img);
+    dssim_val.into()
 }

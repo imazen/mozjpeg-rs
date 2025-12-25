@@ -3,6 +3,7 @@
 //! Compares Rust vs C mozjpeg with various encoder configurations.
 //! Uses bundled test image if corpus not available.
 
+use dssim::Dssim;
 use mozjpeg_oxide::corpus::{bundled_test_image, kodak_dir};
 use std::fs::File;
 use std::path::{Path, PathBuf};
@@ -48,14 +49,14 @@ fn test_trellis_progressive_comparison() {
     println!("\nRatio (Rust progressive / C): {:.4}", ratio_prog);
     println!("Ratio (Rust baseline / C):    {:.4}", ratio_base);
 
-    // Verify ratios are reasonable
+    // Verify ratios are within 5% of C mozjpeg
     assert!(
-        ratio_prog < 1.10 && ratio_prog > 0.90,
+        ratio_prog < 1.05 && ratio_prog > 0.95,
         "Progressive ratio {:.4} out of range",
         ratio_prog
     );
     assert!(
-        ratio_base < 1.15 && ratio_base > 0.85,
+        ratio_base < 1.05 && ratio_base > 0.95,
         "Baseline ratio {:.4} out of range",
         ratio_base
     );
@@ -96,6 +97,15 @@ fn test_trellis_progressive_comparison() {
     let base_diff = (psnr_rust_base - psnr_c).abs();
     assert!(prog_diff < 2.0, "Progressive differs too much from C: {:.2} dB", prog_diff);
     assert!(base_diff < 2.0, "Baseline differs too much from C: {:.2} dB", base_diff);
+
+    // DSSIM perceptual quality check
+    let dssim_rust_prog = calculate_dssim(&rgb_data, &rust_prog_decoded, width, height);
+    let dssim_rust_base = calculate_dssim(&rgb_data, &rust_base_decoded, width, height);
+    println!("\nDSSIM (lower is better):");
+    println!("  Rust progressive: {:.6}", dssim_rust_prog);
+    println!("  Rust baseline:    {:.6}", dssim_rust_base);
+    assert!(dssim_rust_prog < 0.003, "Progressive DSSIM too high: {:.6}", dssim_rust_prog);
+    assert!(dssim_rust_base < 0.003, "Baseline DSSIM too high: {:.6}", dssim_rust_base);
 }
 
 /// Test small image encoding.
@@ -141,6 +151,14 @@ fn test_small_image_encoding() {
     // Both should decode successfully with reasonable quality
     assert!(prog_psnr > 30.0, "Progressive PSNR too low: {:.2}", prog_psnr);
     assert!(base_psnr > 30.0, "Baseline PSNR too low: {:.2}", base_psnr);
+
+    // DSSIM perceptual quality check
+    let prog_dssim = calculate_dssim(&rgb, &prog_dec, width, height);
+    let base_dssim = calculate_dssim(&rgb, &base_dec, width, height);
+    println!("Progressive DSSIM: {:.6}", prog_dssim);
+    println!("Baseline DSSIM:    {:.6}", base_dssim);
+    assert!(prog_dssim < 0.003, "Progressive DSSIM too high: {:.6}", prog_dssim);
+    assert!(base_dssim < 0.003, "Baseline DSSIM too high: {:.6}", base_dssim);
 }
 
 fn decode_jpeg(data: &[u8]) -> Vec<u8> {
@@ -164,6 +182,31 @@ fn calculate_psnr(original: &[u8], decoded: &[u8]) -> f64 {
         return f64::INFINITY;
     }
     10.0 * (255.0_f64 * 255.0 / mse).log10()
+}
+
+fn calculate_dssim(original: &[u8], decoded: &[u8], width: u32, height: u32) -> f64 {
+    use rgb::RGB8;
+
+    let attr = Dssim::new();
+
+    let orig_rgb: Vec<RGB8> = original
+        .chunks(3)
+        .map(|c| RGB8::new(c[0], c[1], c[2]))
+        .collect();
+    let orig_img = attr
+        .create_image_rgb(&orig_rgb, width as usize, height as usize)
+        .expect("Failed to create original image");
+
+    let dec_rgb: Vec<RGB8> = decoded
+        .chunks(3)
+        .map(|c| RGB8::new(c[0], c[1], c[2]))
+        .collect();
+    let dec_img = attr
+        .create_image_rgb(&dec_rgb, width as usize, height as usize)
+        .expect("Failed to create decoded image");
+
+    let (dssim_val, _) = attr.compare(&orig_img, dec_img);
+    dssim_val.into()
 }
 
 fn encode_c(rgb: &[u8], width: u32, height: u32, quality: i32) -> Vec<u8> {

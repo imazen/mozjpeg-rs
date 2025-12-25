@@ -17,8 +17,8 @@ const SCALEBITS: i32 = 16;
 /// Half unit for rounding during right shift
 const ONE_HALF: i32 = 1 << (SCALEBITS - 1);
 
-/// Center value for Cb/Cr (128 << SCALEBITS)
-const CBCR_OFFSET: i32 = 128 << SCALEBITS;
+/// Center value for Cb/Cr (added after shift, not before, to match C mozjpeg)
+const CBCR_CENTER: i32 = 128;
 
 /// Macro to compute fixed-point constant: FIX(x) = (x * (1 << SCALEBITS) + 0.5)
 const fn fix(x: f64) -> i32 {
@@ -55,13 +55,18 @@ pub fn rgb_to_ycbcr(r: u8, g: u8, b: u8) -> (u8, u8, u8) {
     let y = (FIX_0_29900 * r + FIX_0_58700 * g + FIX_0_11400 * b + ONE_HALF) >> SCALEBITS;
 
     // Cb = -0.16874 * R - 0.33126 * G + 0.50000 * B + 128
-    // CBCR_OFFSET includes the 128 center and ONE_HALF - 1 for rounding
-    let cb = (-FIX_0_16874 * r - FIX_0_33126 * g + FIX_0_50000 * b + CBCR_OFFSET + ONE_HALF - 1)
-        >> SCALEBITS;
+    // Formula matches C mozjpeg: shift first, add 128 after, then clamp
+    let cb = ((-FIX_0_16874 * r - FIX_0_33126 * g + FIX_0_50000 * b + ONE_HALF) >> SCALEBITS)
+        + CBCR_CENTER;
 
     // Cr = 0.50000 * R - 0.41869 * G - 0.08131 * B + 128
-    let cr = (FIX_0_50000 * r - FIX_0_41869 * g - FIX_0_08131 * b + CBCR_OFFSET + ONE_HALF - 1)
-        >> SCALEBITS;
+    let cr = ((FIX_0_50000 * r - FIX_0_41869 * g - FIX_0_08131 * b + ONE_HALF) >> SCALEBITS)
+        + CBCR_CENTER;
+
+    // Clamp to valid range (matches C mozjpeg behavior for extreme values)
+    let y = y.clamp(0, 255);
+    let cb = cb.clamp(0, 255);
+    let cr = cr.clamp(0, 255);
 
     (y as u8, cb as u8, cr as u8)
 }
