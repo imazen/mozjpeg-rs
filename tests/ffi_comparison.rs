@@ -3,7 +3,14 @@
 //! These tests compare our Rust implementations against the C mozjpeg library
 //! at a granular level to ensure correctness.
 //!
-//! Uses sys-local (dev-dependency) which builds from local C source.
+//! Uses sys-local which builds from local C source at ~/work/mozjpeg.
+//! To run these tests, uncomment sys-local in Cargo.toml dev-dependencies.
+//!
+//! This entire file is disabled in CI (sys-local is not included in dev-deps).
+
+// This file will fail to compile if sys-local is not in dev-dependencies.
+// That's intentional - these tests only run locally with the C source available.
+#![cfg(feature = "__sys_local_available")]
 
 use mozjpeg_oxide::{color, dct, quant, sample};
 use sys_local as ffi;
