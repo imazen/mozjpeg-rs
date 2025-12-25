@@ -163,6 +163,7 @@ impl DerivedTable {
 /// # Notes
 /// - The frequency array is modified during processing
 /// - Symbol 256 is a pseudo-symbol that ensures no real symbol gets all-ones code
+#[allow(clippy::needless_range_loop)]
 pub fn generate_optimal_table(freq: &mut [i64; 257]) -> Result<HuffTable> {
     let mut htbl = HuffTable::default();
     let mut bits = [0u8; MAX_CLEN + 1];
@@ -283,9 +284,7 @@ pub fn generate_optimal_table(freq: &mut [i64; 257]) -> Result<HuffTable> {
 
     // Copy final symbol counts to output table
     htbl.bits[0] = 0;
-    for i in 1..=16 {
-        htbl.bits[i] = bits[i];
-    }
+    htbl.bits[1..=16].copy_from_slice(&bits[1..=16]);
 
     // Compute bit_pos AFTER depth limiting - cumulative count of symbols at shorter lengths
     // This gives us the starting position in huffval for each code length

@@ -558,7 +558,7 @@ impl<'a, W: Write> ProgressiveEncoder<'a, W> {
 
         while k <= se {
             let coef = block[JPEG_NATURAL_ORDER[k as usize]];
-            let abs_coef = coef.abs() as u16;
+            let abs_coef = coef.unsigned_abs();
 
             // Check if this is a previously-coded non-zero coefficient
             if (abs_coef >> al) > 1 {

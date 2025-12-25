@@ -239,7 +239,7 @@ impl Encoder {
     ///
     /// # Arguments
     /// * `data` - Raw EXIF data (TIFF structure). The "Exif\0\0" header
-    ///            will be added automatically.
+    ///   will be added automatically.
     ///
     /// Pass empty or call without this method to omit EXIF data.
     pub fn exif_data(mut self, data: Vec<u8>) -> Self {
@@ -444,17 +444,15 @@ impl Encoder {
 
             // Restart marker support for grayscale (each block = 1 MCU)
             let restart_interval = self.restart_interval as usize;
-            let mut mcu_count = 0usize;
             let mut restart_num = 0u8;
 
-            for block in &y_blocks {
+            for (mcu_count, block) in y_blocks.iter().enumerate() {
                 // Emit restart marker if needed
                 if restart_interval > 0 && mcu_count > 0 && mcu_count % restart_interval == 0 {
                     encoder.emit_restart(restart_num)?;
                     restart_num = restart_num.wrapping_add(1) & 0x07;
                 }
                 encoder.encode_block(block, 0, &opt_dc_derived, &opt_ac_derived)?;
-                mcu_count += 1;
             }
 
             bit_writer.flush()?;
@@ -1376,8 +1374,8 @@ impl Encoder {
             trellis_quantize_block(&dct_i32, quant_block, qtable, ac_table, &self.trellis);
         } else {
             // Non-trellis path: descale first, then quantize
-            for i in 0..DCTSIZE2 {
-                dct_i32[i] = (dct_i32[i] + 4) >> 3;
+            for coeff in dct_i32.iter_mut() {
+                *coeff = (*coeff + 4) >> 3;
             }
             quantize_block(&dct_i32, qtable, quant_block);
         }
@@ -1532,8 +1530,8 @@ impl Encoder {
             trellis_quantize_block(&dct_i32, out_block, qtable, ac_table, &self.trellis);
         } else {
             // Non-trellis path: descale first, then quantize
-            for i in 0..DCTSIZE2 {
-                dct_i32[i] = (dct_i32[i] + 4) >> 3;
+            for coeff in dct_i32.iter_mut() {
+                *coeff = (*coeff + 4) >> 3;
             }
             quantize_block(&dct_i32, qtable, out_block);
         }
@@ -2044,6 +2042,7 @@ fn get_row_indices(
 /// C mozjpeg processes DC trellis one block row at a time, with each row
 /// forming an independent chain. This is different from processing all blocks
 /// as one giant chain.
+#[allow(clippy::too_many_arguments)]
 fn run_dc_trellis_by_row(
     raw_blocks: &[[i32; DCTSIZE2]],
     quantized_blocks: &mut [[i16; DCTSIZE2]],
@@ -2173,10 +2172,11 @@ fn create_ycbcr_components(subsampling: Subsampling) -> Vec<ComponentInfo> {
     create_components(subsampling)
 }
 
+#[allow(clippy::needless_range_loop)]
 fn natural_to_zigzag(natural: &[u16; DCTSIZE2]) -> [u16; DCTSIZE2] {
     let mut zigzag = [0u16; DCTSIZE2];
     for i in 0..DCTSIZE2 {
-        zigzag[i] = natural[JPEG_NATURAL_ORDER[i] as usize];
+        zigzag[i] = natural[JPEG_NATURAL_ORDER[i]];
     }
     zigzag
 }
