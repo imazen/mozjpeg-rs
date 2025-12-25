@@ -4,25 +4,35 @@ This document tracks SIMD optimization progress for mozjpeg-oxide.
 
 ## Current Performance Gap (Dec 2024)
 
+**With AVX2 enabled** (`RUSTFLAGS="-C target-feature=+avx2"`):
+
 | Mode | Rust | C mozjpeg | Ratio | Notes |
 |------|------|-----------|-------|-------|
-| Baseline | 2.32 ms | 0.44 ms | **5.3x slower** | Main gap in entropy encoding |
-| Trellis | 11.09 ms | 11.79 ms | **0.94x (faster!)** | Rust wins with trellis |
+| Baseline | 1.73 ms | 0.45 ms | **3.9x slower** | DCT + color optimized |
+| Trellis | 11.13 ms | 11.72 ms | **0.95x (faster!)** | Rust wins with trellis |
+
+**Without AVX2**:
+
+| Mode | Rust | C mozjpeg | Ratio | Notes |
+|------|------|-----------|-------|-------|
+| Baseline | 2.35 ms | 0.45 ms | **5.2x slower** | Main gap in entropy encoding |
+| Trellis | 11.68 ms | 11.73 ms | **~1.0x parity** | Rust matches C |
 
 ## Profiling Results (512x512 image)
 
-### Baseline Mode Breakdown
+### Baseline Mode Breakdown (with AVX2)
 
 | Stage | Time (µs) | % of Total | Priority |
 |-------|-----------|------------|----------|
-| Entropy encoding | 1489 | **49.2%** | **HIGH** |
-| Color conversion | 826 | 27.3% | MEDIUM |
-| Quantization | 305 | 10.1% | LOW |
-| Forward DCT | 249 | 8.2% | Done (AVX2) |
-| Downsampling | 121 | 4.0% | LOW |
-| MCU expansion | 35 | 1.2% | - |
+| Entropy encoding | 1498 | **58.8%** | **HIGH** |
+| Color conversion | 353 | 13.8% | DONE (i32x8) |
+| Quantization | 317 | 12.4% | LOW |
+| Forward DCT | 222 | 8.7% | DONE (AVX2) |
+| Downsampling | 128 | 5.0% | LOW |
+| MCU expansion | 31 | 1.2% | - |
 
-**Key Finding:** Entropy encoding is the main bottleneck at 49% of baseline time.
+**Key Finding:** Entropy encoding is the main remaining bottleneck at 59% of baseline time.
+DCT and color conversion have been optimized.
 
 ### Trellis Mode Breakdown
 
@@ -55,10 +65,11 @@ Potential optimizations:
 
 Reference: libjpeg-turbo uses optimized assembly for entropy encoding.
 
-### 2. Color Conversion (27.3% of time) - **MEDIUM PRIORITY**
+### 2. Color Conversion (13.8% of time) - **DONE**
 
-Currently uses `wide` crate which generates suboptimal code.
-Could benefit from AVX2 intrinsics like DCT.
+Updated to use `i32x8` (8 pixels at a time) for AVX2 width.
+Further optimization would require AVX2 intrinsics for RGB deinterleaving,
+but gains would be limited since gather/scatter is the bottleneck.
 
 ### 3. Quantization (10.1% of time) - **LOW PRIORITY**
 
@@ -136,22 +147,69 @@ are required for actual speedup.
 
 ### Color Conversion (`src/color.rs`)
 
-**Status: DONE**
+**Status: DONE (Dec 2024)**
 
-Uses `wide::i32x4` to process 4 pixels at a time.
+Uses `wide::i32x8` to process 8 pixels at a time (AVX2 width).
 
 ```rust
-// SIMD RGB to YCbCr conversion
-let fix_y_r = i32x4::splat(FIX_0_29900);
-let fix_y_g = i32x4::splat(FIX_0_58700);
-let fix_y_b = i32x4::splat(FIX_0_11400);
+// SIMD RGB to YCbCr conversion (8 pixels at a time)
+let fix_y_r = i32x8::splat(FIX_0_29900);
+let fix_y_g = i32x8::splat(FIX_0_58700);
+let fix_y_b = i32x8::splat(FIX_0_11400);
 
 let y = (fix_y_r * r + fix_y_g * g + fix_y_b * b + half) >> SCALEBITS;
 ```
 
 Functions optimized:
-- `convert_rgb_to_ycbcr()` - 4 pixels/iteration
-- `convert_rgb_to_gray()` - 4 pixels/iteration
+- `convert_rgb_to_ycbcr()` - 8 pixels/iteration (was 4)
+- `convert_rgb_to_gray()` - 8 pixels/iteration (was 4)
+
+**Benchmark Results:**
+| Image Size | Before (i32x4) | After (i32x8) | Improvement |
+|------------|----------------|---------------|-------------|
+| 512x512 | 375 µs | 353 µs | **~6% faster** |
+
+**Why only 6% improvement?**
+- The gather operation (extracting R, G, B from interleaved format) dominates
+- `i32x8::new([...])` still uses element-by-element construction
+- True AVX2 gather (`_mm256_i32gather_epi32`) might help but interleaved
+  RGB format is inherently unfriendly to SIMD
+
+## Failed Optimizations (What Didn't Work)
+
+### FastEntropyEncoder (Dec 2024) - REVERTED
+
+**Hypothesis:** Streaming bitwriter with precomputed code tables would reduce
+per-symbol overhead and improve entropy encoding performance.
+
+**What we tried:**
+```rust
+// Direct Vec<u8> access instead of BitWriter trait object
+struct FastEntropyEncoder {
+    output: Vec<u8>,
+    bit_buffer: u64,
+    bits_in_buffer: u32,
+}
+
+// Precomputed code/size tables per block
+let mut code_buf: [u16; 64] = [0; 64];
+let mut size_buf: [u8; 64] = [0; 64];
+```
+
+**Results:**
+| Mode | Before | After | Change |
+|------|--------|-------|--------|
+| Full encoder | 0.95 ms | 2.45 ms | **2.6x SLOWER** |
+| Isolated entropy | N/A | N/A | 1.38x faster |
+
+**Why it failed:**
+- Micro-optimization hurt macro-performance due to code locality issues
+- The "fast" path bloated the encoder binary, hurting instruction cache
+- Extra complexity (precomputed tables) added overhead that offset gains
+- Isolated benchmarks don't capture instruction cache effects
+
+**Lesson learned:** Always benchmark the full pipeline, not just isolated
+functions. Micro-optimizations can destroy macro-performance.
 
 ## SIMD Ecosystem in Rust (2025)
 
