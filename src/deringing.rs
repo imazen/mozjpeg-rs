@@ -211,8 +211,8 @@ pub fn preprocess_deringing(data: &mut [i16; DCTSIZE2], dc_quant: u16) {
 
         // Get values around the edges of the run for slope calculation
         // If at boundary, use the available values
-        let f1 = data[JPEG_NATURAL_ORDER[if start >= 1 { start - 1 } else { 0 }]];
-        let f2 = data[JPEG_NATURAL_ORDER[if start >= 2 { start - 2 } else { 0 }]];
+        let f1 = data[JPEG_NATURAL_ORDER[start.saturating_sub(1)]];
+        let f2 = data[JPEG_NATURAL_ORDER[start.saturating_sub(2)]];
 
         let l1 = data[JPEG_NATURAL_ORDER[if end < DCTSIZE2 { end } else { DCTSIZE2 - 1 }]];
         let l2 = data[JPEG_NATURAL_ORDER[if end + 1 < DCTSIZE2 {
