@@ -28,6 +28,7 @@ use crate::types::TrellisConfig;
 /// * `qtable` - Quantization table values
 /// * `ac_table` - Derived Huffman table for AC coefficients (for rate estimation)
 /// * `config` - Trellis configuration
+#[allow(clippy::needless_range_loop)]
 pub fn trellis_quantize_block(
     src: &[i32; DCTSIZE2],
     quantized: &mut [i16; DCTSIZE2],
@@ -229,6 +230,8 @@ pub fn trellis_quantize_block(
 ///
 /// # Returns
 /// `BlockEobInfo` containing costs and EOB status for cross-block optimization.
+#[allow(clippy::too_many_arguments)]
+#[allow(clippy::needless_range_loop)]
 pub fn trellis_quantize_block_with_eob_info(
     src: &[i32; DCTSIZE2],
     quantized: &mut [i16; DCTSIZE2],
@@ -486,6 +489,8 @@ pub fn dc_trellis_optimize(
 /// * `quantized_blocks` - All quantized blocks (same storage order as raw_dct_blocks)
 /// * `indices` - Indices into the block arrays specifying processing order
 /// * Other arguments same as `dc_trellis_optimize`
+#[allow(clippy::too_many_arguments)]
+#[allow(clippy::needless_range_loop)]
 pub fn dc_trellis_optimize_indexed(
     raw_dct_blocks: &[[i32; DCTSIZE2]],
     quantized_blocks: &mut [[i16; DCTSIZE2]],
@@ -651,6 +656,7 @@ pub struct BlockEobInfo {
 ///
 /// # Returns
 /// The number of blocks that were zeroed as part of runs.
+#[allow(clippy::needless_range_loop)]
 pub fn optimize_eob_runs(
     blocks: &mut [[i16; DCTSIZE2]],
     block_info: &[BlockEobInfo],
@@ -763,9 +769,7 @@ pub fn optimize_eob_runs(
 
     // Backward pass: zero out blocks that are part of runs
     let mut zeroed_count = 0;
-    if last_block > 0 {
-        last_block -= 1;
-    }
+    last_block = last_block.saturating_sub(1);
 
     let mut bi = num_blocks;
     while bi > 0 {
@@ -785,10 +789,7 @@ pub fn optimize_eob_runs(
             bi -= 1;
         }
         if bi > 0 && bi <= last_block {
-            last_block = block_run_start[bi];
-            if last_block > 0 {
-                last_block -= 1;
-            }
+            last_block = block_run_start[bi].saturating_sub(1);
         }
     }
 
