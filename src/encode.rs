@@ -26,7 +26,7 @@ use crate::consts::{
     AC_CHROMINANCE_BITS, AC_CHROMINANCE_VALUES,
 };
 use crate::dct;
-use crate::entropy::{EntropyEncoder, ProgressiveEncoder, ProgressiveSymbolCounter, SymbolCounter};
+use crate::entropy::{EntropyEncoder, FastEntropyEncoder, ProgressiveEncoder, ProgressiveSymbolCounter, SymbolCounter};
 use crate::huffman::FrequencyCounter;
 use crate::error::{Error, Result};
 use crate::huffman::{DerivedTable, HuffTable};
@@ -1023,41 +1023,67 @@ impl Encoder {
             let scan = &scans[0];
             marker_writer.write_sos(scan, &components)?;
 
-            let output = marker_writer.into_inner();
-            let mut bit_writer = BitWriter::new(output);
-            let mut entropy = EntropyEncoder::new(&mut bit_writer);
+            let mut output = marker_writer.into_inner();
 
-            // Encode from stored blocks with restart marker support
-            y_idx = 0;
-            c_idx = 0;
+            // Use FastEntropyEncoder for direct Vec<u8> output (faster than BitWriter)
             let restart_interval = self.restart_interval as usize;
-            let mut mcu_count = 0usize;
-            let mut restart_num = 0u8;
 
-            for _mcu_row in 0..mcu_rows {
-                for _mcu_col in 0..mcu_cols {
-                    // Emit restart marker if needed (before this MCU, not first)
-                    if restart_interval > 0 && mcu_count > 0 && mcu_count % restart_interval == 0 {
-                        entropy.emit_restart(restart_num)?;
-                        restart_num = restart_num.wrapping_add(1) & 0x07;
-                    }
+            if restart_interval == 0 {
+                // Fast path: no restart markers - use optimized encoder
+                let total_blocks = num_y_blocks + num_chroma_blocks * 2;
+                let mut entropy = FastEntropyEncoder::with_capacity(total_blocks * 32);
 
-                    // Y blocks
-                    for _ in 0..blocks_per_mcu_y {
-                        entropy.encode_block(&y_blocks[y_idx], 0, &opt_dc_luma, &opt_ac_luma)?;
-                        y_idx += 1;
+                y_idx = 0;
+                c_idx = 0;
+                for _mcu_row in 0..mcu_rows {
+                    for _mcu_col in 0..mcu_cols {
+                        // Y blocks
+                        for _ in 0..blocks_per_mcu_y {
+                            entropy.encode_block(&y_blocks[y_idx], 0, &opt_dc_luma, &opt_ac_luma);
+                            y_idx += 1;
+                        }
+                        // Cb block
+                        entropy.encode_block(&cb_blocks[c_idx], 1, &opt_dc_chroma, &opt_ac_chroma);
+                        // Cr block
+                        entropy.encode_block(&cr_blocks[c_idx], 2, &opt_dc_chroma, &opt_ac_chroma);
+                        c_idx += 1;
                     }
-                    // Cb block
-                    entropy.encode_block(&cb_blocks[c_idx], 1, &opt_dc_chroma, &opt_ac_chroma)?;
-                    // Cr block
-                    entropy.encode_block(&cr_blocks[c_idx], 2, &opt_dc_chroma, &opt_ac_chroma)?;
-                    c_idx += 1;
-                    mcu_count += 1;
                 }
+
+                let encoded = entropy.finish();
+                output.write_all(&encoded)?;
+            } else {
+                // Slow path: restart markers require BitWriter for marker emission
+                let mut bit_writer = BitWriter::new(output);
+                let mut entropy = EntropyEncoder::new(&mut bit_writer);
+
+                y_idx = 0;
+                c_idx = 0;
+                let mut mcu_count = 0usize;
+                let mut restart_num = 0u8;
+
+                for _mcu_row in 0..mcu_rows {
+                    for _mcu_col in 0..mcu_cols {
+                        if mcu_count > 0 && mcu_count % restart_interval == 0 {
+                            entropy.emit_restart(restart_num)?;
+                            restart_num = restart_num.wrapping_add(1) & 0x07;
+                        }
+
+                        for _ in 0..blocks_per_mcu_y {
+                            entropy.encode_block(&y_blocks[y_idx], 0, &opt_dc_luma, &opt_ac_luma)?;
+                            y_idx += 1;
+                        }
+                        entropy.encode_block(&cb_blocks[c_idx], 1, &opt_dc_chroma, &opt_ac_chroma)?;
+                        entropy.encode_block(&cr_blocks[c_idx], 2, &opt_dc_chroma, &opt_ac_chroma)?;
+                        c_idx += 1;
+                        mcu_count += 1;
+                    }
+                }
+
+                bit_writer.flush()?;
+                output = bit_writer.into_inner();
             }
 
-            bit_writer.flush()?;
-            let mut output = bit_writer.into_inner();
             output.write_all(&[0xFF, 0xD9])?;
         } else {
             // Baseline mode: Encode directly (streaming)
@@ -1065,24 +1091,84 @@ impl Encoder {
             let scan = &scans[0]; // Baseline has only one scan
             marker_writer.write_sos(scan, &components)?;
 
-            // Encode MCU data
-            let output = marker_writer.into_inner();
-            let mut bit_writer = BitWriter::new(output);
-            let mut entropy = EntropyEncoder::new(&mut bit_writer);
+            let mut output = marker_writer.into_inner();
 
-            self.encode_mcus(
-                &y_mcu, mcu_width, mcu_height,
-                &cb_mcu, &cr_mcu, mcu_chroma_w, mcu_chroma_h,
-                &luma_qtable.values, &chroma_qtable.values,
-                &dc_luma_derived, &dc_chroma_derived,
-                &ac_luma_derived, &ac_chroma_derived,
-                &mut entropy,
-                luma_h, luma_v,
-            )?;
+            if self.restart_interval == 0 {
+                // Fast path: no restart markers - use optimized encoder
+                let mcu_rows = mcu_height / (DCTSIZE * luma_v as usize);
+                let mcu_cols = mcu_width / (DCTSIZE * luma_h as usize);
+                let blocks_per_mcu = (luma_h as usize * luma_v as usize) + 2; // Y blocks + Cb + Cr
+                let total_blocks = mcu_rows * mcu_cols * blocks_per_mcu;
 
-            // Flush bits and get output back
-            bit_writer.flush()?;
-            let mut output = bit_writer.into_inner();
+                let mut entropy = FastEntropyEncoder::with_capacity(total_blocks * 32);
+                let mut dct_block = [0i16; DCTSIZE2];
+                let mut quant_block = [0i16; DCTSIZE2];
+
+                for mcu_row in 0..mcu_rows {
+                    for mcu_col in 0..mcu_cols {
+                        // Encode Y blocks
+                        for v in 0..luma_v as usize {
+                            for h in 0..luma_h as usize {
+                                let block_row = mcu_row * luma_v as usize + v;
+                                let block_col = mcu_col * luma_h as usize + h;
+
+                                self.encode_block_fast(
+                                    &y_mcu, mcu_width,
+                                    block_row, block_col,
+                                    &luma_qtable.values,
+                                    &dc_luma_derived, &ac_luma_derived,
+                                    0,
+                                    &mut entropy,
+                                    &mut dct_block,
+                                    &mut quant_block,
+                                );
+                            }
+                        }
+                        // Encode Cb block
+                        self.encode_block_fast(
+                            &cb_mcu, mcu_chroma_w,
+                            mcu_row, mcu_col,
+                            &chroma_qtable.values,
+                            &dc_chroma_derived, &ac_chroma_derived,
+                            1,
+                            &mut entropy,
+                            &mut dct_block,
+                            &mut quant_block,
+                        );
+                        // Encode Cr block
+                        self.encode_block_fast(
+                            &cr_mcu, mcu_chroma_w,
+                            mcu_row, mcu_col,
+                            &chroma_qtable.values,
+                            &dc_chroma_derived, &ac_chroma_derived,
+                            2,
+                            &mut entropy,
+                            &mut dct_block,
+                            &mut quant_block,
+                        );
+                    }
+                }
+
+                let encoded = entropy.finish();
+                output.write_all(&encoded)?;
+            } else {
+                // Slow path: restart markers require BitWriter
+                let mut bit_writer = BitWriter::new(output);
+                let mut entropy = EntropyEncoder::new(&mut bit_writer);
+
+                self.encode_mcus(
+                    &y_mcu, mcu_width, mcu_height,
+                    &cb_mcu, &cr_mcu, mcu_chroma_w, mcu_chroma_h,
+                    &luma_qtable.values, &chroma_qtable.values,
+                    &dc_luma_derived, &dc_chroma_derived,
+                    &ac_luma_derived, &ac_chroma_derived,
+                    &mut entropy,
+                    luma_h, luma_v,
+                )?;
+
+                bit_writer.flush()?;
+                output = bit_writer.into_inner();
+            }
 
             // EOI
             output.write_all(&[0xFF, 0xD9])?;
@@ -1239,6 +1325,62 @@ impl Encoder {
         entropy.encode_block(quant_block, component, dc_table, ac_table)?;
 
         Ok(())
+    }
+
+    /// Encode a single block using FastEntropyEncoder (no Result, faster).
+    #[inline]
+    fn encode_block_fast(
+        &self,
+        plane: &[u8],
+        plane_width: usize,
+        block_row: usize,
+        block_col: usize,
+        qtable: &[u16; DCTSIZE2],
+        dc_table: &DerivedTable,
+        ac_table: &DerivedTable,
+        component: usize,
+        entropy: &mut FastEntropyEncoder,
+        dct_block: &mut [i16; DCTSIZE2],
+        quant_block: &mut [i16; DCTSIZE2],
+    ) {
+        // Extract 8x8 block from plane
+        let mut samples = [0u8; DCTSIZE2];
+        let base_y = block_row * DCTSIZE;
+        let base_x = block_col * DCTSIZE;
+
+        for row in 0..DCTSIZE {
+            let src_offset = (base_y + row) * plane_width + base_x;
+            let dst_offset = row * DCTSIZE;
+            samples[dst_offset..dst_offset + DCTSIZE]
+                .copy_from_slice(&plane[src_offset..src_offset + DCTSIZE]);
+        }
+
+        // Forward DCT (includes level shift, and optionally overshoot deringing)
+        if self.overshoot_deringing {
+            dct::forward_dct_with_deringing(&samples, dct_block, qtable[0]);
+        } else {
+            dct::forward_dct(&samples, dct_block);
+        }
+
+        // Convert to i32 for quantization
+        let mut dct_i32 = [0i32; DCTSIZE2];
+        for i in 0..DCTSIZE2 {
+            dct_i32[i] = dct_block[i] as i32;
+        }
+
+        // Use trellis quantization if enabled
+        if self.trellis.enabled {
+            trellis_quantize_block(&dct_i32, quant_block, qtable, ac_table, &self.trellis);
+        } else {
+            // Non-trellis path: descale first, then quantize
+            for i in 0..DCTSIZE2 {
+                dct_i32[i] = (dct_i32[i] + 4) >> 3;
+            }
+            quantize_block(&dct_i32, qtable, quant_block);
+        }
+
+        // Entropy encode (no Result)
+        entropy.encode_block(quant_block, component, dc_table, ac_table);
     }
 
     /// Collect all quantized DCT blocks for progressive encoding.

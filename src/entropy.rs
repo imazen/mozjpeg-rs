@@ -238,6 +238,166 @@ pub fn encode_block_standalone<W: Write>(
 }
 
 // =============================================================================
+// Fast Entropy Encoder (optimized for Vec<u8> output)
+// =============================================================================
+
+use crate::bitstream::FastBitWriter;
+
+/// Optimized entropy encoder that writes directly to a Vec<u8>.
+///
+/// This avoids the overhead of the Write trait and Result returns in the hot path.
+pub struct FastEntropyEncoder {
+    /// Bitstream writer
+    writer: FastBitWriter,
+    /// Last DC value for each component
+    last_dc_val: [i16; 4],
+}
+
+impl FastEntropyEncoder {
+    /// Create a new fast entropy encoder with pre-allocated capacity.
+    #[inline]
+    pub fn with_capacity(capacity: usize) -> Self {
+        Self {
+            writer: FastBitWriter::with_capacity(capacity),
+            last_dc_val: [0; 4],
+        }
+    }
+
+    /// Reset DC predictions (called at restart markers).
+    #[inline]
+    pub fn reset_dc(&mut self) {
+        self.last_dc_val = [0; 4];
+    }
+
+    /// Get the last DC value for a component.
+    #[inline]
+    pub fn last_dc(&self, component: usize) -> i16 {
+        self.last_dc_val[component]
+    }
+
+    /// Encode a single 8x8 block of DCT coefficients.
+    #[inline]
+    pub fn encode_block(
+        &mut self,
+        block: &[i16; DCTSIZE2],
+        component: usize,
+        dc_table: &DerivedTable,
+        ac_table: &DerivedTable,
+    ) {
+        self.encode_dc(block[0], component, dc_table);
+        self.encode_ac(block, ac_table);
+    }
+
+    /// Encode DC coefficient using differential coding.
+    #[inline(always)]
+    fn encode_dc(&mut self, dc: i16, component: usize, dc_table: &DerivedTable) {
+        let diff = dc.wrapping_sub(self.last_dc_val[component]);
+        self.last_dc_val[component] = dc;
+
+        let (nbits, value) = if diff < 0 {
+            let nbits = jpeg_nbits(diff);
+            let value = (diff as u16).wrapping_sub(1) & ((1u16 << nbits) - 1);
+            (nbits, value)
+        } else {
+            let nbits = jpeg_nbits(diff);
+            (nbits, diff as u16)
+        };
+
+        let (code, size) = dc_table.get_code(nbits);
+        if size > 0 {
+            self.writer.put_bits(code, size);
+        }
+        if nbits > 0 {
+            self.writer.put_bits(value as u32, nbits);
+        }
+    }
+
+    /// Encode AC coefficients using run-length coding.
+    #[inline(always)]
+    fn encode_ac(&mut self, block: &[i16; DCTSIZE2], ac_table: &DerivedTable) {
+        let mut run = 0u8;
+
+        for &zigzag_idx in JPEG_NATURAL_ORDER[1..].iter() {
+            let coef = block[zigzag_idx];
+
+            if coef == 0 {
+                run += 1;
+            } else {
+                // Emit ZRL codes for runs of 16+ zeros
+                while run >= 16 {
+                    let (code, size) = ac_table.get_code(ZRL);
+                    self.writer.put_bits(code, size);
+                    run -= 16;
+                }
+
+                let (nbits, value) = if coef < 0 {
+                    let nbits = jpeg_nbits(coef);
+                    let value = (coef as u16).wrapping_sub(1) & ((1u16 << nbits) - 1);
+                    (nbits, value)
+                } else {
+                    let nbits = jpeg_nbits(coef);
+                    (nbits, coef as u16)
+                };
+
+                let symbol = (run << 4) | nbits;
+                let (code, size) = ac_table.get_code(symbol);
+                self.writer.put_bits(code, size);
+
+                if nbits > 0 {
+                    self.writer.put_bits(value as u32, nbits);
+                }
+
+                run = 0;
+            }
+        }
+
+        // Emit EOB if there are trailing zeros
+        if run > 0 {
+            let (code, size) = ac_table.get_code(EOB);
+            self.writer.put_bits(code, size);
+        }
+    }
+
+    /// Flush remaining bits and return the encoded bytes.
+    #[inline]
+    pub fn finish(mut self) -> Vec<u8> {
+        self.writer.flush();
+        self.writer.into_bytes()
+    }
+
+    /// Flush remaining bits without consuming the encoder.
+    #[inline]
+    pub fn flush(&mut self) {
+        self.writer.flush();
+    }
+
+    /// Get the current encoded bytes length.
+    #[inline]
+    pub fn len(&self) -> usize {
+        self.writer.len()
+    }
+
+    /// Check if no bytes have been written.
+    #[inline]
+    pub fn is_empty(&self) -> bool {
+        self.writer.is_empty()
+    }
+
+    /// Write raw bytes directly (for markers).
+    #[inline]
+    pub fn write_bytes(&mut self, bytes: &[u8]) {
+        self.writer.write_bytes(bytes);
+    }
+
+    /// Clear the encoder for reuse.
+    #[inline]
+    pub fn clear(&mut self) {
+        self.writer.clear();
+        self.last_dc_val = [0; 4];
+    }
+}
+
+// =============================================================================
 // Symbol Frequency Counting (for Huffman optimization)
 // =============================================================================
 

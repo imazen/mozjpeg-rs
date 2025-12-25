@@ -8,7 +8,7 @@
 use mozjpeg_oxide::{
     color, dct, quant, sample, trellis,
     huffman::{DerivedTable, HuffTable},
-    entropy::EntropyEncoder,
+    entropy::{EntropyEncoder, FastEntropyEncoder},
     bitstream::BitWriter,
     consts::{
         DCTSIZE, DCTSIZE2,
@@ -378,4 +378,133 @@ fn timing_breakdown_trellis() {
     println!("Block count: {} Y blocks", total_y_blocks);
     println!("Trellis per block: {:.1} µs", trellis_avg as f64 / total_y_blocks as f64);
     println!();
+}
+
+#[test]
+fn timing_entropy_comparison() {
+    const WIDTH: usize = 512;
+    const HEIGHT: usize = 512;
+    const ITERATIONS: usize = 20;
+
+    println!("\n=== Entropy Encoder Comparison ({}x{}, {} iterations) ===\n", WIDTH, HEIGHT, ITERATIONS);
+
+    let rgb = create_test_image(WIDTH, HEIGHT);
+    let num_pixels = WIDTH * HEIGHT;
+
+    // Pre-allocate buffers
+    let mut y_plane = vec![0u8; num_pixels];
+    let mut cb_plane = vec![0u8; num_pixels];
+    let mut cr_plane = vec![0u8; num_pixels];
+
+    // Subsampling 4:2:0
+    let (luma_h, luma_v) = (2usize, 2usize);
+    let (mcu_width, mcu_height) = sample::mcu_aligned_dimensions(WIDTH, HEIGHT, luma_h, luma_v);
+    let mut y_mcu = vec![0u8; mcu_width * mcu_height];
+
+    // Quant tables
+    let (luma_qtable, _) = quant::create_quant_tables(85, QuantTableIdx::ImageMagick, true);
+
+    // Huffman tables
+    let dc_luma_huff = create_std_dc_luma_table();
+    let ac_luma_huff = create_std_ac_luma_table();
+    let dc_luma_derived = DerivedTable::from_huff_table(&dc_luma_huff, true).unwrap();
+    let ac_luma_derived = DerivedTable::from_huff_table(&ac_luma_huff, false).unwrap();
+
+    // Block counts
+    let mcu_rows = mcu_height / (DCTSIZE * luma_v);
+    let mcu_cols = mcu_width / (DCTSIZE * luma_h);
+    let y_blocks_per_mcu = luma_h * luma_v;
+    let total_y_blocks = mcu_rows * mcu_cols * y_blocks_per_mcu;
+
+    // Prepare data
+    color::convert_rgb_to_ycbcr(&rgb, &mut y_plane, &mut cb_plane, &mut cr_plane, WIDTH, HEIGHT);
+    sample::expand_to_mcu(&y_plane, WIDTH, HEIGHT, &mut y_mcu, mcu_width, mcu_height);
+
+    // Pre-compute quantized blocks
+    let mut y_blocks: Vec<[i16; DCTSIZE2]> = vec![[0i16; DCTSIZE2]; total_y_blocks];
+    let mut raw_dct: Vec<[i32; DCTSIZE2]> = vec![[0i32; DCTSIZE2]; total_y_blocks];
+    let mut dct_block = [0i16; DCTSIZE2];
+
+    let mut block_idx = 0;
+    for mcu_row in 0..mcu_rows {
+        for mcu_col in 0..mcu_cols {
+            for v_block in 0..luma_v {
+                for h_block in 0..luma_h {
+                    let block_row = mcu_row * luma_v + v_block;
+                    let block_col = mcu_col * luma_h + h_block;
+                    let y_offset = block_row * DCTSIZE * mcu_width + block_col * DCTSIZE;
+
+                    let mut samples = [0i16; DCTSIZE2];
+                    for row in 0..DCTSIZE {
+                        for col in 0..DCTSIZE {
+                            let pixel = y_mcu[y_offset + row * mcu_width + col] as i16;
+                            samples[row * DCTSIZE + col] = pixel - 128;
+                        }
+                    }
+
+                    dct::forward_dct_8x8_transpose(&samples, &mut dct_block);
+                    for i in 0..DCTSIZE2 {
+                        raw_dct[block_idx][i] = dct_block[i] as i32;
+                    }
+                    quant::quantize_block(&raw_dct[block_idx], &luma_qtable.values, &mut y_blocks[block_idx]);
+                    block_idx += 1;
+                }
+            }
+        }
+    }
+
+    // Time the old EntropyEncoder
+    let mut old_time = 0u64;
+    let mut old_bytes = 0usize;
+    for _ in 0..ITERATIONS {
+        let (bytes, t) = timed(|| {
+            let mut output = Vec::with_capacity(total_y_blocks * 64);
+            let mut bit_writer = BitWriter::new(&mut output);
+            let mut encoder = EntropyEncoder::new(&mut bit_writer);
+
+            for block in &y_blocks {
+                encoder.encode_block(block, 0, &dc_luma_derived, &ac_luma_derived).unwrap();
+            }
+            bit_writer.flush().unwrap();
+            output.len()
+        });
+        old_time += t;
+        old_bytes = bytes;
+    }
+
+    // Time the new FastEntropyEncoder
+    let mut new_time = 0u64;
+    let mut new_bytes = 0usize;
+    for _ in 0..ITERATIONS {
+        let (bytes, t) = timed(|| {
+            let mut encoder = FastEntropyEncoder::with_capacity(total_y_blocks * 64);
+
+            for block in &y_blocks {
+                encoder.encode_block(block, 0, &dc_luma_derived, &ac_luma_derived);
+            }
+            let output = encoder.finish();
+            output.len()
+        });
+        new_time += t;
+        new_bytes = bytes;
+    }
+
+    let old_avg = old_time / ITERATIONS as u64;
+    let new_avg = new_time / ITERATIONS as u64;
+    let speedup = old_avg as f64 / new_avg as f64;
+
+    println!("| Encoder         | Time (µs) | Output (bytes) |");
+    println!("|-----------------|-----------|----------------|");
+    println!("| EntropyEncoder  | {:>9} | {:>14} |", old_avg, old_bytes);
+    println!("| FastEntropy     | {:>9} | {:>14} |", new_avg, new_bytes);
+    println!("|-----------------|-----------|----------------|");
+    println!("| **Speedup**     | {:>8.2}x |                |", speedup);
+    println!();
+    println!("Block count: {} blocks", total_y_blocks);
+    println!("Old: {:.1} ns/block", (old_avg as f64 * 1000.0) / total_y_blocks as f64);
+    println!("New: {:.1} ns/block", (new_avg as f64 * 1000.0) / total_y_blocks as f64);
+    println!();
+
+    // Verify output is identical
+    assert_eq!(old_bytes, new_bytes, "Output size mismatch!");
 }

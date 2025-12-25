@@ -226,6 +226,177 @@ impl VecBitWriter {
     }
 }
 
+// =============================================================================
+// Optimized Vec-based BitWriter (no Write trait indirection)
+// =============================================================================
+
+/// Optimized bitstream writer that writes directly to a Vec<u8>.
+///
+/// This avoids the overhead of the Write trait by:
+/// - Direct Vec<u8> access (no trait dispatch)
+/// - Infallible operations (no Result returns in hot path)
+/// - Batch byte stuffing with pre-reserved capacity
+pub struct FastBitWriter {
+    /// Output buffer
+    output: Vec<u8>,
+    /// Bit accumulation buffer
+    put_buffer: u64,
+    /// Number of free bits remaining in the buffer
+    free_bits: i32,
+}
+
+impl FastBitWriter {
+    /// Create a new fast bitstream writer with pre-allocated capacity.
+    #[inline]
+    pub fn with_capacity(capacity: usize) -> Self {
+        Self {
+            output: Vec::with_capacity(capacity),
+            put_buffer: 0,
+            free_bits: BIT_BUF_SIZE as i32,
+        }
+    }
+
+    /// Write bits to the bitstream.
+    ///
+    /// This is the hot path - optimized for speed with no error handling.
+    #[inline(always)]
+    pub fn put_bits(&mut self, code: u32, size: u8) {
+        debug_assert!(size <= 16, "Size must be <= 16 bits");
+        debug_assert!(code < (1u32 << size), "Code exceeds size bits");
+
+        let size = size as i32;
+        self.free_bits -= size;
+
+        if self.free_bits < 0 {
+            // Buffer is full, need to flush
+            let overflow_bits = (-self.free_bits) as u32;
+
+            // Put upper bits into current buffer before flush
+            self.put_buffer = (self.put_buffer << (size + self.free_bits))
+                | ((code as u64) >> overflow_bits);
+            self.flush_buffer();
+
+            // Reset buffer with only the overflow bits
+            self.free_bits += BIT_BUF_SIZE as i32;
+            self.put_buffer = (code as u64) & ((1u64 << overflow_bits) - 1);
+        } else {
+            self.put_buffer = (self.put_buffer << size) | (code as u64);
+        }
+    }
+
+    /// Flush the 64-bit buffer to output with byte stuffing.
+    #[inline]
+    fn flush_buffer(&mut self) {
+        let buffer = self.put_buffer;
+
+        // Fast path: check if any byte might be 0xFF using SWAR
+        // A byte is 0xFF iff it has high bit set and adding 1 causes carry to next byte
+        if buffer & 0x8080808080808080 & !(buffer.wrapping_add(0x0101010101010101)) != 0 {
+            // Slow path: at least one byte might be 0xFF
+            self.emit_bytes_with_stuffing(buffer);
+        } else {
+            // Fast path: no 0xFF bytes, write all 8 bytes directly
+            self.output.extend_from_slice(&buffer.to_be_bytes());
+        }
+    }
+
+    /// Emit 8 bytes with potential 0xFF stuffing (slow path).
+    #[inline(never)]
+    fn emit_bytes_with_stuffing(&mut self, buffer: u64) {
+        // Reserve space for worst case (all 0xFF = 16 bytes)
+        self.output.reserve(16);
+
+        for i in (0..8).rev() {
+            let byte = ((buffer >> (i * 8)) & 0xFF) as u8;
+            self.output.push(byte);
+            if byte == 0xFF {
+                self.output.push(0x00);
+            }
+        }
+    }
+
+    /// Flush remaining bits to output, padding with 1s to byte boundary.
+    #[inline]
+    pub fn flush(&mut self) {
+        let bits_in_buffer = (BIT_BUF_SIZE as i32) - self.free_bits;
+
+        if bits_in_buffer > 0 {
+            // Pad with 1-bits to fill to byte boundary
+            let padding_bits = (8 - (bits_in_buffer % 8)) % 8;
+            let total_bits = bits_in_buffer + padding_bits;
+            let bytes_to_write = (total_bits / 8) as usize;
+
+            // Shift the buffer so bits are at the top, then add padding
+            let shift_amount = (BIT_BUF_SIZE as i32) - bits_in_buffer;
+            let mut buffer = self.put_buffer << shift_amount;
+
+            // Add padding 1-bits at the end
+            if padding_bits > 0 {
+                let padding_shift = (BIT_BUF_SIZE as i32) - total_bits;
+                let padding: u64 = ((1u64 << padding_bits) - 1) << padding_shift;
+                buffer |= padding;
+            }
+
+            // Reserve and write bytes
+            self.output.reserve(bytes_to_write * 2); // Worst case for stuffing
+            for i in 0..bytes_to_write {
+                let byte = (buffer >> (56 - i * 8)) as u8;
+                self.output.push(byte);
+                if byte == 0xFF {
+                    self.output.push(0x00);
+                }
+            }
+
+            // Reset buffer state
+            self.put_buffer = 0;
+            self.free_bits = BIT_BUF_SIZE as i32;
+        }
+    }
+
+    /// Write raw bytes directly (not bit-stuffed).
+    /// Buffer must be flushed first.
+    #[inline]
+    pub fn write_bytes(&mut self, bytes: &[u8]) {
+        debug_assert!(
+            self.free_bits == BIT_BUF_SIZE as i32,
+            "Buffer must be flushed before writing raw bytes"
+        );
+        self.output.extend_from_slice(bytes);
+    }
+
+    /// Get the number of bytes written so far.
+    #[inline]
+    pub fn len(&self) -> usize {
+        self.output.len()
+    }
+
+    /// Check if the writer is empty.
+    #[inline]
+    pub fn is_empty(&self) -> bool {
+        self.output.is_empty()
+    }
+
+    /// Consume the writer and return the output bytes.
+    #[inline]
+    pub fn into_bytes(self) -> Vec<u8> {
+        self.output
+    }
+
+    /// Get a reference to the output bytes.
+    #[inline]
+    pub fn as_bytes(&self) -> &[u8] {
+        &self.output
+    }
+
+    /// Reset the writer for reuse (keeps capacity).
+    #[inline]
+    pub fn clear(&mut self) {
+        self.output.clear();
+        self.put_buffer = 0;
+        self.free_bits = BIT_BUF_SIZE as i32;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -376,5 +547,101 @@ mod tests {
 
         let bytes = writer.into_bytes();
         assert_eq!(bytes, vec![0xFF, 0xD8, 0xFF, 0xD9]);
+    }
+
+    // =========================================================================
+    // FastBitWriter tests
+    // =========================================================================
+
+    #[test]
+    fn test_fast_basic_bits() {
+        let mut writer = FastBitWriter::with_capacity(16);
+
+        // Write 8 bits (one byte)
+        writer.put_bits(0b10101010, 8);
+        writer.flush();
+
+        let bytes = writer.into_bytes();
+        assert_eq!(bytes, vec![0b10101010]);
+    }
+
+    #[test]
+    fn test_fast_multiple_small_writes() {
+        let mut writer = FastBitWriter::with_capacity(16);
+
+        writer.put_bits(0b11, 2);
+        writer.put_bits(0b00, 2);
+        writer.put_bits(0b1111, 4);
+        writer.flush();
+
+        let bytes = writer.into_bytes();
+        assert_eq!(bytes, vec![0b11001111]);
+    }
+
+    #[test]
+    fn test_fast_byte_stuffing() {
+        let mut writer = FastBitWriter::with_capacity(16);
+
+        writer.put_bits(0xFF, 8);
+        writer.flush();
+
+        let bytes = writer.into_bytes();
+        assert_eq!(bytes, vec![0xFF, 0x00]);
+    }
+
+    #[test]
+    fn test_fast_padding_with_ones() {
+        let mut writer = FastBitWriter::with_capacity(16);
+
+        writer.put_bits(0b10101, 5);
+        writer.flush();
+
+        let bytes = writer.into_bytes();
+        assert_eq!(bytes, vec![0b10101111]);
+    }
+
+    #[test]
+    fn test_fast_matches_vec_writer() {
+        // Test that FastBitWriter produces identical output to VecBitWriter
+        let mut fast = FastBitWriter::with_capacity(1024);
+        let mut vec = VecBitWriter::new_vec();
+
+        // Write a variety of bit patterns
+        for i in 0..100u32 {
+            let size = ((i % 16) + 1) as u8;
+            // Mask code to fit in size bits
+            let code = (i * 17) & ((1u32 << size) - 1);
+            fast.put_bits(code, size);
+            vec.put_bits(code, size).unwrap();
+        }
+
+        fast.flush();
+        vec.flush().unwrap();
+
+        assert_eq!(fast.into_bytes(), vec.into_bytes());
+    }
+
+    #[test]
+    fn test_fast_many_writes() {
+        let mut writer = FastBitWriter::with_capacity(1024);
+
+        for i in 0..100u32 {
+            writer.put_bits(i & 0xFF, 8);
+        }
+        writer.flush();
+
+        let bytes = writer.into_bytes();
+        assert!(bytes.len() >= 100);
+    }
+
+    #[test]
+    fn test_fast_cross_byte_boundary() {
+        let mut writer = FastBitWriter::with_capacity(16);
+
+        writer.put_bits(0b111100001111, 12);
+        writer.flush();
+
+        let bytes = writer.into_bytes();
+        assert_eq!(bytes, vec![0xF0, 0xFF, 0x00]);
     }
 }

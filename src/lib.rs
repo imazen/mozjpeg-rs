@@ -84,9 +84,9 @@ pub use huffman::{
     generate_optimal_table, MAX_CODE_LENGTH, NUM_HUFF_TBLS,
 };
 
-pub use bitstream::{BitWriter, VecBitWriter};
+pub use bitstream::{BitWriter, VecBitWriter, FastBitWriter};
 
-pub use entropy::{EntropyEncoder, ProgressiveEncoder, ProgressiveSymbolCounter, SymbolCounter, encode_block_standalone, jpeg_nbits};
+pub use entropy::{EntropyEncoder, FastEntropyEncoder, ProgressiveEncoder, ProgressiveSymbolCounter, SymbolCounter, encode_block_standalone, jpeg_nbits};
 
 pub use sample::{
     downsample_h2v1_row, downsample_h2v2_rows, downsample_plane,
