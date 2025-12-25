@@ -18,21 +18,28 @@ This document tracks SIMD optimization progress for mozjpeg-oxide.
 
 **Status: DONE** (Dec 2024)
 
-Uses row-parallel approach with `wide::i32x4` to process 4 rows simultaneously.
-Each lane of the SIMD vector handles a different row's coefficients.
+Three implementations available:
+1. `forward_dct_8x8` - Scalar reference (kept for correctness testing)
+2. `forward_dct_8x8_simd` - Gather-based SIMD with `i32x4`
+3. `forward_dct_8x8_transpose` - **Transpose-based SIMD with `i32x8`** (production)
+
+The transpose-based approach avoids expensive gather/scatter by:
+1. Loading rows contiguously (no gather)
+2. Transposing to enable row-parallel processing
+3. Using 8-wide SIMD (`i32x8`) for full row processing
 
 **Optimizations applied:**
 - Pre-computed SIMD constants (`const` - no per-call allocation)
 - Pre-negated constants (no runtime negation)
 - Inlined 1D DCT helper (`#[inline(always)]`)
-- Fully unrolled loops for row/column batches
+- Contiguous memory loads (no gather operations)
 
 **Benchmark Results (single 8x8 block):**
-| Implementation | Time | Throughput |
-|----------------|------|------------|
-| Scalar | 80 ns | 800 Melem/s |
-| SIMD | 58.5 ns | 1094 Melem/s |
-| **Speedup** | **1.37x** | |
+| Implementation | Time | Throughput | vs Scalar |
+|----------------|------|------------|-----------|
+| Scalar | 81 ns | 786 Melem/s | 1.00x |
+| SIMD (gather) | 67 ns | 955 Melem/s | 1.21x |
+| **SIMD (transpose)** | **59 ns** | **1078 Melem/s** | **1.37x** |
 
 **Encoder Impact (512x512 image):**
 | Mode | Before SIMD | After SIMD | Improvement |
@@ -44,8 +51,8 @@ The DCT SIMD reduced the gap vs C mozjpeg from 5.7x to 5.0x slower.
 
 **Why only 1.37x speedup instead of 4x?**
 - `wide` crate uses portable SIMD, not native intrinsics
-- Gather/scatter operations (loading from non-contiguous memory) dominate
-- C mozjpeg uses true SSE2/AVX2 with aligned vector loads
+- Transpose overhead (3 transposes per block, done via scalar)
+- C mozjpeg uses true SSE2/AVX2 with shuffle-based transpose
 
 ### Color Conversion (`src/color.rs`)
 

@@ -71,7 +71,7 @@ pub use quant::{
     quantize_block, dequantize_block,
 };
 
-pub use dct::{forward_dct_8x8, forward_dct_8x8_simd, forward_dct, forward_dct_with_deringing, level_shift};
+pub use dct::{forward_dct_8x8, forward_dct_8x8_simd, forward_dct_8x8_transpose, forward_dct, forward_dct_with_deringing, level_shift};
 
 pub use color::{
     rgb_to_ycbcr, rgb_to_gray, cmyk_to_ycck,

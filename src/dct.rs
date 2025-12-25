@@ -20,7 +20,7 @@
 //! Proc. ICASSP 1989, pp. 988-991.
 
 use crate::consts::{DCTSIZE, DCTSIZE2};
-use wide::i32x4;
+use wide::{i32x4, i32x8};
 
 // Fixed-point constants for 13-bit precision (CONST_BITS = 13)
 const CONST_BITS: i32 = 13;
@@ -420,6 +420,234 @@ pub fn forward_dct_8x8_simd(samples: &[i16; DCTSIZE2], coeffs: &mut [i16; DCTSIZ
     }
 }
 
+// ============================================================================
+// Transpose-based SIMD DCT with contiguous memory access
+// ============================================================================
+
+// SIMD constants for i32x8 (8-wide operations)
+const SIMD8_FIX_0_298631336: i32x8 = i32x8::new([FIX_0_298631336; 8]);
+const SIMD8_FIX_0_541196100: i32x8 = i32x8::new([FIX_0_541196100; 8]);
+const SIMD8_FIX_0_765366865: i32x8 = i32x8::new([FIX_0_765366865; 8]);
+const SIMD8_FIX_1_175875602: i32x8 = i32x8::new([FIX_1_175875602; 8]);
+const SIMD8_FIX_1_501321110: i32x8 = i32x8::new([FIX_1_501321110; 8]);
+const SIMD8_FIX_1_847759065: i32x8 = i32x8::new([FIX_1_847759065; 8]);
+const SIMD8_FIX_2_053119869: i32x8 = i32x8::new([FIX_2_053119869; 8]);
+const SIMD8_FIX_3_072711026: i32x8 = i32x8::new([FIX_3_072711026; 8]);
+
+// Negated constants for i32x8
+const SIMD8_NEG_FIX_0_390180644: i32x8 = i32x8::new([-FIX_0_390180644; 8]);
+const SIMD8_NEG_FIX_0_899976223: i32x8 = i32x8::new([-FIX_0_899976223; 8]);
+const SIMD8_NEG_FIX_1_961570560: i32x8 = i32x8::new([-FIX_1_961570560; 8]);
+const SIMD8_NEG_FIX_2_562915447: i32x8 = i32x8::new([-FIX_2_562915447; 8]);
+
+/// SIMD descale for i32x8
+#[inline(always)]
+fn descale_simd8(x: i32x8, n: i32) -> i32x8 {
+    let round = i32x8::splat(1 << (n - 1));
+    (x + round) >> n
+}
+
+/// 1D DCT on 8 values simultaneously using i32x8.
+/// Each element of the vectors corresponds to a different row/column.
+#[inline(always)]
+fn dct_1d_8wide(
+    d0: i32x8, d1: i32x8, d2: i32x8, d3: i32x8,
+    d4: i32x8, d5: i32x8, d6: i32x8, d7: i32x8,
+    shift_pass1: bool,
+) -> [i32x8; 8] {
+    // Even part
+    let tmp0 = d0 + d7;
+    let tmp7 = d0 - d7;
+    let tmp1 = d1 + d6;
+    let tmp6 = d1 - d6;
+    let tmp2 = d2 + d5;
+    let tmp5 = d2 - d5;
+    let tmp3 = d3 + d4;
+    let tmp4 = d3 - d4;
+
+    let tmp10 = tmp0 + tmp3;
+    let tmp13 = tmp0 - tmp3;
+    let tmp11 = tmp1 + tmp2;
+    let tmp12 = tmp1 - tmp2;
+
+    let (out0, out4) = if shift_pass1 {
+        ((tmp10 + tmp11) << PASS1_BITS, (tmp10 - tmp11) << PASS1_BITS)
+    } else {
+        (
+            descale_simd8(tmp10 + tmp11, PASS1_BITS),
+            descale_simd8(tmp10 - tmp11, PASS1_BITS),
+        )
+    };
+
+    let z1 = (tmp12 + tmp13) * SIMD8_FIX_0_541196100;
+    let (out2, out6) = if shift_pass1 {
+        (
+            descale_simd8(z1 + tmp13 * SIMD8_FIX_0_765366865, CONST_BITS - PASS1_BITS),
+            descale_simd8(z1 - tmp12 * SIMD8_FIX_1_847759065, CONST_BITS - PASS1_BITS),
+        )
+    } else {
+        (
+            descale_simd8(z1 + tmp13 * SIMD8_FIX_0_765366865, CONST_BITS + PASS1_BITS),
+            descale_simd8(z1 - tmp12 * SIMD8_FIX_1_847759065, CONST_BITS + PASS1_BITS),
+        )
+    };
+
+    // Odd part
+    let z1 = tmp4 + tmp7;
+    let z2 = tmp5 + tmp6;
+    let z3 = tmp4 + tmp6;
+    let z4 = tmp5 + tmp7;
+    let z5 = (z3 + z4) * SIMD8_FIX_1_175875602;
+
+    let tmp4 = tmp4 * SIMD8_FIX_0_298631336;
+    let tmp5 = tmp5 * SIMD8_FIX_2_053119869;
+    let tmp6 = tmp6 * SIMD8_FIX_3_072711026;
+    let tmp7 = tmp7 * SIMD8_FIX_1_501321110;
+
+    let neg_z1 = z1 * SIMD8_NEG_FIX_0_899976223;
+    let neg_z2 = z2 * SIMD8_NEG_FIX_2_562915447;
+    let z3 = z3 * SIMD8_NEG_FIX_1_961570560 + z5;
+    let z4 = z4 * SIMD8_NEG_FIX_0_390180644 + z5;
+
+    let scale = if shift_pass1 { CONST_BITS - PASS1_BITS } else { CONST_BITS + PASS1_BITS };
+    let out7 = descale_simd8(tmp4 + neg_z1 + z3, scale);
+    let out5 = descale_simd8(tmp5 + neg_z2 + z4, scale);
+    let out3 = descale_simd8(tmp6 + neg_z2 + z3, scale);
+    let out1 = descale_simd8(tmp7 + neg_z1 + z4, scale);
+
+    [out0, out1, out2, out3, out4, out5, out6, out7]
+}
+
+/// Transpose 8x8 matrix stored as 8 i32x8 vectors.
+/// Uses standard SSE/AVX transpose algorithm in stages.
+#[inline(always)]
+fn transpose_8x8(rows: &mut [i32x8; 8]) {
+    // Convert to arrays for element access - we need direct manipulation
+    let mut data: [[i32; 8]; 8] = [
+        rows[0].to_array(),
+        rows[1].to_array(),
+        rows[2].to_array(),
+        rows[3].to_array(),
+        rows[4].to_array(),
+        rows[5].to_array(),
+        rows[6].to_array(),
+        rows[7].to_array(),
+    ];
+
+    // Transpose in-place
+    for i in 0..8 {
+        for j in (i + 1)..8 {
+            let tmp = data[i][j];
+            data[i][j] = data[j][i];
+            data[j][i] = tmp;
+        }
+    }
+
+    // Write back
+    rows[0] = i32x8::new(data[0]);
+    rows[1] = i32x8::new(data[1]);
+    rows[2] = i32x8::new(data[2]);
+    rows[3] = i32x8::new(data[3]);
+    rows[4] = i32x8::new(data[4]);
+    rows[5] = i32x8::new(data[5]);
+    rows[6] = i32x8::new(data[6]);
+    rows[7] = i32x8::new(data[7]);
+}
+
+/// Transpose-based SIMD DCT with contiguous memory access.
+///
+/// This version:
+/// 1. Loads rows contiguously (no gather operations)
+/// 2. Transposes so that dct_1d_8wide operates within rows
+/// 3. Does 1D DCT (row pass)
+/// 4. Transposes again
+/// 5. Does 1D DCT (column pass)
+///
+/// The key insight: when we call dct_1d_8wide(rows[0], rows[1], ..., rows[7]),
+/// it combines rows[0]+rows[7], rows[1]+rows[6], etc. - that's column-wise processing.
+/// To do row-wise processing, we transpose first so that rows become columns.
+///
+/// The contiguous loads should be faster than the gather-based approach.
+pub fn forward_dct_8x8_transpose(samples: &[i16; DCTSIZE2], coeffs: &mut [i16; DCTSIZE2]) {
+    // Load all 8 rows contiguously - this is the key optimization!
+    // Each row is 8 contiguous i16 values converted to i32
+    let mut data: [i32x8; 8] = [
+        i32x8::new([
+            samples[0] as i32, samples[1] as i32, samples[2] as i32, samples[3] as i32,
+            samples[4] as i32, samples[5] as i32, samples[6] as i32, samples[7] as i32,
+        ]),
+        i32x8::new([
+            samples[8] as i32, samples[9] as i32, samples[10] as i32, samples[11] as i32,
+            samples[12] as i32, samples[13] as i32, samples[14] as i32, samples[15] as i32,
+        ]),
+        i32x8::new([
+            samples[16] as i32, samples[17] as i32, samples[18] as i32, samples[19] as i32,
+            samples[20] as i32, samples[21] as i32, samples[22] as i32, samples[23] as i32,
+        ]),
+        i32x8::new([
+            samples[24] as i32, samples[25] as i32, samples[26] as i32, samples[27] as i32,
+            samples[28] as i32, samples[29] as i32, samples[30] as i32, samples[31] as i32,
+        ]),
+        i32x8::new([
+            samples[32] as i32, samples[33] as i32, samples[34] as i32, samples[35] as i32,
+            samples[36] as i32, samples[37] as i32, samples[38] as i32, samples[39] as i32,
+        ]),
+        i32x8::new([
+            samples[40] as i32, samples[41] as i32, samples[42] as i32, samples[43] as i32,
+            samples[44] as i32, samples[45] as i32, samples[46] as i32, samples[47] as i32,
+        ]),
+        i32x8::new([
+            samples[48] as i32, samples[49] as i32, samples[50] as i32, samples[51] as i32,
+            samples[52] as i32, samples[53] as i32, samples[54] as i32, samples[55] as i32,
+        ]),
+        i32x8::new([
+            samples[56] as i32, samples[57] as i32, samples[58] as i32, samples[59] as i32,
+            samples[60] as i32, samples[61] as i32, samples[62] as i32, samples[63] as i32,
+        ]),
+    ];
+
+    // Transpose first: now data[i] contains column i (all 8 rows' values for column i)
+    // After this, dct_1d_8wide will process all 8 rows in parallel
+    transpose_8x8(&mut data);
+
+    // Pass 1: 1D DCT on rows (we transposed, so this processes row elements)
+    // dct_1d_8wide(data[0], data[1], ...) now combines columns 0+7, 1+6, etc. within each row
+    let result = dct_1d_8wide(
+        data[0], data[1], data[2], data[3],
+        data[4], data[5], data[6], data[7],
+        true,
+    );
+    data = result;
+
+    // Transpose: data[i] now contains row i
+    transpose_8x8(&mut data);
+
+    // Pass 2: 1D DCT on columns (we transposed, so this processes column elements)
+    // dct_1d_8wide(data[0], data[1], ...) now combines rows 0+7, 1+6, etc. within each column
+    // Output: data[row][col] = final DCT coefficient - already row-major!
+    let result = dct_1d_8wide(
+        data[0], data[1], data[2], data[3],
+        data[4], data[5], data[6], data[7],
+        false,
+    );
+    data = result;
+
+    // Store results (data is already in row-major form)
+    let arr0 = data[0].to_array(); let arr1 = data[1].to_array();
+    let arr2 = data[2].to_array(); let arr3 = data[3].to_array();
+    let arr4 = data[4].to_array(); let arr5 = data[5].to_array();
+    let arr6 = data[6].to_array(); let arr7 = data[7].to_array();
+
+    for i in 0..8 { coeffs[i] = arr0[i] as i16; }
+    for i in 0..8 { coeffs[8 + i] = arr1[i] as i16; }
+    for i in 0..8 { coeffs[16 + i] = arr2[i] as i16; }
+    for i in 0..8 { coeffs[24 + i] = arr3[i] as i16; }
+    for i in 0..8 { coeffs[32 + i] = arr4[i] as i16; }
+    for i in 0..8 { coeffs[40 + i] = arr5[i] as i16; }
+    for i in 0..8 { coeffs[48 + i] = arr6[i] as i16; }
+    for i in 0..8 { coeffs[56 + i] = arr7[i] as i16; }
+}
+
 /// Prepare a sample block for DCT by level-shifting (centering around 0).
 ///
 /// JPEG requires samples to be centered around 0 before DCT.
@@ -437,6 +665,7 @@ pub fn level_shift(samples: &[u8; DCTSIZE2], output: &mut [i16; DCTSIZE2]) {
 /// Combined level-shift and forward DCT.
 ///
 /// Uses SIMD-optimized DCT for better performance.
+/// Uses transpose-based approach for contiguous memory access.
 ///
 /// # Arguments
 /// * `samples` - Input 8x8 block of pixel samples (0-255)
@@ -444,12 +673,13 @@ pub fn level_shift(samples: &[u8; DCTSIZE2], output: &mut [i16; DCTSIZE2]) {
 pub fn forward_dct(samples: &[u8; DCTSIZE2], coeffs: &mut [i16; DCTSIZE2]) {
     let mut shifted = [0i16; DCTSIZE2];
     level_shift(samples, &mut shifted);
-    forward_dct_8x8_simd(&shifted, coeffs);
+    forward_dct_8x8_transpose(&shifted, coeffs);
 }
 
 /// Combined level-shift, overshoot deringing, and forward DCT.
 ///
 /// Uses SIMD-optimized DCT for better performance.
+/// Uses transpose-based approach for contiguous memory access.
 /// This variant applies mozjpeg's overshoot deringing preprocessing to reduce
 /// visible ringing artifacts near hard edges on white backgrounds.
 ///
@@ -470,7 +700,7 @@ pub fn forward_dct_with_deringing(
     let mut shifted = [0i16; DCTSIZE2];
     level_shift(samples, &mut shifted);
     preprocess_deringing(&mut shifted, dc_quant);
-    forward_dct_8x8_simd(&shifted, coeffs);
+    forward_dct_8x8_transpose(&shifted, coeffs);
 }
 
 #[cfg(test)]
@@ -661,6 +891,78 @@ mod tests {
             assert_eq!(
                 coeffs_scalar, coeffs_simd,
                 "SIMD should match scalar for pattern seed {}", seed
+            );
+        }
+    }
+
+    #[test]
+    fn test_transpose_matches_scalar_flat() {
+        // Test transpose SIMD produces identical output to scalar for flat block
+        let samples = [100i16; DCTSIZE2];
+        let mut coeffs_scalar = [0i16; DCTSIZE2];
+        let mut coeffs_transpose = [0i16; DCTSIZE2];
+
+        forward_dct_8x8(&samples, &mut coeffs_scalar);
+        forward_dct_8x8_transpose(&samples, &mut coeffs_transpose);
+
+        assert_eq!(coeffs_scalar, coeffs_transpose, "Transpose SIMD should match scalar for flat block");
+    }
+
+    #[test]
+    fn test_transpose_matches_scalar_gradient() {
+        // Test transpose SIMD produces identical output to scalar for gradient pattern
+        let mut samples = [0i16; DCTSIZE2];
+        for row in 0..DCTSIZE {
+            for col in 0..DCTSIZE {
+                samples[row * DCTSIZE + col] = ((row as i16 - 4) * 20 + (col as i16 - 4) * 10);
+            }
+        }
+
+        let mut coeffs_scalar = [0i16; DCTSIZE2];
+        let mut coeffs_transpose = [0i16; DCTSIZE2];
+
+        forward_dct_8x8(&samples, &mut coeffs_scalar);
+        forward_dct_8x8_transpose(&samples, &mut coeffs_transpose);
+
+        assert_eq!(coeffs_scalar, coeffs_transpose, "Transpose SIMD should match scalar for gradient block");
+    }
+
+    #[test]
+    fn test_transpose_matches_scalar_random() {
+        // Test transpose SIMD produces identical output to scalar for pseudo-random pattern
+        let mut samples = [0i16; DCTSIZE2];
+        for i in 0..DCTSIZE2 {
+            // Deterministic pseudo-random values in range -128..127
+            samples[i] = ((i as i32 * 73 + 17) % 256 - 128) as i16;
+        }
+
+        let mut coeffs_scalar = [0i16; DCTSIZE2];
+        let mut coeffs_transpose = [0i16; DCTSIZE2];
+
+        forward_dct_8x8(&samples, &mut coeffs_scalar);
+        forward_dct_8x8_transpose(&samples, &mut coeffs_transpose);
+
+        assert_eq!(coeffs_scalar, coeffs_transpose, "Transpose SIMD should match scalar for random block");
+    }
+
+    #[test]
+    fn test_transpose_matches_scalar_all_patterns() {
+        // Exhaustive test with many patterns
+        for seed in 0..20 {
+            let mut samples = [0i16; DCTSIZE2];
+            for i in 0..DCTSIZE2 {
+                samples[i] = ((i as i32 * (seed * 37 + 13) + seed * 7) % 256 - 128) as i16;
+            }
+
+            let mut coeffs_scalar = [0i16; DCTSIZE2];
+            let mut coeffs_transpose = [0i16; DCTSIZE2];
+
+            forward_dct_8x8(&samples, &mut coeffs_scalar);
+            forward_dct_8x8_transpose(&samples, &mut coeffs_transpose);
+
+            assert_eq!(
+                coeffs_scalar, coeffs_transpose,
+                "Transpose SIMD should match scalar for pattern seed {}", seed
             );
         }
     }

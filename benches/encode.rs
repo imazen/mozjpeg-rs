@@ -275,7 +275,7 @@ fn bench_subsampling(c: &mut Criterion) {
 
 /// Benchmark DCT implementations (scalar vs SIMD).
 fn bench_dct(c: &mut Criterion) {
-    use mozjpeg_oxide::dct::{forward_dct_8x8, forward_dct_8x8_simd};
+    use mozjpeg_oxide::dct::{forward_dct_8x8, forward_dct_8x8_simd, forward_dct_8x8_transpose};
 
     // Create test data
     let mut samples = [0i16; 64];
@@ -294,10 +294,18 @@ fn bench_dct(c: &mut Criterion) {
         })
     });
 
-    group.bench_function("simd", |b| {
+    group.bench_function("simd_gather", |b| {
         let mut coeffs = [0i16; 64];
         b.iter(|| {
             forward_dct_8x8_simd(black_box(&samples), &mut coeffs);
+            black_box(coeffs)
+        })
+    });
+
+    group.bench_function("simd_transpose", |b| {
+        let mut coeffs = [0i16; 64];
+        b.iter(|| {
+            forward_dct_8x8_transpose(black_box(&samples), &mut coeffs);
             black_box(coeffs)
         })
     });
