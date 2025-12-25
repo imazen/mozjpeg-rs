@@ -73,8 +73,8 @@ pub fn forward_dct_8x8(samples: &[i16; DCTSIZE2], coeffs: &mut [i16; DCTSIZE2]) 
     for row in 0..DCTSIZE {
         let base = row * DCTSIZE;
 
-        let tmp0 = data[base + 0] + data[base + 7];
-        let tmp7 = data[base + 0] - data[base + 7];
+        let tmp0 = data[base] + data[base + 7];
+        let tmp7 = data[base] - data[base + 7];
         let tmp1 = data[base + 1] + data[base + 6];
         let tmp6 = data[base + 1] - data[base + 6];
         let tmp2 = data[base + 2] + data[base + 5];
@@ -88,7 +88,7 @@ pub fn forward_dct_8x8(samples: &[i16; DCTSIZE2], coeffs: &mut [i16; DCTSIZE2]) 
         let tmp11 = tmp1 + tmp2;
         let tmp12 = tmp1 - tmp2;
 
-        data[base + 0] = (tmp10 + tmp11) << PASS1_BITS;
+        data[base] = (tmp10 + tmp11) << PASS1_BITS;
         data[base + 4] = (tmp10 - tmp11) << PASS1_BITS;
 
         let z1 = (tmp12 + tmp13) * FIX_0_541196100;
@@ -120,10 +120,10 @@ pub fn forward_dct_8x8(samples: &[i16; DCTSIZE2], coeffs: &mut [i16; DCTSIZE2]) 
     // Pass 2: process columns
     // We remove PASS1_BITS scaling but leave results scaled by factor of 8
     for col in 0..DCTSIZE {
-        let tmp0 = data[DCTSIZE * 0 + col] + data[DCTSIZE * 7 + col];
-        let tmp7 = data[DCTSIZE * 0 + col] - data[DCTSIZE * 7 + col];
-        let tmp1 = data[DCTSIZE * 1 + col] + data[DCTSIZE * 6 + col];
-        let tmp6 = data[DCTSIZE * 1 + col] - data[DCTSIZE * 6 + col];
+        let tmp0 = data[col] + data[DCTSIZE * 7 + col];
+        let tmp7 = data[col] - data[DCTSIZE * 7 + col];
+        let tmp1 = data[DCTSIZE + col] + data[DCTSIZE * 6 + col];
+        let tmp6 = data[DCTSIZE + col] - data[DCTSIZE * 6 + col];
         let tmp2 = data[DCTSIZE * 2 + col] + data[DCTSIZE * 5 + col];
         let tmp5 = data[DCTSIZE * 2 + col] - data[DCTSIZE * 5 + col];
         let tmp3 = data[DCTSIZE * 3 + col] + data[DCTSIZE * 4 + col];
@@ -135,7 +135,7 @@ pub fn forward_dct_8x8(samples: &[i16; DCTSIZE2], coeffs: &mut [i16; DCTSIZE2]) 
         let tmp11 = tmp1 + tmp2;
         let tmp12 = tmp1 - tmp2;
 
-        data[DCTSIZE * 0 + col] = descale(tmp10 + tmp11, PASS1_BITS);
+        data[col] = descale(tmp10 + tmp11, PASS1_BITS);
         data[DCTSIZE * 4 + col] = descale(tmp10 - tmp11, PASS1_BITS);
 
         let z1 = (tmp12 + tmp13) * FIX_0_541196100;
@@ -161,7 +161,7 @@ pub fn forward_dct_8x8(samples: &[i16; DCTSIZE2], coeffs: &mut [i16; DCTSIZE2]) 
         data[DCTSIZE * 7 + col] = descale(tmp4 + z1 + z3, CONST_BITS + PASS1_BITS);
         data[DCTSIZE * 5 + col] = descale(tmp5 + z2 + z4, CONST_BITS + PASS1_BITS);
         data[DCTSIZE * 3 + col] = descale(tmp6 + z2 + z3, CONST_BITS + PASS1_BITS);
-        data[DCTSIZE * 1 + col] = descale(tmp7 + z1 + z4, CONST_BITS + PASS1_BITS);
+        data[DCTSIZE + col] = descale(tmp7 + z1 + z4, CONST_BITS + PASS1_BITS);
     }
 
     // Copy results to output
@@ -195,6 +195,7 @@ const SIMD_NEG_FIX_2_562915447: i32x4 = i32x4::new([-FIX_2_562915447; 4]);
 
 /// Process one batch of 4 rows/columns with 1D DCT.
 /// Fully inlined for performance - no function call overhead.
+#[allow(clippy::too_many_arguments)]
 #[inline(always)]
 fn dct_1d_simd(
     d0: i32x4,
@@ -571,6 +572,7 @@ fn descale_simd8(x: i32x8, n: i32) -> i32x8 {
 
 /// 1D DCT on 8 values simultaneously using i32x8.
 /// Each element of the vectors corresponds to a different row/column.
+#[allow(clippy::too_many_arguments)]
 #[inline(always)]
 fn dct_1d_8wide(
     d0: i32x8,
@@ -666,7 +668,9 @@ fn transpose_8x8(rows: &mut [i32x8; 8]) {
         rows[7].to_array(),
     ];
 
-    // Transpose in-place
+    // Transpose in-place using swap for upper triangle
+    // We need both indices for 2D array element swap
+    #[allow(clippy::needless_range_loop)]
     for i in 0..8 {
         for j in (i + 1)..8 {
             let tmp = data[i][j];
