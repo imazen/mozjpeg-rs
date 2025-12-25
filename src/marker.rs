@@ -112,7 +112,9 @@ impl<W: Write> MarkerWriter<W> {
         Ok(())
     }
 
-    /// Write Define Quantization Table marker.
+    /// Write Define Quantization Table marker for a single table.
+    ///
+    /// For better compression, prefer `write_dqt_multiple` to combine tables.
     ///
     /// # Arguments
     /// * `table_index` - Table slot (0-3)
@@ -124,29 +126,53 @@ impl<W: Write> MarkerWriter<W> {
         table: &[u16; DCTSIZE2],
         force_16bit: bool,
     ) -> std::io::Result<()> {
-        // Check if we need 16-bit precision
-        let use_16bit = force_16bit || table.iter().any(|&v| v > 255);
+        self.write_dqt_multiple(&[(table_index, table, force_16bit)])
+    }
+
+    /// Write Define Quantization Table marker for multiple tables.
+    ///
+    /// Combines multiple tables into a single DQT marker for smaller file size.
+    /// C mozjpeg does this optimization - one marker instead of N markers saves
+    /// (N-1) * 2 bytes of marker overhead.
+    ///
+    /// # Arguments
+    /// * `tables` - Slice of (table_index, table values, force_16bit)
+    pub fn write_dqt_multiple(
+        &mut self,
+        tables: &[(u8, &[u16; DCTSIZE2], bool)],
+    ) -> std::io::Result<()> {
+        if tables.is_empty() {
+            return Ok(());
+        }
+
+        // Calculate total length
+        let mut total_len = 2u16; // length field itself
+        for (_, table, force_16bit) in tables {
+            let use_16bit = *force_16bit || table.iter().any(|&v| v > 255);
+            total_len += 1 + if use_16bit { 128 } else { 64 }; // Pq/Tq + values
+        }
 
         self.emit_marker(JPEG_DQT)?;
+        self.emit_2bytes(total_len)?;
 
-        // Length: 2 (length) + 1 (Pq/Tq) + 64 or 128 (table values)
-        let table_size = if use_16bit { 128 } else { 64 };
-        self.emit_2bytes(3 + table_size)?;
+        for (table_index, table, force_16bit) in tables {
+            let use_16bit = *force_16bit || table.iter().any(|&v| v > 255);
 
-        // Pq (precision) in high nibble, Tq (table index) in low nibble
-        let pq_tq = if use_16bit {
-            0x10 | (table_index & 0x0F)
-        } else {
-            table_index & 0x0F
-        };
-        self.emit_byte(pq_tq)?;
-
-        // Table values in zigzag order
-        for &value in table.iter() {
-            if use_16bit {
-                self.emit_2bytes(value)?;
+            // Pq (precision) in high nibble, Tq (table index) in low nibble
+            let pq_tq = if use_16bit {
+                0x10 | (*table_index & 0x0F)
             } else {
-                self.emit_byte(value as u8)?;
+                *table_index & 0x0F
+            };
+            self.emit_byte(pq_tq)?;
+
+            // Table values in zigzag order
+            for &value in table.iter() {
+                if use_16bit {
+                    self.emit_2bytes(value)?;
+                } else {
+                    self.emit_byte(value as u8)?;
+                }
             }
         }
 
@@ -194,7 +220,9 @@ impl<W: Write> MarkerWriter<W> {
         Ok(())
     }
 
-    /// Write Define Huffman Table marker.
+    /// Write Define Huffman Table marker for a single table.
+    ///
+    /// For better compression, prefer `write_dht_multiple` to combine tables.
     ///
     /// # Arguments
     /// * `table_index` - Table slot (0-3)
@@ -206,30 +234,55 @@ impl<W: Write> MarkerWriter<W> {
         is_ac: bool,
         table: &HuffTable,
     ) -> std::io::Result<()> {
-        self.emit_marker(JPEG_DHT)?;
+        self.write_dht_multiple(&[(table_index, is_ac, table)])
+    }
 
-        // Count total symbols
-        let num_symbols: usize = table.bits[1..=16].iter().map(|&b| b as usize).sum();
-
-        // Length: 2 (length) + 1 (Tc/Th) + 16 (bits) + num_symbols
-        self.emit_2bytes((3 + 16 + num_symbols) as u16)?;
-
-        // Tc (table class) in high nibble, Th (table index) in low nibble
-        let tc_th = if is_ac {
-            0x10 | (table_index & 0x0F)
-        } else {
-            table_index & 0x0F
-        };
-        self.emit_byte(tc_th)?;
-
-        // Bits array (counts for each code length)
-        for i in 1..=16 {
-            self.emit_byte(table.bits[i])?;
+    /// Write Define Huffman Table marker for multiple tables.
+    ///
+    /// Combines multiple tables into a single DHT marker for smaller file size.
+    /// C mozjpeg does this optimization - one marker instead of N markers saves
+    /// (N-1) * 2 bytes of marker overhead.
+    ///
+    /// # Arguments
+    /// * `tables` - Slice of (table_index, is_ac, table)
+    pub fn write_dht_multiple(
+        &mut self,
+        tables: &[(u8, bool, &HuffTable)],
+    ) -> std::io::Result<()> {
+        if tables.is_empty() {
+            return Ok(());
         }
 
-        // Huffval array (symbols)
-        for i in 0..num_symbols {
-            self.emit_byte(table.huffval[i])?;
+        // Calculate total length
+        let mut total_len = 2u16; // length field itself
+        for (_, _, table) in tables {
+            let num_symbols: usize = table.bits[1..=16].iter().map(|&b| b as usize).sum();
+            total_len += 1 + 16 + num_symbols as u16; // Tc/Th + bits + symbols
+        }
+
+        self.emit_marker(JPEG_DHT)?;
+        self.emit_2bytes(total_len)?;
+
+        for (table_index, is_ac, table) in tables {
+            let num_symbols: usize = table.bits[1..=16].iter().map(|&b| b as usize).sum();
+
+            // Tc (table class) in high nibble, Th (table index) in low nibble
+            let tc_th = if *is_ac {
+                0x10 | (*table_index & 0x0F)
+            } else {
+                *table_index & 0x0F
+            };
+            self.emit_byte(tc_th)?;
+
+            // Bits array (counts for each code length)
+            for i in 1..=16 {
+                self.emit_byte(table.bits[i])?;
+            }
+
+            // Huffval array (symbols)
+            for i in 0..num_symbols {
+                self.emit_byte(table.huffval[i])?;
+            }
         }
 
         Ok(())

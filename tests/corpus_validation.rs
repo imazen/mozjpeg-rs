@@ -4,9 +4,13 @@
 //! Run `./scripts/fetch-corpus.sh` first to download test images.
 
 use mozjpeg_oxide::corpus::all_corpus_dirs;
+use mozjpeg_oxide::test_encoder::{encode_rust, TestEncoderConfig};
+use mozjpeg_oxide::Subsampling;
+use mozjpeg_sys::*;
 use std::fs;
 use std::io::Cursor;
 use std::path::Path;
+use std::ptr;
 
 /// Skip if no corpus available (don't fail CI if corpus not downloaded).
 fn has_corpus() -> bool {
@@ -48,11 +52,8 @@ fn load_png(path: &Path) -> Option<(Vec<u8>, u32, u32)> {
     Some((rgb_data, width, height))
 }
 
-/// Encode with C mozjpeg.
-fn encode_c(rgb: &[u8], width: u32, height: u32, quality: i32) -> Vec<u8> {
-    use mozjpeg_sys::*;
-    use std::ptr;
-
+/// Encode with C mozjpeg using TestEncoderConfig settings.
+fn encode_c_with_config(rgb: &[u8], width: u32, height: u32, config: &TestEncoderConfig) -> Vec<u8> {
     unsafe {
         let mut cinfo: jpeg_compress_struct = std::mem::zeroed();
         let mut jerr: jpeg_error_mgr = std::mem::zeroed();
@@ -65,7 +66,7 @@ fn encode_c(rgb: &[u8], width: u32, height: u32, quality: i32) -> Vec<u8> {
         );
 
         let mut outbuffer: *mut u8 = ptr::null_mut();
-        let mut outsize: u64 = 0;
+        let mut outsize: libc::c_ulong = 0;
         jpeg_mem_dest(&mut cinfo, &mut outbuffer, &mut outsize);
 
         cinfo.image_width = width;
@@ -74,18 +75,42 @@ fn encode_c(rgb: &[u8], width: u32, height: u32, quality: i32) -> Vec<u8> {
         cinfo.in_color_space = JCS_RGB;
 
         jpeg_set_defaults(&mut cinfo);
-        jpeg_set_quality(&mut cinfo, quality, 1);
-        cinfo.optimize_coding = 1;
+        cinfo.num_scans = 0;
+        cinfo.scan_info = ptr::null();
+
+        jpeg_set_quality(&mut cinfo, config.quality as i32, if config.force_baseline { 1 } else { 0 });
+
+        // Set subsampling
+        let (h_samp, v_samp) = match config.subsampling {
+            Subsampling::S444 => (1, 1),
+            Subsampling::S422 => (2, 1),
+            Subsampling::S420 => (2, 2),
+            Subsampling::S440 => (1, 2),
+            Subsampling::Gray => panic!("Gray not supported"),
+        };
+        (*cinfo.comp_info.offset(0)).h_samp_factor = h_samp;
+        (*cinfo.comp_info.offset(0)).v_samp_factor = v_samp;
+        (*cinfo.comp_info.offset(1)).h_samp_factor = 1;
+        (*cinfo.comp_info.offset(1)).v_samp_factor = 1;
+        (*cinfo.comp_info.offset(2)).h_samp_factor = 1;
+        (*cinfo.comp_info.offset(2)).v_samp_factor = 1;
+
+        cinfo.optimize_coding = if config.optimize_huffman { 1 } else { 0 };
+
+        jpeg_c_set_bool_param(&mut cinfo, JBOOLEAN_TRELLIS_QUANT,
+            if config.trellis_quant { 1 } else { 0 });
+        jpeg_c_set_bool_param(&mut cinfo, JBOOLEAN_TRELLIS_QUANT_DC,
+            if config.trellis_dc { 1 } else { 0 });
+        jpeg_c_set_bool_param(&mut cinfo, JBOOLEAN_OVERSHOOT_DERINGING,
+            if config.overshoot_deringing { 1 } else { 0 });
 
         jpeg_start_compress(&mut cinfo, 1);
 
-        let row_stride = (width * 3) as usize;
-        let mut row_pointer: [*const u8; 1] = [ptr::null()];
-
+        let row_stride = width as usize * 3;
         while cinfo.next_scanline < cinfo.image_height {
-            let offset = cinfo.next_scanline as usize * row_stride;
-            row_pointer[0] = rgb.as_ptr().add(offset);
-            jpeg_write_scanlines(&mut cinfo, row_pointer.as_ptr(), 1);
+            let row_idx = cinfo.next_scanline as usize;
+            let row_ptr = rgb.as_ptr().add(row_idx * row_stride);
+            jpeg_write_scanlines(&mut cinfo, &row_ptr as *const *const u8, 1);
         }
 
         jpeg_finish_compress(&mut cinfo);
@@ -93,7 +118,6 @@ fn encode_c(rgb: &[u8], width: u32, height: u32, quality: i32) -> Vec<u8> {
 
         let result = std::slice::from_raw_parts(outbuffer, outsize as usize).to_vec();
         libc::free(outbuffer as *mut libc::c_void);
-
         result
     }
 }
@@ -145,12 +169,11 @@ fn test_kodak_corpus_quality() {
                 None => continue,
             };
 
-            let rust_jpeg = mozjpeg_oxide::Encoder::new()
-                .quality(75)
-                .encode_rgb(&rgb, width, height)
-                .expect("Rust encode failed");
+            // Use unified config to ensure identical settings for both encoders
+            let config = TestEncoderConfig::baseline_huffman_opt().with_quality(75);
 
-            let c_jpeg = encode_c(&rgb, width, height, 75);
+            let rust_jpeg = encode_rust(&rgb, width, height, &config);
+            let c_jpeg = encode_c_with_config(&rgb, width, height, &config);
 
             let rust_psnr = psnr(&rgb, &rust_jpeg);
             let c_psnr = psnr(&rgb, &c_jpeg);
@@ -225,12 +248,11 @@ fn test_corpus_quality_sweep() {
             println!("Testing quality sweep on {:?}", path.file_name().unwrap());
 
             for &quality in &qualities {
-                let rust_jpeg = mozjpeg_oxide::Encoder::new()
-                    .quality(quality)
-                    .encode_rgb(&rgb, width, height)
-                    .expect("Rust encode failed");
+                // Use unified config for identical settings
+                let config = TestEncoderConfig::baseline_huffman_opt().with_quality(quality);
 
-                let c_jpeg = encode_c(&rgb, width, height, quality as i32);
+                let rust_jpeg = encode_rust(&rgb, width, height, &config);
+                let c_jpeg = encode_c_with_config(&rgb, width, height, &config);
 
                 let ratio = rust_jpeg.len() as f64 / c_jpeg.len() as f64;
 
