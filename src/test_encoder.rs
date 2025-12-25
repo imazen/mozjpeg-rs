@@ -2,6 +2,25 @@
 //!
 //! This module provides identical interfaces for both implementations,
 //! ensuring parameter parity for apples-to-apples comparison.
+//!
+//! # Usage
+//!
+//! ```ignore
+//! use mozjpeg_oxide::test_encoder::{TestEncoderConfig, encode_rust, encode_c};
+//!
+//! let config = TestEncoderConfig::baseline();
+//! let rust_jpeg = encode_rust(&rgb, width, height, &config);
+//! let c_jpeg = encode_c(&rgb, width, height, &config);
+//!
+//! // Compare quality
+//! let result = compare_quality(&rust_jpeg, &c_jpeg, &rgb, width, height);
+//! assert!(result.dssim_rust_vs_c < 0.001);
+//! ```
+//!
+//! # Important
+//!
+//! All tests comparing Rust to C should use this API to ensure identical settings.
+//! Do NOT create ad-hoc encoder wrappers in tests.
 
 use crate::Subsampling;
 
@@ -36,20 +55,60 @@ impl Default for TestEncoderConfig {
 }
 
 impl TestEncoderConfig {
-    /// Baseline JPEG with no optimizations (for strict comparison)
+    /// Baseline JPEG with no optimizations (for strict parity comparison).
+    /// Both Rust and C should produce nearly identical output with this config.
     pub fn baseline() -> Self {
         Self::default()
     }
 
-    /// Maximum compression settings
+    /// Baseline with Huffman optimization only.
+    /// This is what C mozjpeg uses with just optimize_coding=1.
+    pub fn baseline_huffman_opt() -> Self {
+        Self {
+            optimize_huffman: true,
+            ..Self::default()
+        }
+    }
+
+    /// Rust's default settings (trellis + deringing + Huffman opt).
+    /// Use this to test Rust's typical output quality.
+    pub fn rust_defaults() -> Self {
+        Self {
+            optimize_huffman: true,
+            trellis_quant: true,
+            overshoot_deringing: true,
+            ..Self::default()
+        }
+    }
+
+    /// Maximum compression settings (progressive + all optimizations).
     pub fn max_compression() -> Self {
         Self {
             progressive: true,
             optimize_huffman: true,
             trellis_quant: true,
             trellis_dc: true,
+            overshoot_deringing: true,
             ..Self::default()
         }
+    }
+
+    /// Builder: set quality
+    pub fn with_quality(mut self, quality: u8) -> Self {
+        self.quality = quality;
+        self
+    }
+
+    /// Builder: set subsampling
+    pub fn with_subsampling(mut self, subsampling: Subsampling) -> Self {
+        self.subsampling = subsampling;
+        self
+    }
+
+    /// Builder: set progressive mode
+    pub fn with_progressive(mut self, progressive: bool) -> Self {
+        self.progressive = progressive;
+        self
     }
 }
 
@@ -79,7 +138,8 @@ pub fn encode_rust(rgb: &[u8], width: u32, height: u32, config: &TestEncoderConf
 }
 
 /// Encode using C mozjpeg implementation via FFI.
-/// Only available in tests (uses mozjpeg-sys dev-dependency).
+/// Only available in unit tests (uses mozjpeg-sys dev-dependency).
+/// For integration tests, use the encode_c_impl function template below.
 #[cfg(test)]
 pub fn encode_c(rgb: &[u8], width: u32, height: u32, config: &TestEncoderConfig) -> Vec<u8> {
     use mozjpeg_sys::*;
@@ -259,22 +319,218 @@ impl CompareResult {
     }
 }
 
+/// Quality comparison result with DSSIM metrics.
+#[derive(Debug, Default)]
+pub struct QualityResult {
+    /// DSSIM of Rust output vs original (lower is better, 0 = identical)
+    pub dssim_rust: f64,
+    /// DSSIM of C output vs original
+    pub dssim_c: f64,
+    /// DSSIM between Rust and C outputs (measures encoder difference)
+    pub dssim_rust_vs_c: f64,
+    /// Rust JPEG file size in bytes
+    pub rust_size: usize,
+    /// C JPEG file size in bytes
+    pub c_size: usize,
+    /// Size ratio (Rust / C)
+    pub size_ratio: f64,
+    /// Pixel comparison details
+    pub pixel_compare: CompareResult,
+}
+
+impl QualityResult {
+    /// Check if quality is acceptable for identical encoder settings.
+    /// Criteria:
+    /// - DSSIM between outputs < 0.001 (imperceptible difference)
+    /// - Size ratio within 5% (0.95 - 1.05)
+    pub fn is_parity_acceptable(&self) -> bool {
+        self.dssim_rust_vs_c < 0.001 && self.size_ratio > 0.95 && self.size_ratio < 1.05
+    }
+
+    /// Check if quality is acceptable with different settings (e.g., Rust with trellis).
+    /// Criteria:
+    /// - DSSIM between outputs < 0.001
+    /// - Size ratio within 15% (0.85 - 1.15)
+    pub fn is_quality_acceptable(&self) -> bool {
+        self.dssim_rust_vs_c < 0.001 && self.size_ratio > 0.85 && self.size_ratio < 1.15
+    }
+}
+
+/// Compare quality of two JPEGs using DSSIM.
+/// Returns comprehensive quality metrics for both encoders.
+#[cfg(test)]
+pub fn compare_quality(
+    rust_jpeg: &[u8],
+    c_jpeg: &[u8],
+    original_rgb: &[u8],
+    width: u32,
+    height: u32,
+) -> QualityResult {
+    use dssim::Dssim;
+    use rgb::RGB8;
+
+    let rust_decoded = decode_jpeg(rust_jpeg);
+    let c_decoded = decode_jpeg(c_jpeg);
+
+    let (rust_pix, c_pix) = match (&rust_decoded, &c_decoded) {
+        (Some((r, _, _)), Some((c, _, _))) => (r, c),
+        _ => {
+            return QualityResult {
+                pixel_compare: CompareResult {
+                    decode_failed: true,
+                    ..Default::default()
+                },
+                ..Default::default()
+            }
+        }
+    };
+
+    // Calculate DSSIM values
+    let attr = Dssim::new();
+
+    let orig_rgb: Vec<RGB8> = original_rgb
+        .chunks(3)
+        .map(|c| RGB8::new(c[0], c[1], c[2]))
+        .collect();
+    let orig_img = attr
+        .create_image_rgb(&orig_rgb, width as usize, height as usize)
+        .expect("Failed to create original image");
+
+    let rust_rgb: Vec<RGB8> = rust_pix
+        .chunks(3)
+        .map(|c| RGB8::new(c[0], c[1], c[2]))
+        .collect();
+    let rust_img = attr
+        .create_image_rgb(&rust_rgb, width as usize, height as usize)
+        .expect("Failed to create Rust image");
+
+    let c_rgb: Vec<RGB8> = c_pix
+        .chunks(3)
+        .map(|c| RGB8::new(c[0], c[1], c[2]))
+        .collect();
+    let c_img = attr
+        .create_image_rgb(&c_rgb, width as usize, height as usize)
+        .expect("Failed to create C image");
+
+    let (dssim_rust, _) = attr.compare(&orig_img, rust_img.clone());
+    let (dssim_c, _) = attr.compare(&orig_img, c_img.clone());
+    let (dssim_rust_vs_c, _) = attr.compare(&rust_img, c_img);
+
+    // Pixel comparison
+    let pixel_compare = compare_decoded(rust_jpeg, c_jpeg);
+
+    QualityResult {
+        dssim_rust: dssim_rust.into(),
+        dssim_c: dssim_c.into(),
+        dssim_rust_vs_c: dssim_rust_vs_c.into(),
+        rust_size: rust_jpeg.len(),
+        c_size: c_jpeg.len(),
+        size_ratio: rust_jpeg.len() as f64 / c_jpeg.len() as f64,
+        pixel_compare,
+    }
+}
+
+/// Encode both Rust and C with identical settings and compare.
+/// This is the primary function tests should use for Rust vs C comparison.
+#[cfg(test)]
+pub fn encode_and_compare(
+    rgb: &[u8],
+    width: u32,
+    height: u32,
+    config: &TestEncoderConfig,
+) -> QualityResult {
+    let rust_jpeg = encode_rust(rgb, width, height, config);
+    let c_jpeg = encode_c(rgb, width, height, config);
+    compare_quality(&rust_jpeg, &c_jpeg, rgb, width, height)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn create_test_image(width: usize, height: usize) -> Vec<u8> {
+        let mut rgb = vec![0u8; width * height * 3];
+        for y in 0..height {
+            for x in 0..width {
+                let i = (y * width + x) * 3;
+                rgb[i] = ((x * 255) / width.max(1)) as u8;
+                rgb[i + 1] = ((y * 255) / height.max(1)) as u8;
+                rgb[i + 2] = 128;
+            }
+        }
+        rgb
+    }
 
     #[test]
     fn test_encode_rust_baseline() {
         let width = 16;
         let height = 16;
-        let mut rgb = vec![0u8; width * height * 3];
-        for i in 0..rgb.len() {
-            rgb[i] = (i % 256) as u8;
-        }
+        let rgb = create_test_image(width, height);
 
         let config = TestEncoderConfig::baseline();
         let jpeg = encode_rust(&rgb, width as u32, height as u32, &config);
         assert!(!jpeg.is_empty());
         assert_eq!(jpeg[0..2], [0xFF, 0xD8]); // JPEG SOI marker
+    }
+
+    #[test]
+    fn test_rust_vs_c_baseline_parity() {
+        let width = 64;
+        let height = 64;
+        let rgb = create_test_image(width, height);
+
+        // With identical baseline settings, outputs should be nearly identical
+        let config = TestEncoderConfig::baseline_huffman_opt().with_quality(85);
+        let result = encode_and_compare(&rgb, width as u32, height as u32, &config);
+
+        println!("Baseline parity test:");
+        println!("  Rust size: {} bytes", result.rust_size);
+        println!("  C size: {} bytes", result.c_size);
+        println!("  Size ratio: {:.4}", result.size_ratio);
+        println!("  DSSIM Rust vs C: {:.6}", result.dssim_rust_vs_c);
+        println!("  Max pixel diff: {}", result.pixel_compare.max_diff);
+
+        assert!(
+            result.is_parity_acceptable(),
+            "Baseline parity failed: ratio={:.4}, dssim={:.6}",
+            result.size_ratio,
+            result.dssim_rust_vs_c
+        );
+    }
+
+    #[test]
+    fn test_config_builders() {
+        let config = TestEncoderConfig::baseline()
+            .with_quality(90)
+            .with_subsampling(Subsampling::S444)
+            .with_progressive(true);
+
+        assert_eq!(config.quality, 90);
+        assert!(matches!(config.subsampling, Subsampling::S444));
+        assert!(config.progressive);
+    }
+
+    #[test]
+    fn test_all_presets_encode() {
+        let width = 32;
+        let height = 32;
+        let rgb = create_test_image(width, height);
+
+        let presets = [
+            ("baseline", TestEncoderConfig::baseline()),
+            ("baseline_huffman", TestEncoderConfig::baseline_huffman_opt()),
+            ("rust_defaults", TestEncoderConfig::rust_defaults()),
+            ("max_compression", TestEncoderConfig::max_compression()),
+        ];
+
+        for (name, config) in presets {
+            let rust_jpeg = encode_rust(&rgb, width as u32, height as u32, &config);
+            let c_jpeg = encode_c(&rgb, width as u32, height as u32, &config);
+
+            assert!(!rust_jpeg.is_empty(), "{}: Rust encoding failed", name);
+            assert!(!c_jpeg.is_empty(), "{}: C encoding failed", name);
+
+            println!("{}: Rust={} bytes, C={} bytes", name, rust_jpeg.len(), c_jpeg.len());
+        }
     }
 }
