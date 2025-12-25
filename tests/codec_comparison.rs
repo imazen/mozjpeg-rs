@@ -13,10 +13,14 @@
 //! - Subtle: < 0.0015
 //! - Noticeable: < 0.003
 //! - Degraded: >= 0.003
+//!
+//! Note: codec-eval import is commented out - requires Rust 2024 edition.
+//! Uncomment codec-eval in Cargo.toml to use advanced metrics.
 
 // codec-eval from https://github.com/imazen/codec-comparison
-#[allow(unused_imports)]
-use codec_eval::{EvalConfig, EvalSession, ImageData, MetricConfig, ViewingCondition};
+// Commented out - requires Rust 2024 edition
+// #[allow(unused_imports)]
+// use codec_eval::{EvalConfig, EvalSession, ImageData, MetricConfig, ViewingCondition};
 
 use dssim::Dssim;
 use mozjpeg_oxide::test_encoder::{encode_rust, TestEncoderConfig};
