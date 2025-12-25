@@ -16,7 +16,7 @@ members = ["crates/*"]
 
 [features]
 default = []
-simd = []
+simd = []  # Enable explicit SIMD intrinsics for x86_64
 # Enable PNG loading in corpus module (enabled by default in dev)
 png = ["dep:png"]
 

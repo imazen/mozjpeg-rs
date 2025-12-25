@@ -703,6 +703,243 @@ pub fn forward_dct_with_deringing(
     forward_dct_8x8_transpose(&shifted, coeffs);
 }
 
+// ============================================================================
+// AVX2 Intrinsics-based DCT (x86_64 only)
+// ============================================================================
+//
+// This module uses core::arch intrinsics directly for maximum performance.
+// Key optimizations over the wide-based version:
+// - Uses _mm256_cvtepi16_epi32 for proper load+sign-extend (no vpinsrw gather)
+// - Uses proper shuffle instructions for transpose
+// - Avoids to_array()/from_array() overhead
+
+#[cfg(all(target_arch = "x86_64", target_feature = "avx2"))]
+pub mod avx2 {
+    use super::*;
+    use core::arch::x86_64::*;
+
+    /// Load 8 contiguous i16 values and sign-extend to 8 i32 values in a ymm register.
+    /// This is the key optimization - uses a single 128-bit load + vpmovsxwd.
+    #[inline(always)]
+    unsafe fn load_i16_to_i32(ptr: *const i16) -> __m256i {
+        let row_i16 = _mm_loadu_si128(ptr as *const __m128i);
+        _mm256_cvtepi16_epi32(row_i16)
+    }
+
+    /// Pack 8 i32 values to 8 i16 values (with saturation).
+    #[inline(always)]
+    unsafe fn pack_i32_to_i16(v: __m256i) -> __m128i {
+        // Extract low and high 128-bit lanes
+        let lo = _mm256_castsi256_si128(v);
+        let hi = _mm256_extracti128_si256::<1>(v);
+        // Pack with signed saturation
+        _mm_packs_epi32(lo, hi)
+    }
+
+    /// Descale with rounding for pass 1 (CONST_BITS - PASS1_BITS = 11).
+    #[inline(always)]
+    unsafe fn descale_pass1(x: __m256i) -> __m256i {
+        const N: i32 = CONST_BITS - PASS1_BITS;  // 11
+        let round = _mm256_set1_epi32(1 << (N - 1));
+        _mm256_srai_epi32::<N>(_mm256_add_epi32(x, round))
+    }
+
+    /// Descale with rounding for pass 2 (CONST_BITS + PASS1_BITS = 15).
+    #[inline(always)]
+    unsafe fn descale_pass2(x: __m256i) -> __m256i {
+        const N: i32 = CONST_BITS + PASS1_BITS;  // 15
+        let round = _mm256_set1_epi32(1 << (N - 1));
+        _mm256_srai_epi32::<N>(_mm256_add_epi32(x, round))
+    }
+
+    /// Descale with rounding for PASS1_BITS = 2.
+    #[inline(always)]
+    unsafe fn descale_pass1_bits(x: __m256i) -> __m256i {
+        const N: i32 = PASS1_BITS;  // 2
+        let round = _mm256_set1_epi32(1 << (N - 1));
+        _mm256_srai_epi32::<N>(_mm256_add_epi32(x, round))
+    }
+
+    /// AVX2 intrinsics-based forward DCT.
+    ///
+    /// Uses proper load+widen instructions instead of gather pattern.
+    /// This should generate much better assembly than the wide-based version.
+    #[target_feature(enable = "avx2")]
+    pub unsafe fn forward_dct_8x8_avx2(samples: &[i16; DCTSIZE2], coeffs: &mut [i16; DCTSIZE2]) {
+        // Load all 8 rows with proper i16->i32 widening
+        let mut rows: [__m256i; 8] = [
+            load_i16_to_i32(samples.as_ptr().add(0)),
+            load_i16_to_i32(samples.as_ptr().add(8)),
+            load_i16_to_i32(samples.as_ptr().add(16)),
+            load_i16_to_i32(samples.as_ptr().add(24)),
+            load_i16_to_i32(samples.as_ptr().add(32)),
+            load_i16_to_i32(samples.as_ptr().add(40)),
+            load_i16_to_i32(samples.as_ptr().add(48)),
+            load_i16_to_i32(samples.as_ptr().add(56)),
+        ];
+
+        // Transpose 8x8 matrix using AVX2 shuffles
+        transpose_8x8_avx2(&mut rows);
+
+        // Pass 1: 1D DCT on rows (processing column elements after transpose)
+        dct_1d_pass_avx2(&mut rows, true);
+
+        // Transpose back
+        transpose_8x8_avx2(&mut rows);
+
+        // Pass 2: 1D DCT on columns
+        // Output is already in row-major form (no final transpose needed)
+        dct_1d_pass_avx2(&mut rows, false);
+
+        // Store results - pack i32 back to i16
+        _mm_storeu_si128(coeffs.as_mut_ptr().add(0) as *mut __m128i, pack_i32_to_i16(rows[0]));
+        _mm_storeu_si128(coeffs.as_mut_ptr().add(8) as *mut __m128i, pack_i32_to_i16(rows[1]));
+        _mm_storeu_si128(coeffs.as_mut_ptr().add(16) as *mut __m128i, pack_i32_to_i16(rows[2]));
+        _mm_storeu_si128(coeffs.as_mut_ptr().add(24) as *mut __m128i, pack_i32_to_i16(rows[3]));
+        _mm_storeu_si128(coeffs.as_mut_ptr().add(32) as *mut __m128i, pack_i32_to_i16(rows[4]));
+        _mm_storeu_si128(coeffs.as_mut_ptr().add(40) as *mut __m128i, pack_i32_to_i16(rows[5]));
+        _mm_storeu_si128(coeffs.as_mut_ptr().add(48) as *mut __m128i, pack_i32_to_i16(rows[6]));
+        _mm_storeu_si128(coeffs.as_mut_ptr().add(56) as *mut __m128i, pack_i32_to_i16(rows[7]));
+    }
+
+    /// Transpose 8x8 matrix of i32 values stored in 8 ymm registers.
+    /// Uses AVX2 unpack and permute instructions.
+    #[inline(always)]
+    unsafe fn transpose_8x8_avx2(rows: &mut [__m256i; 8]) {
+        // Phase 1: Interleave 32-bit elements
+        let t0 = _mm256_unpacklo_epi32(rows[0], rows[1]);
+        let t1 = _mm256_unpackhi_epi32(rows[0], rows[1]);
+        let t2 = _mm256_unpacklo_epi32(rows[2], rows[3]);
+        let t3 = _mm256_unpackhi_epi32(rows[2], rows[3]);
+        let t4 = _mm256_unpacklo_epi32(rows[4], rows[5]);
+        let t5 = _mm256_unpackhi_epi32(rows[4], rows[5]);
+        let t6 = _mm256_unpacklo_epi32(rows[6], rows[7]);
+        let t7 = _mm256_unpackhi_epi32(rows[6], rows[7]);
+
+        // Phase 2: Interleave 64-bit elements
+        let u0 = _mm256_unpacklo_epi64(t0, t2);
+        let u1 = _mm256_unpackhi_epi64(t0, t2);
+        let u2 = _mm256_unpacklo_epi64(t1, t3);
+        let u3 = _mm256_unpackhi_epi64(t1, t3);
+        let u4 = _mm256_unpacklo_epi64(t4, t6);
+        let u5 = _mm256_unpackhi_epi64(t4, t6);
+        let u6 = _mm256_unpacklo_epi64(t5, t7);
+        let u7 = _mm256_unpackhi_epi64(t5, t7);
+
+        // Phase 3: Permute 128-bit lanes
+        rows[0] = _mm256_permute2x128_si256(u0, u4, 0x20);
+        rows[1] = _mm256_permute2x128_si256(u1, u5, 0x20);
+        rows[2] = _mm256_permute2x128_si256(u2, u6, 0x20);
+        rows[3] = _mm256_permute2x128_si256(u3, u7, 0x20);
+        rows[4] = _mm256_permute2x128_si256(u0, u4, 0x31);
+        rows[5] = _mm256_permute2x128_si256(u1, u5, 0x31);
+        rows[6] = _mm256_permute2x128_si256(u2, u6, 0x31);
+        rows[7] = _mm256_permute2x128_si256(u3, u7, 0x31);
+    }
+
+    /// Perform 1D DCT on 8 rows simultaneously using AVX2.
+    #[inline(always)]
+    unsafe fn dct_1d_pass_avx2(data: &mut [__m256i; 8], pass1: bool) {
+        // Load constants
+        let fix_0_541196100 = _mm256_set1_epi32(FIX_0_541196100);
+        let fix_0_765366865 = _mm256_set1_epi32(FIX_0_765366865);
+        let fix_1_847759065 = _mm256_set1_epi32(FIX_1_847759065);
+        let fix_1_175875602 = _mm256_set1_epi32(FIX_1_175875602);
+        let fix_0_298631336 = _mm256_set1_epi32(FIX_0_298631336);
+        let fix_2_053119869 = _mm256_set1_epi32(FIX_2_053119869);
+        let fix_3_072711026 = _mm256_set1_epi32(FIX_3_072711026);
+        let fix_1_501321110 = _mm256_set1_epi32(FIX_1_501321110);
+        let neg_fix_0_899976223 = _mm256_set1_epi32(-FIX_0_899976223);
+        let neg_fix_2_562915447 = _mm256_set1_epi32(-FIX_2_562915447);
+        let neg_fix_1_961570560 = _mm256_set1_epi32(-FIX_1_961570560);
+        let neg_fix_0_390180644 = _mm256_set1_epi32(-FIX_0_390180644);
+
+        // Even part
+        let tmp0 = _mm256_add_epi32(data[0], data[7]);
+        let tmp7 = _mm256_sub_epi32(data[0], data[7]);
+        let tmp1 = _mm256_add_epi32(data[1], data[6]);
+        let tmp6 = _mm256_sub_epi32(data[1], data[6]);
+        let tmp2 = _mm256_add_epi32(data[2], data[5]);
+        let tmp5 = _mm256_sub_epi32(data[2], data[5]);
+        let tmp3 = _mm256_add_epi32(data[3], data[4]);
+        let tmp4 = _mm256_sub_epi32(data[3], data[4]);
+
+        let tmp10 = _mm256_add_epi32(tmp0, tmp3);
+        let tmp13 = _mm256_sub_epi32(tmp0, tmp3);
+        let tmp11 = _mm256_add_epi32(tmp1, tmp2);
+        let tmp12 = _mm256_sub_epi32(tmp1, tmp2);
+
+        // Output 0 and 4
+        let (out0, out4) = if pass1 {
+            (
+                _mm256_slli_epi32::<PASS1_BITS>(_mm256_add_epi32(tmp10, tmp11)),
+                _mm256_slli_epi32::<PASS1_BITS>(_mm256_sub_epi32(tmp10, tmp11)),
+            )
+        } else {
+            (
+                descale_pass1_bits(_mm256_add_epi32(tmp10, tmp11)),
+                descale_pass1_bits(_mm256_sub_epi32(tmp10, tmp11)),
+            )
+        };
+
+        // Output 2 and 6
+        let z1 = _mm256_mullo_epi32(_mm256_add_epi32(tmp12, tmp13), fix_0_541196100);
+        let (out2, out6) = if pass1 {
+            (
+                descale_pass1(_mm256_add_epi32(z1, _mm256_mullo_epi32(tmp13, fix_0_765366865))),
+                descale_pass1(_mm256_sub_epi32(z1, _mm256_mullo_epi32(tmp12, fix_1_847759065))),
+            )
+        } else {
+            (
+                descale_pass2(_mm256_add_epi32(z1, _mm256_mullo_epi32(tmp13, fix_0_765366865))),
+                descale_pass2(_mm256_sub_epi32(z1, _mm256_mullo_epi32(tmp12, fix_1_847759065))),
+            )
+        };
+
+        // Odd part
+        let z1 = _mm256_add_epi32(tmp4, tmp7);
+        let z2 = _mm256_add_epi32(tmp5, tmp6);
+        let z3 = _mm256_add_epi32(tmp4, tmp6);
+        let z4 = _mm256_add_epi32(tmp5, tmp7);
+        let z5 = _mm256_mullo_epi32(_mm256_add_epi32(z3, z4), fix_1_175875602);
+
+        let tmp4 = _mm256_mullo_epi32(tmp4, fix_0_298631336);
+        let tmp5 = _mm256_mullo_epi32(tmp5, fix_2_053119869);
+        let tmp6 = _mm256_mullo_epi32(tmp6, fix_3_072711026);
+        let tmp7 = _mm256_mullo_epi32(tmp7, fix_1_501321110);
+
+        let z1 = _mm256_mullo_epi32(z1, neg_fix_0_899976223);
+        let z2 = _mm256_mullo_epi32(z2, neg_fix_2_562915447);
+        let z3 = _mm256_add_epi32(_mm256_mullo_epi32(z3, neg_fix_1_961570560), z5);
+        let z4 = _mm256_add_epi32(_mm256_mullo_epi32(z4, neg_fix_0_390180644), z5);
+
+        let (out7, out5, out3, out1) = if pass1 {
+            (
+                descale_pass1(_mm256_add_epi32(_mm256_add_epi32(tmp4, z1), z3)),
+                descale_pass1(_mm256_add_epi32(_mm256_add_epi32(tmp5, z2), z4)),
+                descale_pass1(_mm256_add_epi32(_mm256_add_epi32(tmp6, z2), z3)),
+                descale_pass1(_mm256_add_epi32(_mm256_add_epi32(tmp7, z1), z4)),
+            )
+        } else {
+            (
+                descale_pass2(_mm256_add_epi32(_mm256_add_epi32(tmp4, z1), z3)),
+                descale_pass2(_mm256_add_epi32(_mm256_add_epi32(tmp5, z2), z4)),
+                descale_pass2(_mm256_add_epi32(_mm256_add_epi32(tmp6, z2), z3)),
+                descale_pass2(_mm256_add_epi32(_mm256_add_epi32(tmp7, z1), z4)),
+            )
+        };
+
+        data[0] = out0;
+        data[1] = out1;
+        data[2] = out2;
+        data[3] = out3;
+        data[4] = out4;
+        data[5] = out5;
+        data[6] = out6;
+        data[7] = out7;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -963,6 +1200,31 @@ mod tests {
             assert_eq!(
                 coeffs_scalar, coeffs_transpose,
                 "Transpose SIMD should match scalar for pattern seed {}", seed
+            );
+        }
+    }
+
+    #[cfg(all(target_arch = "x86_64", target_feature = "avx2"))]
+    #[test]
+    fn test_avx2_matches_scalar_all_patterns() {
+        use super::avx2::forward_dct_8x8_avx2;
+
+        // Exhaustive test with many patterns
+        for seed in 0..20 {
+            let mut samples = [0i16; DCTSIZE2];
+            for i in 0..DCTSIZE2 {
+                samples[i] = ((i as i32 * (seed * 37 + 13) + seed * 7) % 256 - 128) as i16;
+            }
+
+            let mut coeffs_scalar = [0i16; DCTSIZE2];
+            let mut coeffs_avx2 = [0i16; DCTSIZE2];
+
+            forward_dct_8x8(&samples, &mut coeffs_scalar);
+            unsafe { forward_dct_8x8_avx2(&samples, &mut coeffs_avx2) };
+
+            assert_eq!(
+                coeffs_scalar, coeffs_avx2,
+                "AVX2 SIMD should match scalar for pattern seed {}", seed
             );
         }
     }

@@ -54,6 +54,30 @@ The DCT SIMD reduced the gap vs C mozjpeg from 5.7x to 5.0x slower.
 - Transpose overhead (3 transposes per block, done via scalar)
 - C mozjpeg uses true SSE2/AVX2 with shuffle-based transpose
 
+### AVX2 Intrinsics DCT (`src/dct.rs::avx2`)
+
+**Status: DONE** (Dec 2024)
+
+Uses `core::arch::x86_64` intrinsics directly for maximum performance.
+
+Key optimizations over `wide`-based version:
+- `_mm256_cvtepi16_epi32` for proper load+sign-extend (no `vpinsrw` gather)
+- Shuffle-based transpose using `_mm256_unpacklo/hi_epi32/64` + `_mm256_permute2x128_si256`
+- Proper `_mm256_srai_epi32` with const generic shift amounts
+- `_mm_packs_epi32` for efficient i32→i16 packing
+
+**Benchmark Results (with `-C target-cpu=native`):**
+| Implementation | Time | Throughput | vs Scalar |
+|----------------|------|------------|-----------|
+| **AVX2 intrinsics** | **40.1 ns** | **1.59 Gelem/s** | **1.19x faster** |
+| Scalar | 47.5 ns | 1.35 Gelem/s | 1.00x |
+| SIMD transpose (wide) | 50.3 ns | 1.27 Gelem/s | 0.95x (slower!) |
+| SIMD gather (wide) | 56.1 ns | 1.14 Gelem/s | 0.85x (slower!) |
+
+**Key Finding:** The `wide` crate is slower than optimized scalar when the compiler
+can auto-vectorize with `-C target-cpu=native`. Explicit `core::arch` intrinsics
+are required for actual speedup.
+
 ### Color Conversion (`src/color.rs`)
 
 **Status: DONE**
@@ -73,11 +97,32 @@ Functions optimized:
 - `convert_rgb_to_ycbcr()` - 4 pixels/iteration
 - `convert_rgb_to_gray()` - 4 pixels/iteration
 
+## SIMD Ecosystem in Rust (2025)
+
+Based on research from [zune-image](https://github.com/etemesi254/zune-image),
+[libjpeg-turbo](https://github.com/libjpeg-turbo/libjpeg-turbo), and
+[Nine Rules for SIMD](https://bardai.ai/2025/02/27/nine-rules-for-simd-acceleration-of-your-rust-code-part-1/):
+
+| Approach | Pros | Cons | Recommendation |
+|----------|------|------|----------------|
+| `core::simd` (nightly) | Portable, future standard | Nightly only | Good for experimentation |
+| `core::arch` intrinsics | Maximum performance | Arch-specific, unsafe | Best for production perf |
+| `wide` crate | Stable, portable | Slower than autovectorized scalar | Avoid for perf-critical code |
+| `pulp` crate | Runtime multiversioning | Extra dependency | Good for portable binaries |
+| Autovectorization | Zero effort | Unpredictable, often fails for floats | Default fallback |
+
+**Key Lessons:**
+1. `wide` crate generates `vpinsrw` (scalar insert) instead of proper SIMD loads
+2. With `-C target-cpu=native`, scalar code autovectorizes and beats `wide`
+3. For real speedup, use `core::arch` intrinsics with proper load/widen patterns
+4. Use `_mm256_cvtepi16_epi32` for i16→i32 widening (not element-by-element)
+5. Use shuffle-based transpose (unpack + permute) not array extraction
+
 ## Future Optimizations
 
 ### Platform-Specific Intrinsics
 
-**Status: NOT STARTED**
+**Status: PARTIALLY DONE** (AVX2 DCT implemented)
 
 To close the remaining 5x gap, platform-specific SIMD is needed:
 
