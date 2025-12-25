@@ -353,7 +353,7 @@ impl Default for QuantTable {
 // =============================================================================
 
 /// A Huffman coding table.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct HuffmanTable {
     /// Number of codes of each length (`bits[k]` = # of symbols with k-bit codes).
     /// `bits[0]` is unused.
@@ -380,15 +380,6 @@ impl HuffmanTable {
     }
 }
 
-impl Default for HuffmanTable {
-    fn default() -> Self {
-        Self {
-            bits: [0; 17],
-            huffval: Vec::new(),
-            sent: false,
-        }
-    }
-}
 
 // =============================================================================
 // Trellis Configuration
