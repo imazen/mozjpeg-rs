@@ -2,15 +2,71 @@
 
 This document tracks SIMD optimization progress for mozjpeg-oxide.
 
-## Current Performance Gap
+## Current Performance Gap (Dec 2024)
 
-| Component | Rust | C mozjpeg | Gap | Priority |
-|-----------|------|-----------|-----|----------|
-| Baseline encoding (overall) | 2.28ms | 0.46ms | **5.0x slower** | - |
-| DCT | **SIMD (wide)** | SIMD (SSE2/AVX2) | Still 5x gap | MEDIUM |
-| Color conversion | **SIMD (wide)** | SIMD | ~Even | Done |
-| Downsampling | Scalar | SIMD | Minor | LOW |
-| Quantization | Scalar | Scalar | Even | - |
+| Mode | Rust | C mozjpeg | Ratio | Notes |
+|------|------|-----------|-------|-------|
+| Baseline | 2.32 ms | 0.44 ms | **5.3x slower** | Main gap in entropy encoding |
+| Trellis | 11.09 ms | 11.79 ms | **0.94x (faster!)** | Rust wins with trellis |
+
+## Profiling Results (512x512 image)
+
+### Baseline Mode Breakdown
+
+| Stage | Time (µs) | % of Total | Priority |
+|-------|-----------|------------|----------|
+| Entropy encoding | 1489 | **49.2%** | **HIGH** |
+| Color conversion | 826 | 27.3% | MEDIUM |
+| Quantization | 305 | 10.1% | LOW |
+| Forward DCT | 249 | 8.2% | Done (AVX2) |
+| Downsampling | 121 | 4.0% | LOW |
+| MCU expansion | 35 | 1.2% | - |
+
+**Key Finding:** Entropy encoding is the main bottleneck at 49% of baseline time.
+
+### Trellis Mode Breakdown
+
+| Stage | Time (µs) | % of Total |
+|-------|-----------|------------|
+| Trellis quantization | 6621 | 77.2% |
+| Prep (color+down) | 1046 | 12.2% |
+| Entropy encoding | 656 | 7.7% |
+| Forward DCT | 251 | 2.9% |
+
+**Key Finding:** Trellis dominates as expected. No optimization needed (already at parity).
+
+## Optimization Priorities
+
+Based on profiling, the optimization priority order for baseline mode:
+
+### 1. Entropy Encoding (49.2% of time) - **HIGH PRIORITY**
+
+Current issues:
+- `put_bits` called for every code and value (many function calls)
+- `BitWriter` writes through `Write` trait (potential virtual dispatch)
+- `emit_byte_stuffed` writes 1 byte at a time when 0xFF detected
+- `flush_buffer` checks for 0xFF in every 8-byte chunk
+
+Potential optimizations:
+- Buffer multiple codes before writing (reduce function calls)
+- Direct Vec<u8> access instead of Write trait
+- SIMD-accelerated 0xFF byte detection and stuffing
+- Inline `put_bits` more aggressively
+
+Reference: libjpeg-turbo uses optimized assembly for entropy encoding.
+
+### 2. Color Conversion (27.3% of time) - **MEDIUM PRIORITY**
+
+Currently uses `wide` crate which generates suboptimal code.
+Could benefit from AVX2 intrinsics like DCT.
+
+### 3. Quantization (10.1% of time) - **LOW PRIORITY**
+
+Simple division/rounding. Already fast.
+
+### 4. Forward DCT (8.2% of time) - **DONE**
+
+AVX2 intrinsics implemented. 60ns per block.
 
 ## Completed SIMD Optimizations
 
