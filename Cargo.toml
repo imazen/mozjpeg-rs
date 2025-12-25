@@ -47,12 +47,12 @@ jpeg-decoder = "0.3"
 libc = "0.2"
 # Use existing mozjpeg-sys from crates.io for basic FFI validation
 mozjpeg-sys = "2.2"
-# Codec testing infrastructure (local path during development)
-codec-eval = { path = "../codec-eval" }
+# Codec testing infrastructure (provides DSSIM, SSIMULACRA2, Butteraugli metrics)
+codec-eval = { git = "https://github.com/imazen/codec-eval" }
 # Local mozjpeg-sys with granular test exports (for FFI comparison tests)
 sys-local = { path = "crates/sys-local" }
-# Butteraugli perceptual metric from jpegli-rs
-butteraugli-oxide = { path = "../jpegli/jpegli-rs/butteraugli" }
+# Butteraugli perceptual image quality metric
+butteraugli-oxide = "0.1"
 
 [[bench]]
 name = "encode"
