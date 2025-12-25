@@ -4,6 +4,8 @@ Pure Rust JPEG encoder based on Mozilla's [mozjpeg](https://github.com/mozilla/m
 
 [![Crates.io](https://img.shields.io/crates/v/mozjpeg-oxide.svg)](https://crates.io/crates/mozjpeg-oxide)
 [![Documentation](https://docs.rs/mozjpeg-oxide/badge.svg)](https://docs.rs/mozjpeg-oxide)
+[![CI](https://github.com/imazen/mozjpeg-oxide/actions/workflows/ci.yml/badge.svg)](https://github.com/imazen/mozjpeg-oxide/actions/workflows/ci.yml)
+[![codecov](https://codecov.io/gh/imazen/mozjpeg-oxide/graph/badge.svg)](https://codecov.io/gh/imazen/mozjpeg-oxide)
 [![License](https://img.shields.io/crates/l/mozjpeg-oxide.svg)](LICENSE)
 
 ## Why mozjpeg-oxide?
@@ -103,6 +105,55 @@ let jpeg = Encoder::new()
 
 With trellis quantization enabled (the default), mozjpeg-oxide matches or exceeds C mozjpeg performance.
 
+## Development
+
+### Running CI Locally
+
+To reproduce the CI checks locally:
+
+```bash
+# Format check
+cargo fmt --all -- --check
+
+# Clippy lints
+cargo clippy --workspace --all-targets -- -D warnings
+
+# Build
+cargo build --workspace
+
+# Unit tests
+cargo test --lib
+
+# Codec comparison tests
+cargo test --test codec_comparison
+
+# FFI validation tests (requires mozjpeg-sys from crates.io)
+cargo test --test ffi_validation
+```
+
+For full CI reproduction including container isolation, install [act](https://github.com/nektos/act):
+
+```bash
+# Install act (macOS)
+brew install act
+
+# Run CI locally
+act push
+```
+
+### Test Coverage
+
+```bash
+# Install cargo-llvm-cov
+cargo install cargo-llvm-cov
+
+# Generate coverage report
+cargo llvm-cov --lib --html
+
+# Open report
+open target/llvm-cov/html/index.html
+```
+
 ## License
 
 BSD-3-Clause - Same license as the original mozjpeg.
@@ -110,3 +161,14 @@ BSD-3-Clause - Same license as the original mozjpeg.
 ## Acknowledgments
 
 Based on Mozilla's [mozjpeg](https://github.com/mozilla/mozjpeg), which builds on libjpeg-turbo and the Independent JPEG Group's libjpeg.
+
+## AI-Generated Code Notice
+
+This crate was developed with significant assistance from Claude (Anthropic). While the code has been tested against the C mozjpeg reference implementation and passes 191 tests including FFI validation, **not all code has been manually reviewed or human-audited**.
+
+Before using in production:
+- Review critical code paths for your use case
+- Run your own validation against expected outputs
+- Consider the encoder's test suite coverage for your specific requirements
+
+The FFI comparison tests in `tests/ffi_comparison.rs` and `tests/ffi_validation.rs` provide confidence in correctness by comparing outputs against C mozjpeg.

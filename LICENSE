@@ -2,6 +2,11 @@ BSD 3-Clause License
 
 Copyright (c) 2024, Imazen
 
+This software is based in part on the work of the Independent JPEG Group.
+
+This project is a Rust port of Mozilla's mozjpeg (https://github.com/mozilla/mozjpeg),
+which is based on libjpeg-turbo (https://libjpeg-turbo.org/).
+
 Redistribution and use in source and binary forms, with or without
 modification, are permitted provided that the following conditions are met:
 
