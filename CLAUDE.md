@@ -35,16 +35,14 @@ mode. Use `Encoder::max_compression()` for equivalent behavior.
 
 | Configuration | Rust (ms) | C (ms) | Ratio | Notes |
 |---------------|-----------|--------|-------|-------|
-| Baseline (no opts) | 3.45 | 0.46 | 7.5x slower | C has SIMD DCT |
-| Huffman optimized | 4.22 | 2.09 | 2.0x slower | |
-| Trellis AC | 12.02 | 13.88 | **0.87x faster** | |
-| Trellis AC+DC | 14.12 | 14.39 | ~1.0x same | |
+| Baseline (no opts) | 2.35 | 0.45 | 5.2x slower | C has SIMD DCT |
+| Trellis AC+DC | 11.68 | 11.73 | ~1.0x parity | |
 | Progressive* | 4.58 | 11.25 | **0.41x faster** | See note below |
 | Max compression* | 14.44 | 24.04 | **0.60x faster** | See note below |
 
 **Key findings:**
-- Baseline encoding is slower due to lack of SIMD (DCT, color conversion)
-- Trellis quantization is competitive or faster
+- Baseline encoding is 5.2x slower due to lack of SIMD (DCT, color conversion)
+- Trellis quantization achieves parity with C
 
 **\* Progressive mode note:** Both Rust and C support `optimize_scans` which tries multiple
 scan configurations to find the smallest output. Progressive encoding now works correctly
