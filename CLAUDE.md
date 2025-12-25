@@ -31,9 +31,16 @@ Rust port of Mozilla's mozjpeg JPEG encoder, following the jpegli-rs methodology
 **Note:** C mozjpeg uses JCP_MAX_COMPRESSION profile by default which enables progressive
 mode. Use `Encoder::max_compression()` for equivalent behavior.
 
-### Performance vs C mozjpeg (512x512 image, release mode)
+### Performance vs C mozjpeg (release mode, AVX2 enabled)
 
-**With AVX2 enabled** (`RUSTFLAGS="-C target-feature=+avx2"`):
+**2048x2048 image (30 iterations, most accurate):**
+
+| Configuration | Rust (ms) | C (ms) | Ratio | Notes |
+|---------------|-----------|--------|-------|-------|
+| Baseline (no opts) | 40.04 | 8.46 | 4.74x slower | Entropy encoding bottleneck |
+| Trellis AC+DC | 162.88 | 181.07 | **0.90x faster** | **Rust 10% faster!** |
+
+**512x512 image (faster but more system noise):**
 
 | Configuration | Rust (ms) | C (ms) | Ratio | Notes |
 |---------------|-----------|--------|-------|-------|
@@ -42,17 +49,11 @@ mode. Use `Encoder::max_compression()` for equivalent behavior.
 | Progressive* | 4.58 | 11.25 | **0.41x faster** | See note below |
 | Max compression* | 14.44 | 24.04 | **0.60x faster** | See note below |
 
-**Without AVX2** (default):
-
-| Configuration | Rust (ms) | C (ms) | Ratio |
-|---------------|-----------|--------|-------|
-| Baseline (no opts) | 2.35 | 0.45 | 5.2x slower |
-| Trellis AC+DC | 11.68 | 11.73 | ~1.0x parity |
-
 **Key findings:**
+- **Trellis mode: Rust is 10% faster than C mozjpeg** (at 2048x2048)
+- Baseline gap is ~4.7x - entropy encoding is the remaining bottleneck
 - AVX2 DCT intrinsics provide 26% speedup for baseline encoding
 - Color conversion uses i32x8 (AVX2) for 8 pixels at a time
-- Trellis mode with AVX2 is now 5% faster than C mozjpeg
 
 **\* Progressive mode note:** Both Rust and C support `optimize_scans` which tries multiple
 scan configurations to find the smallest output. Progressive encoding now works correctly

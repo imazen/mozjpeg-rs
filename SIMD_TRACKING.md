@@ -4,19 +4,22 @@ This document tracks SIMD optimization progress for mozjpeg-oxide.
 
 ## Current Performance Gap (Dec 2024)
 
-**With AVX2 enabled** (`RUSTFLAGS="-C target-feature=+avx2"`):
+**2048x2048 image, 30 iterations, with AVX2** (`RUSTFLAGS="-C target-feature=+avx2"`):
 
 | Mode | Rust | C mozjpeg | Ratio | Notes |
 |------|------|-----------|-------|-------|
-| Baseline | 1.73 ms | 0.45 ms | **3.9x slower** | DCT + color optimized |
-| Trellis | 11.13 ms | 11.72 ms | **0.95x (faster!)** | Rust wins with trellis |
+| Baseline | 40.04 ms | 8.46 ms | **4.74x slower** | Entropy encoding bottleneck |
+| Trellis | 162.88 ms | 181.07 ms | **0.90x (10% faster!)** | Rust wins with trellis |
 
-**Without AVX2**:
+**512x512 image (less accurate due to system noise)**:
 
 | Mode | Rust | C mozjpeg | Ratio | Notes |
 |------|------|-----------|-------|-------|
-| Baseline | 2.35 ms | 0.45 ms | **5.2x slower** | Main gap in entropy encoding |
-| Trellis | 11.68 ms | 11.73 ms | **~1.0x parity** | Rust matches C |
+| Baseline | 1.73 ms | 0.45 ms | 3.9x slower | DCT + color optimized |
+| Trellis | 11.13 ms | 11.72 ms | 0.95x (faster!) | |
+
+**Key insight**: Larger images give more accurate measurements. The 4.74x gap is the true
+baseline performance - entropy encoding dominates at scale.
 
 ## Profiling Results (512x512 image)
 
