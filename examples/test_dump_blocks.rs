@@ -3,8 +3,6 @@
 //! This test directly accesses the internal encoding functions to see
 //! what values are being fed to each path.
 
-use mozjpeg_oxide::consts::DCTSIZE2;
-
 fn main() {
     // Create minimal 16x16 gradient image
     let width = 16u32;

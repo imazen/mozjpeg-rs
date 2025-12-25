@@ -254,7 +254,7 @@ fn compare_decoded_pixels_q95() {
     let mut total_diff = 0u64;
     let mut diff_count = 0usize;
 
-    for (i, (&r, &c)) in rust_pixels.iter().zip(c_pixels.iter()).enumerate() {
+    for (&r, &c) in rust_pixels.iter().zip(c_pixels.iter()) {
         let d = (r as i32 - c as i32).abs();
         if d > 0 {
             diff_count += 1;

@@ -58,3 +58,17 @@ butteraugli-oxide = "0.2"
 [[bench]]
 name = "encode"
 harness = false
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(feature, values(\"__sys_local_available\", \"ffi-test\"))"] }
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }
+# Allow common patterns in test/example code
+unnecessary_cast = "allow"
+needless_borrows_for_generic_args = "allow"
+needless_range_loop = "allow"
+manual_div_ceil = "allow"
+manual_range_contains = "allow"
+expect_fun_call = "allow"
+absurd_extreme_comparisons = "allow"

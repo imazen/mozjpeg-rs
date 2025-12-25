@@ -31,6 +31,7 @@ fn rust_encode_baseline(data: &[u8], width: u32, height: u32, quality: u8) -> Ve
 
 /// Encode using Rust with full optimizations (trellis + deringing + Huffman opt).
 /// Use this for testing Rust's maximum quality vs C's baseline.
+#[allow(dead_code)]
 fn rust_encode_optimized(data: &[u8], width: u32, height: u32, quality: u8) -> Vec<u8> {
     let config = TestEncoderConfig::rust_defaults().with_quality(quality);
     encode_rust(data, width, height, &config)
@@ -203,6 +204,7 @@ fn create_photo_like_image(width: u32, height: u32) -> Vec<u8> {
 }
 
 /// Decode JPEG and compute PSNR against reference.
+#[allow(dead_code)]
 fn decode_and_psnr(jpeg_data: &[u8], reference: &[u8]) -> f64 {
     let mut decoder = jpeg_decoder::Decoder::new(std::io::Cursor::new(jpeg_data));
     let decoded = decoder.decode().expect("Decode failed");
@@ -455,7 +457,7 @@ fn test_rust_vs_c_progressive_quality_sweep() {
             let ratio = rust_encoded.len() as f64 / c_encoded.len() as f64;
 
             // Check if this is a multi-MCU-column image (width > 16 with 4:2:0)
-            let is_multi_column = width > 16;
+            let _is_multi_column = width > 16;
 
             println!(
                 "{:>7} {:>12} {:>12} {:>8.2}% {:>12.6} {:>12.6} {:>12.6}{}",

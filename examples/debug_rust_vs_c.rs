@@ -255,12 +255,10 @@ fn identify_jpeg_section(data: &[u8], pos: usize) {
             last_marker_pos = i;
 
             // Skip marker and length
-            if marker != 0xD8 && marker != 0xD9 {
-                if i + 3 < data.len() {
-                    let len = ((data[i + 2] as usize) << 8) | (data[i + 3] as usize);
-                    i += 2 + len;
-                    continue;
-                }
+            if marker != 0xD8 && marker != 0xD9 && i + 3 < data.len() {
+                let len = ((data[i + 2] as usize) << 8) | (data[i + 3] as usize);
+                i += 2 + len;
+                continue;
             }
         }
         i += 1;

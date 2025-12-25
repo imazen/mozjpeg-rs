@@ -2914,8 +2914,8 @@ mod tests {
             for y in 0..s {
                 for x in 0..s {
                     let idx = (y * s + x) * 3;
-                    rgb[idx] = ((x * 15) as u8).min(255);
-                    rgb[idx + 1] = ((y * 15) as u8).min(255);
+                    rgb[idx] = (x * 15).min(255) as u8;
+                    rgb[idx + 1] = (y * 15).min(255) as u8;
                     rgb[idx + 2] = 128;
                 }
             }
@@ -2994,8 +2994,8 @@ mod tests {
         for y in 0..s {
             for x in 0..s {
                 let idx = (y * s + x) * 3;
-                rgb[idx] = ((x * 15) as u8).min(255);
-                rgb[idx + 1] = ((y * 15) as u8).min(255);
+                rgb[idx] = (x * 15).min(255) as u8;
+                rgb[idx + 1] = (y * 15).min(255) as u8;
                 rgb[idx + 2] = 128;
             }
         }
