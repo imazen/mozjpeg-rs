@@ -42,16 +42,17 @@ jobs:
         run: cargo fmt --all -- --check
 
       - name: Run clippy
-        # Only run clippy on lib target - test/example code has many false positives
-        run: cargo clippy --workspace --lib -- -D warnings
+        # Only run clippy on main crate lib - sys-local requires local mozjpeg source
+        run: cargo clippy -p mozjpeg-oxide --lib -- -D warnings
         # Skip clippy on Windows for now due to potential FFI issues
         if: runner.os != 'Windows'
 
       - name: Build
-        run: cargo build --workspace
+        # Only build main crate - sys-local requires local mozjpeg source
+        run: cargo build -p mozjpeg-oxide
 
       - name: Run unit tests
-        run: cargo test --lib
+        run: cargo test -p mozjpeg-oxide --lib
 
       - name: Run codec comparison tests
         run: cargo test --test codec_comparison
@@ -134,7 +135,8 @@ jobs:
         uses: taiki-e/install-action@cargo-llvm-cov
 
       - name: Generate coverage report
-        run: cargo llvm-cov --lib --lcov --output-path lcov.info
+        # Only run coverage on main crate - sys-local requires local mozjpeg source
+        run: cargo llvm-cov -p mozjpeg-oxide --lib --lcov --output-path lcov.info
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v5
