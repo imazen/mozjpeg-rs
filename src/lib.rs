@@ -97,6 +97,7 @@ pub mod progressive;
 pub mod quant;
 pub mod sample;
 pub mod scan_optimize;
+pub mod simd;
 pub mod trellis;
 pub mod types;
 
