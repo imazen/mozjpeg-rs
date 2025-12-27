@@ -6,8 +6,12 @@
 //! - **Testable**: Used to verify SIMD implementations produce matching output
 //!
 //! All SIMD implementations must produce bit-exact results compared to these.
+//!
+//! Uses `multiversion` for automatic multi-versioning - the compiler generates
+//! optimized versions for different CPU features and dispatches at runtime.
 
 use crate::consts::{DCTSIZE, DCTSIZE2};
+use multiversion::multiversion;
 
 // ============================================================================
 // Forward DCT (from dct.rs)
@@ -40,6 +44,16 @@ fn descale(x: i32, n: i32) -> i32 {
 ///
 /// This is the Loeffler-Ligtenberg-Moschytz algorithm matching mozjpeg's jfdctint.c.
 /// Output is scaled up by factor of 8 (removed during quantization).
+///
+/// Uses `multiversion` to compile optimized versions for AVX2, SSE4.1, and fallback.
+/// Runtime dispatch selects the best available version.
+#[multiversion(targets(
+    "x86_64+avx2",
+    "x86_64+sse4.1",
+    "x86+avx2",
+    "x86+sse4.1",
+    "aarch64+neon",
+))]
 pub fn forward_dct_8x8(samples: &[i16; DCTSIZE2], coeffs: &mut [i16; DCTSIZE2]) {
     let mut data = [0i32; DCTSIZE2];
 
@@ -195,7 +209,15 @@ pub fn rgb_to_ycbcr(r: u8, g: u8, b: u8) -> (u8, u8, u8) {
 
 /// Scalar RGB to YCbCr conversion for a buffer.
 ///
-/// This processes pixels one at a time. Used as reference for SIMD implementations.
+/// This processes pixels one at a time. Uses `multiversion` for automatic
+/// SIMD optimization via autovectorization.
+#[multiversion(targets(
+    "x86_64+avx2",
+    "x86_64+sse4.1",
+    "x86+avx2",
+    "x86+sse4.1",
+    "aarch64+neon",
+))]
 pub fn convert_rgb_to_ycbcr(
     rgb: &[u8],
     y_out: &mut [u8],
