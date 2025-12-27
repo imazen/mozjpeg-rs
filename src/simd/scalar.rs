@@ -1,175 +1,21 @@
-//! Scalar (non-SIMD) reference implementations.
+//! Scalar reference implementations with automatic SIMD via multiversion.
 //!
-//! These implementations are:
-//! - **Correct**: Produce identical output to the reference C mozjpeg
-//! - **Portable**: Work on any platform without SIMD support
-//! - **Testable**: Used to verify SIMD implementations produce matching output
+//! These implementations use `#[multiversion]` to automatically compile
+//! optimized versions for different CPU features (AVX2, SSE4.1, NEON)
+//! and dispatch at runtime. No unsafe code required.
 //!
-//! All SIMD implementations must produce bit-exact results compared to these.
-//!
-//! Uses `multiversion` for automatic multi-versioning - the compiler generates
-//! optimized versions for different CPU features and dispatches at runtime.
+//! The DCT implementation is re-exported from `crate::dct` (single source of truth).
 
-use crate::consts::{DCTSIZE, DCTSIZE2};
 use multiversion::multiversion;
 
-// ============================================================================
-// Forward DCT (from dct.rs)
-// ============================================================================
-
-// Fixed-point constants for 13-bit precision (CONST_BITS = 13)
-const CONST_BITS: i32 = 13;
-const PASS1_BITS: i32 = 2;
-
-// Pre-calculated fixed-point constants: FIX(x) = (x * (1 << CONST_BITS) + 0.5)
-const FIX_0_298631336: i32 = 2446;
-const FIX_0_541196100: i32 = 4433;
-const FIX_0_765366865: i32 = 6270;
-const FIX_0_899976223: i32 = 7373;
-const FIX_1_175875602: i32 = 9633;
-const FIX_1_501321110: i32 = 12299;
-const FIX_1_847759065: i32 = 15137;
-const FIX_1_961570560: i32 = 16069;
-const FIX_2_053119869: i32 = 16819;
-const FIX_2_562915447: i32 = 20995;
-const FIX_3_072711026: i32 = 25172;
-
-/// DESCALE: Right-shift with rounding
-#[inline]
-fn descale(x: i32, n: i32) -> i32 {
-    (x + (1 << (n - 1))) >> n
-}
-
-/// Scalar forward DCT on one 8x8 block.
-///
-/// This is the Loeffler-Ligtenberg-Moschytz algorithm matching mozjpeg's jfdctint.c.
-/// Output is scaled up by factor of 8 (removed during quantization).
-///
-/// Uses `multiversion` to compile optimized versions for AVX2, SSE4.1, and fallback.
-/// Runtime dispatch selects the best available version.
-#[multiversion(targets(
-    "x86_64+avx2",
-    "x86_64+sse4.1",
-    "x86+avx2",
-    "x86+sse4.1",
-    "aarch64+neon",
-))]
-pub fn forward_dct_8x8(samples: &[i16; DCTSIZE2], coeffs: &mut [i16; DCTSIZE2]) {
-    let mut data = [0i32; DCTSIZE2];
-
-    // Convert input to i32
-    for i in 0..DCTSIZE2 {
-        data[i] = samples[i] as i32;
-    }
-
-    // Pass 1: process rows
-    for row in 0..DCTSIZE {
-        let base = row * DCTSIZE;
-
-        let tmp0 = data[base] + data[base + 7];
-        let tmp7 = data[base] - data[base + 7];
-        let tmp1 = data[base + 1] + data[base + 6];
-        let tmp6 = data[base + 1] - data[base + 6];
-        let tmp2 = data[base + 2] + data[base + 5];
-        let tmp5 = data[base + 2] - data[base + 5];
-        let tmp3 = data[base + 3] + data[base + 4];
-        let tmp4 = data[base + 3] - data[base + 4];
-
-        // Even part
-        let tmp10 = tmp0 + tmp3;
-        let tmp13 = tmp0 - tmp3;
-        let tmp11 = tmp1 + tmp2;
-        let tmp12 = tmp1 - tmp2;
-
-        data[base] = (tmp10 + tmp11) << PASS1_BITS;
-        data[base + 4] = (tmp10 - tmp11) << PASS1_BITS;
-
-        let z1 = (tmp12 + tmp13) * FIX_0_541196100;
-        data[base + 2] = descale(z1 + tmp13 * FIX_0_765366865, CONST_BITS - PASS1_BITS);
-        data[base + 6] = descale(z1 + tmp12 * (-FIX_1_847759065), CONST_BITS - PASS1_BITS);
-
-        // Odd part
-        let z1 = tmp4 + tmp7;
-        let z2 = tmp5 + tmp6;
-        let z3 = tmp4 + tmp6;
-        let z4 = tmp5 + tmp7;
-        let z5 = (z3 + z4) * FIX_1_175875602;
-
-        let tmp4 = tmp4 * FIX_0_298631336;
-        let tmp5 = tmp5 * FIX_2_053119869;
-        let tmp6 = tmp6 * FIX_3_072711026;
-        let tmp7 = tmp7 * FIX_1_501321110;
-        let z1 = z1 * (-FIX_0_899976223);
-        let z2 = z2 * (-FIX_2_562915447);
-        let z3 = z3 * (-FIX_1_961570560) + z5;
-        let z4 = z4 * (-FIX_0_390180644) + z5;
-
-        data[base + 7] = descale(tmp4 + z1 + z3, CONST_BITS - PASS1_BITS);
-        data[base + 5] = descale(tmp5 + z2 + z4, CONST_BITS - PASS1_BITS);
-        data[base + 3] = descale(tmp6 + z2 + z3, CONST_BITS - PASS1_BITS);
-        data[base + 1] = descale(tmp7 + z1 + z4, CONST_BITS - PASS1_BITS);
-    }
-
-    // Pass 2: process columns
-    for col in 0..DCTSIZE {
-        let tmp0 = data[col] + data[DCTSIZE * 7 + col];
-        let tmp7 = data[col] - data[DCTSIZE * 7 + col];
-        let tmp1 = data[DCTSIZE + col] + data[DCTSIZE * 6 + col];
-        let tmp6 = data[DCTSIZE + col] - data[DCTSIZE * 6 + col];
-        let tmp2 = data[DCTSIZE * 2 + col] + data[DCTSIZE * 5 + col];
-        let tmp5 = data[DCTSIZE * 2 + col] - data[DCTSIZE * 5 + col];
-        let tmp3 = data[DCTSIZE * 3 + col] + data[DCTSIZE * 4 + col];
-        let tmp4 = data[DCTSIZE * 3 + col] - data[DCTSIZE * 4 + col];
-
-        // Even part
-        let tmp10 = tmp0 + tmp3;
-        let tmp13 = tmp0 - tmp3;
-        let tmp11 = tmp1 + tmp2;
-        let tmp12 = tmp1 - tmp2;
-
-        data[col] = descale(tmp10 + tmp11, PASS1_BITS);
-        data[DCTSIZE * 4 + col] = descale(tmp10 - tmp11, PASS1_BITS);
-
-        let z1 = (tmp12 + tmp13) * FIX_0_541196100;
-        data[DCTSIZE * 2 + col] = descale(z1 + tmp13 * FIX_0_765366865, CONST_BITS + PASS1_BITS);
-        data[DCTSIZE * 6 + col] = descale(z1 + tmp12 * (-FIX_1_847759065), CONST_BITS + PASS1_BITS);
-
-        // Odd part
-        let z1 = tmp4 + tmp7;
-        let z2 = tmp5 + tmp6;
-        let z3 = tmp4 + tmp6;
-        let z4 = tmp5 + tmp7;
-        let z5 = (z3 + z4) * FIX_1_175875602;
-
-        let tmp4 = tmp4 * FIX_0_298631336;
-        let tmp5 = tmp5 * FIX_2_053119869;
-        let tmp6 = tmp6 * FIX_3_072711026;
-        let tmp7 = tmp7 * FIX_1_501321110;
-        let z1 = z1 * (-FIX_0_899976223);
-        let z2 = z2 * (-FIX_2_562915447);
-        let z3 = z3 * (-FIX_1_961570560) + z5;
-        let z4 = z4 * (-FIX_0_390180644) + z5;
-
-        data[DCTSIZE * 7 + col] = descale(tmp4 + z1 + z3, CONST_BITS + PASS1_BITS);
-        data[DCTSIZE * 5 + col] = descale(tmp5 + z2 + z4, CONST_BITS + PASS1_BITS);
-        data[DCTSIZE * 3 + col] = descale(tmp6 + z2 + z3, CONST_BITS + PASS1_BITS);
-        data[DCTSIZE + col] = descale(tmp7 + z1 + z4, CONST_BITS + PASS1_BITS);
-    }
-
-    // Copy results
-    for i in 0..DCTSIZE2 {
-        coeffs[i] = data[i] as i16;
-    }
-}
-
-// Missing constant
-const FIX_0_390180644: i32 = 3196;
+// Re-export the canonical DCT implementation (now with multiversion)
+pub use crate::dct::forward_dct_8x8;
 
 // ============================================================================
-// Color Conversion (from color.rs)
+// Color Conversion
 // ============================================================================
 
-/// Fixed-point precision bits
+// Fixed-point precision (16 bits)
 const SCALEBITS: i32 = 16;
 const ONE_HALF: i32 = 1 << (SCALEBITS - 1);
 const CBCR_CENTER: i32 = 128;
@@ -187,7 +33,7 @@ const FIX_0_50000: i32 = fix(0.50000);
 const FIX_0_41869: i32 = fix(0.41869);
 const FIX_0_08131: i32 = fix(0.08131);
 
-/// Convert a single RGB pixel to YCbCr.
+/// Convert a single RGB pixel to YCbCr (BT.601).
 #[inline]
 pub fn rgb_to_ycbcr(r: u8, g: u8, b: u8) -> (u8, u8, u8) {
     let r = r as i32;
@@ -200,17 +46,12 @@ pub fn rgb_to_ycbcr(r: u8, g: u8, b: u8) -> (u8, u8, u8) {
     let cr = ((FIX_0_50000 * r - FIX_0_41869 * g - FIX_0_08131 * b + ONE_HALF) >> SCALEBITS)
         + CBCR_CENTER;
 
-    let y = y.clamp(0, 255);
-    let cb = cb.clamp(0, 255);
-    let cr = cr.clamp(0, 255);
-
-    (y as u8, cb as u8, cr as u8)
+    (y.clamp(0, 255) as u8, cb.clamp(0, 255) as u8, cr.clamp(0, 255) as u8)
 }
 
-/// Scalar RGB to YCbCr conversion for a buffer.
+/// RGB to YCbCr conversion for a buffer.
 ///
-/// This processes pixels one at a time. Uses `multiversion` for automatic
-/// SIMD optimization via autovectorization.
+/// Uses `multiversion` for automatic SIMD optimization via autovectorization.
 #[multiversion(targets(
     "x86_64+avx2",
     "x86_64+sse4.1",
@@ -239,43 +80,27 @@ pub fn convert_rgb_to_ycbcr(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::consts::DCTSIZE2;
 
     #[test]
-    fn test_dct_flat_block() {
+    fn test_dct_reexport_works() {
         let samples = [100i16; DCTSIZE2];
         let mut coeffs = [0i16; DCTSIZE2];
         forward_dct_8x8(&samples, &mut coeffs);
-
-        // DC = 64 * value for flat block
+        // DC coefficient for flat block of 100 = 64 * 100 = 6400
         assert_eq!(coeffs[0], 6400);
-
-        // AC should be ~0
-        for i in 1..DCTSIZE2 {
-            assert!(coeffs[i].abs() <= 1);
-        }
     }
 
     #[test]
-    fn test_dct_zero_block() {
-        let samples = [0i16; DCTSIZE2];
-        let mut coeffs = [0i16; DCTSIZE2];
-        forward_dct_8x8(&samples, &mut coeffs);
-
-        for c in coeffs.iter() {
-            assert_eq!(*c, 0);
-        }
-    }
-
-    #[test]
-    fn test_color_black() {
-        let (y, cb, cr) = rgb_to_ycbcr(0, 0, 0);
-        assert_eq!(y, 0);
+    fn test_gray_pixel() {
+        let (y, cb, cr) = rgb_to_ycbcr(128, 128, 128);
+        assert_eq!(y, 128);
         assert_eq!(cb, 128);
         assert_eq!(cr, 128);
     }
 
     #[test]
-    fn test_color_white() {
+    fn test_white_pixel() {
         let (y, cb, cr) = rgb_to_ycbcr(255, 255, 255);
         assert_eq!(y, 255);
         assert_eq!(cb, 128);
@@ -283,10 +108,24 @@ mod tests {
     }
 
     #[test]
-    fn test_color_gray() {
-        let (y, cb, cr) = rgb_to_ycbcr(128, 128, 128);
-        assert_eq!(y, 128);
+    fn test_black_pixel() {
+        let (y, cb, cr) = rgb_to_ycbcr(0, 0, 0);
+        assert_eq!(y, 0);
         assert_eq!(cb, 128);
         assert_eq!(cr, 128);
+    }
+
+    #[test]
+    fn test_buffer_conversion() {
+        let rgb = [128u8; 24]; // 8 gray pixels
+        let mut y = [0u8; 8];
+        let mut cb = [0u8; 8];
+        let mut cr = [0u8; 8];
+
+        convert_rgb_to_ycbcr(&rgb, &mut y, &mut cb, &mut cr, 8);
+
+        assert!(y.iter().all(|&v| v == 128));
+        assert!(cb.iter().all(|&v| v == 128));
+        assert!(cr.iter().all(|&v| v == 128));
     }
 }
