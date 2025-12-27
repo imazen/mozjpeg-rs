@@ -53,12 +53,13 @@ use crate::trellis::{dc_trellis_optimize_indexed, trellis_quantize_block};
 use crate::types::{ComponentInfo, PixelDensity, QuantTable, Subsampling, TrellisConfig};
 
 // ============================================================================
-// Encode Trait
+// Encode Trait (internal, for potential future streaming API)
 // ============================================================================
 
 /// Trait for JPEG encoding (batch mode).
 ///
 /// Implemented by both [`Encoder`] and [`StreamingEncoder`].
+#[allow(dead_code)]
 pub trait Encode {
     /// Encode RGB image data to JPEG.
     ///

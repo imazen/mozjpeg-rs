@@ -10,9 +10,19 @@ pub type Result<T> = std::result::Result<T, Error>;
 #[non_exhaustive]
 pub enum Error {
     /// Invalid image dimensions (zero width or height)
-    InvalidDimensions { width: u32, height: u32 },
+    InvalidDimensions {
+        /// Image width
+        width: u32,
+        /// Image height
+        height: u32,
+    },
     /// Image buffer size doesn't match dimensions
-    BufferSizeMismatch { expected: usize, actual: usize },
+    BufferSizeMismatch {
+        /// Expected buffer size in bytes
+        expected: usize,
+        /// Actual buffer size in bytes
+        actual: usize,
+    },
     /// Invalid quality value (must be 1-100)
     InvalidQuality(u8),
     /// Invalid quantization table index
@@ -22,9 +32,17 @@ pub enum Error {
     /// Invalid Huffman table index
     InvalidHuffmanTableIndex(usize),
     /// Invalid sampling factor
-    InvalidSamplingFactor { h: u8, v: u8 },
+    InvalidSamplingFactor {
+        /// Horizontal sampling factor
+        h: u8,
+        /// Vertical sampling factor
+        v: u8,
+    },
     /// Invalid scan specification
-    InvalidScanSpec { reason: &'static str },
+    InvalidScanSpec {
+        /// Reason for the invalid specification
+        reason: &'static str,
+    },
     /// Invalid Huffman table structure
     InvalidHuffmanTable,
     /// Huffman code length overflow (exceeds max allowed)

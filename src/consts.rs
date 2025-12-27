@@ -107,6 +107,9 @@ pub enum QuantTableIdx {
 }
 
 impl QuantTableIdx {
+    /// Convert a u8 value to a QuantTableIdx.
+    ///
+    /// Returns `None` if the value is out of range (0-8).
     pub fn from_u8(v: u8) -> Option<Self> {
         match v {
             0 => Some(Self::JpegAnnexK),
