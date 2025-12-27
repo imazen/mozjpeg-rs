@@ -134,6 +134,15 @@ pub mod corpus;
 /// The main JPEG encoder. See [module documentation](crate) for usage examples.
 pub use encode::Encoder;
 
+/// Streaming JPEG encoder. See [`StreamingEncoder`] for details.
+pub use encode::StreamingEncoder;
+
+/// Active streaming encoding session.
+pub use encode::EncodingStream;
+
+/// Trait for batch JPEG encoding, implemented by both [`Encoder`] and [`StreamingEncoder`].
+pub use encode::Encode;
+
 /// Error types for encoding operations.
 pub use error::{Error, Result};
 
