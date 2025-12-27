@@ -82,23 +82,40 @@
 // SIMD intrinsics in dct.rs and test FFI code are the only exceptions.
 #![deny(unsafe_code)]
 
-// Public modules - available for advanced use cases
-pub mod bitstream;
-pub mod color;
+// ============================================================================
+// Module visibility
+// ============================================================================
+// Core public modules - stable API
 pub mod consts;
 pub mod dct;
-pub mod deringing;
 pub mod encode;
-pub mod entropy;
 pub mod error;
-pub mod huffman;
-pub mod marker;
-pub mod progressive;
 pub mod quant;
-pub mod sample;
-pub mod scan_optimize;
-pub mod trellis;
+pub mod simd;
 pub mod types;
+
+// Implementation modules - hidden from docs but accessible for tests/advanced use
+// These are not part of the stable API and may change between versions.
+#[doc(hidden)]
+pub mod bitstream;
+#[doc(hidden)]
+pub mod color;
+#[doc(hidden)]
+pub mod deringing;
+#[doc(hidden)]
+pub mod entropy;
+#[doc(hidden)]
+pub mod huffman;
+#[doc(hidden)]
+pub mod marker;
+#[doc(hidden)]
+pub mod progressive;
+#[doc(hidden)]
+pub mod sample;
+#[doc(hidden)]
+pub mod scan_optimize;
+#[doc(hidden)]
+pub mod trellis;
 
 /// Test encoder module for comparing Rust vs C implementations.
 /// Hidden from public API but available for tests.
@@ -130,64 +147,24 @@ pub use consts::QuantTableIdx;
 // Secondary API - Additional types that may be useful
 // ============================================================================
 
-pub use types::{
-    ColorSpace, ComponentInfo, CompressionProfile, DctBlock, DctMethod, FloatBlock, HuffmanTable,
-    QuantTable, SampleBlock, ScanInfo,
-};
+/// Type aliases for block-level operations.
+pub use types::{DctBlock, SampleBlock};
 
-pub use consts::{
-    DCTSIZE, DCTSIZE2, JPEG_DHT, JPEG_DQT, JPEG_EOI, JPEG_SOF0, JPEG_SOF2, JPEG_SOI, JPEG_SOS,
-    STD_CHROMINANCE_QUANT_TBL, STD_LUMINANCE_QUANT_TBL,
-};
+/// Types for custom scan scripts and advanced configuration.
+pub use types::{ColorSpace, QuantTable, ScanInfo};
+
+/// Core constants for JPEG encoding.
+pub use consts::{DCTSIZE, DCTSIZE2};
 
 // ============================================================================
 // Low-Level API - For advanced/custom encoding pipelines
 // ============================================================================
 
-pub use quant::{
-    create_quant_table, create_quant_tables, dequantize_block, dequantize_coef,
-    get_chrominance_quant_table, get_luminance_quant_table, quality_to_scale_factor,
-    quality_to_scale_factor_f32, quantize_block, quantize_coef,
-};
+/// Quantization table creation and quality scaling.
+pub use quant::{create_quant_table, quality_to_scale_factor};
 
-pub use dct::{
-    forward_dct, forward_dct_8x8, forward_dct_8x8_simd, forward_dct_8x8_transpose,
-    forward_dct_with_deringing, level_shift,
-};
+/// Forward DCT and level shifting for custom pipelines.
+pub use dct::{forward_dct_8x8, level_shift};
 
-pub use color::{
-    cmyk_to_ycck, convert_block_rgb_to_ycbcr, convert_rgb_to_gray, convert_rgb_to_ycbcr,
-    rgb_to_gray, rgb_to_ycbcr,
-};
-
-pub use huffman::{
-    generate_optimal_table, DerivedTable, FrequencyCounter, HuffTable, MAX_CODE_LENGTH,
-    NUM_HUFF_TBLS,
-};
-
-pub use bitstream::{BitWriter, VecBitWriter};
-
-pub use entropy::{
-    encode_block_standalone, jpeg_nbits, EntropyEncoder, ProgressiveEncoder,
-    ProgressiveSymbolCounter, SymbolCounter,
-};
-
-pub use sample::{
-    downsample_h2v1_row, downsample_h2v2_rows, downsample_plane, expand_to_mcu,
-    mcu_aligned_dimensions, subsampled_dimensions,
-};
-
-pub use trellis::{
-    compute_block_eob_info, optimize_eob_runs, simple_quantize_block, trellis_quantize_block,
-    trellis_quantize_block_with_eob_info, BlockEobInfo,
-};
-
-pub use deringing::preprocess_deringing;
-
-pub use progressive::{
-    generate_baseline_scan, generate_optimized_progressive_scans,
-    generate_simple_progressive_scans, generate_standard_progressive_scans, is_progressive_script,
-    validate_scan_script,
-};
-
-pub use marker::MarkerWriter;
+/// Single-pixel color conversion utilities.
+pub use color::{rgb_to_gray, rgb_to_ycbcr};

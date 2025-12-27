@@ -288,6 +288,7 @@ fn bench_subsampling(c: &mut Criterion) {
 /// Benchmark DCT implementations (scalar vs SIMD).
 fn bench_dct(c: &mut Criterion) {
     use mozjpeg_oxide::dct::{forward_dct_8x8, forward_dct_8x8_simd, forward_dct_8x8_transpose};
+    use mozjpeg_oxide::simd::SimdOps;
 
     // Create test data
     let mut samples = [0i16; 64];
@@ -322,18 +323,25 @@ fn bench_dct(c: &mut Criterion) {
         })
     });
 
-    // AVX2 intrinsics version (x86_64 only)
-    #[cfg(all(target_arch = "x86_64", target_feature = "avx2"))]
-    {
-        use mozjpeg_oxide::dct::avx2::forward_dct_8x8_avx2;
-        group.bench_function("avx2_intrinsics", |b| {
-            let mut coeffs = [0i16; 64];
-            b.iter(|| {
-                unsafe { forward_dct_8x8_avx2(black_box(&samples), &mut coeffs) };
-                black_box(coeffs)
-            })
-        });
-    }
+    // New SIMD dispatch module (uses AVX2 intrinsics on x86_64)
+    let simd_ops = SimdOps::detect();
+    group.bench_function("simd_dispatch", |b| {
+        let mut coeffs = [0i16; 64];
+        b.iter(|| {
+            (simd_ops.forward_dct)(black_box(&samples), &mut coeffs);
+            black_box(coeffs)
+        })
+    });
+
+    // Scalar-only from simd module (for comparison)
+    let scalar_ops = SimdOps::scalar();
+    group.bench_function("simd_scalar_ref", |b| {
+        let mut coeffs = [0i16; 64];
+        b.iter(|| {
+            (scalar_ops.forward_dct)(black_box(&samples), &mut coeffs);
+            black_box(coeffs)
+        })
+    });
 
     group.finish();
 }

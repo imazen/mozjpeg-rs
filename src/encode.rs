@@ -17,13 +17,12 @@
 use std::io::Write;
 
 use crate::bitstream::BitWriter;
-use crate::color;
 use crate::consts::{
     QuantTableIdx, AC_CHROMINANCE_BITS, AC_CHROMINANCE_VALUES, AC_LUMINANCE_BITS,
     AC_LUMINANCE_VALUES, DCTSIZE, DCTSIZE2, DC_CHROMINANCE_BITS, DC_CHROMINANCE_VALUES,
     DC_LUMINANCE_BITS, DC_LUMINANCE_VALUES, JPEG_NATURAL_ORDER,
 };
-use crate::dct;
+use crate::deringing::preprocess_deringing;
 use crate::entropy::{EntropyEncoder, ProgressiveEncoder, ProgressiveSymbolCounter, SymbolCounter};
 use crate::error::{Error, Result};
 use crate::huffman::FrequencyCounter;
@@ -33,6 +32,7 @@ use crate::progressive::{generate_baseline_scan, generate_minimal_progressive_sc
 use crate::quant::{create_quant_tables, quantize_block};
 use crate::sample;
 use crate::scan_optimize::{generate_search_scans, ScanSearchConfig, ScanSelector};
+use crate::simd::SimdOps;
 use crate::trellis::{dc_trellis_optimize_indexed, trellis_quantize_block};
 use crate::types::{ComponentInfo, Subsampling, TrellisConfig};
 
@@ -80,6 +80,8 @@ pub struct Encoder {
     restart_interval: u16,
     /// EXIF data to embed (raw TIFF structure, without "Exif\0\0" header)
     exif_data: Option<Vec<u8>>,
+    /// SIMD operations dispatch (detected once at construction)
+    simd: SimdOps,
 }
 
 impl Default for Encoder {
@@ -112,6 +114,7 @@ impl Encoder {
             optimize_scans: false,
             restart_interval: 0,
             exif_data: None,
+            simd: SimdOps::detect(),
         }
     }
 
@@ -132,6 +135,7 @@ impl Encoder {
             optimize_scans: true,
             restart_interval: 0,
             exif_data: None,
+            simd: SimdOps::detect(),
         }
     }
 
@@ -152,6 +156,7 @@ impl Encoder {
             optimize_scans: false,
             restart_interval: 0,
             exif_data: None,
+            simd: SimdOps::detect(),
         }
     }
 
@@ -535,13 +540,12 @@ impl Encoder {
         let mut cb_plane = try_alloc_vec(0u8, num_pixels)?;
         let mut cr_plane = try_alloc_vec(0u8, num_pixels)?;
 
-        color::convert_rgb_to_ycbcr(
+        (self.simd.color_convert_rgb_to_ycbcr)(
             rgb_data,
             &mut y_plane,
             &mut cb_plane,
             &mut cr_plane,
-            width,
-            height,
+            num_pixels,
         );
 
         // Step 2: Downsample chroma if needed
@@ -1363,13 +1367,19 @@ impl Encoder {
                 .copy_from_slice(&plane[src_offset..src_offset + DCTSIZE]);
         }
 
-        // Forward DCT (includes level shift, and optionally overshoot deringing)
-        // Note: DCT output is scaled by factor of 8 (sqrt(8) per dimension)
-        if self.overshoot_deringing {
-            dct::forward_dct_with_deringing(&samples, dct_block, qtable[0]);
-        } else {
-            dct::forward_dct(&samples, dct_block);
+        // Level shift (center around 0 for DCT)
+        let mut shifted = [0i16; DCTSIZE2];
+        for i in 0..DCTSIZE2 {
+            shifted[i] = (samples[i] as i16) - 128;
         }
+
+        // Apply overshoot deringing if enabled (reduces ringing on white backgrounds)
+        if self.overshoot_deringing {
+            preprocess_deringing(&mut shifted, qtable[0]);
+        }
+
+        // Forward DCT (output scaled by factor of 8)
+        (self.simd.forward_dct)(&shifted, dct_block);
 
         // Convert to i32 for quantization
         let mut dct_i32 = [0i32; DCTSIZE2];
@@ -1514,13 +1524,19 @@ impl Encoder {
                 .copy_from_slice(&plane[src_offset..src_offset + DCTSIZE]);
         }
 
-        // Forward DCT (includes level shift, and optionally overshoot deringing)
-        // Note: DCT output is scaled by factor of 8 (sqrt(8) per dimension)
-        if self.overshoot_deringing {
-            dct::forward_dct_with_deringing(&samples, dct_block, qtable[0]);
-        } else {
-            dct::forward_dct(&samples, dct_block);
+        // Level shift (center around 0 for DCT)
+        let mut shifted = [0i16; DCTSIZE2];
+        for i in 0..DCTSIZE2 {
+            shifted[i] = (samples[i] as i16) - 128;
         }
+
+        // Apply overshoot deringing if enabled (reduces ringing on white backgrounds)
+        if self.overshoot_deringing {
+            preprocess_deringing(&mut shifted, qtable[0]);
+        }
+
+        // Forward DCT (output scaled by factor of 8)
+        (self.simd.forward_dct)(&shifted, dct_block);
 
         // Convert to i32 for quantization
         let mut dct_i32 = [0i32; DCTSIZE2];
