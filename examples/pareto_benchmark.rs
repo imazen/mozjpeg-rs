@@ -13,7 +13,9 @@
 //!   --clic-only      Only use CLIC corpus
 //!   --xyb-roundtrip  Enable XYB roundtrip for fair comparison (isolates compression error)
 
-use codec_eval::{EvalConfig, EvalSession, ImageData, MetricConfig, ViewingCondition};
+use codec_eval::{
+    EvalConfig, EvalSession, ImageData, MetricConfig, ViewingCondition, decode::jpeg_decode_callback,
+};
 use mozjpeg_oxide::Encoder;
 use mozjpeg_sys::*;
 use std::fs::{self, File};
@@ -160,6 +162,7 @@ fn main() {
     let mut session = EvalSession::new(config);
 
     // Register Rust mozjpeg-oxide encoder
+    // Uses ICC-aware decode callback for proper color management
     session.add_codec_with_decode(
         "rust",
         env!("CARGO_PKG_VERSION"),
@@ -175,16 +178,7 @@ fn main() {
                 }
             })
         }),
-        Box::new(|data| {
-            let decoded = decode_jpeg(data);
-            let decoder = jpeg_decoder::Decoder::new(std::io::Cursor::new(data));
-            let info = decoder.info().unwrap();
-            Ok(ImageData::RgbSlice {
-                data: decoded,
-                width: info.width as usize,
-                height: info.height as usize,
-            })
-        }),
+        jpeg_decode_callback(),
     );
 
     // Register C mozjpeg encoder
@@ -198,16 +192,7 @@ fn main() {
             let quality = request.quality as u8;
             Ok(encode_c(&rgb, width, height, quality))
         }),
-        Box::new(|data| {
-            let decoded = decode_jpeg(data);
-            let decoder = jpeg_decoder::Decoder::new(std::io::Cursor::new(data));
-            let info = decoder.info().unwrap();
-            Ok(ImageData::RgbSlice {
-                data: decoded,
-                width: info.width as usize,
-                height: info.height as usize,
-            })
-        }),
+        jpeg_decode_callback(),
     );
 
     // Process each image and collect results
@@ -410,11 +395,6 @@ fn encode_c(rgb: &[u8], width: u32, height: u32, quality: u8) -> Vec<u8> {
 
         result
     }
-}
-
-fn decode_jpeg(data: &[u8]) -> Vec<u8> {
-    let mut decoder = jpeg_decoder::Decoder::new(std::io::Cursor::new(data));
-    decoder.decode().expect("JPEG decode failed")
 }
 
 fn write_csv(path: &Path, results: &[EncodingResult]) -> std::io::Result<()> {

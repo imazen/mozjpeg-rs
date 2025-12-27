@@ -47,7 +47,7 @@ jpeg-decoder = "0.3"
 libc = "0.2"
 # Use existing mozjpeg-sys from crates.io for basic FFI validation
 mozjpeg-sys = "2.2"
-# Codec testing infrastructure (provides DSSIM, SSIMULACRA2, Butteraugli metrics)
+# Codec testing infrastructure (provides DSSIM, SSIMULACRA2, Butteraugli metrics, ICC support)
 codec-eval = { git = "https://github.com/imazen/codec-eval" }
 # Note: sys-local is NOT included because it requires local mozjpeg C source.
 # To run ffi_comparison tests locally, uncomment below:
