@@ -382,8 +382,7 @@ impl<'a> ScanTrialEncoder<'a> {
             let total_blocks = num_block_rows * num_block_cols;
             for block in blocks.iter().take(total_blocks) {
                 if is_refinement {
-                    encoder
-                        .encode_ac_refine(block, ss as u8, se as u8, scan.ah, al, ac_table)?;
+                    encoder.encode_ac_refine(block, ss as u8, se as u8, scan.ah, al, ac_table)?;
                 } else {
                     encoder.encode_ac_first(block, ss as u8, se as u8, al, ac_table)?;
                 }
@@ -410,12 +409,7 @@ impl<'a> ScanTrialEncoder<'a> {
 
                         if is_refinement {
                             encoder.encode_ac_refine(
-                                block,
-                                ss as u8,
-                                se as u8,
-                                scan.ah,
-                                al,
-                                ac_table,
+                                block, ss as u8, se as u8, scan.ah, al, ac_table,
                             )?;
                         } else {
                             encoder.encode_ac_first(block, ss as u8, se as u8, al, ac_table)?;

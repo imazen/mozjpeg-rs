@@ -55,7 +55,8 @@ mod streaming;
 pub(crate) use helpers::{
     create_components, create_std_ac_chroma_table, create_std_ac_luma_table,
     create_std_dc_chroma_table, create_std_dc_luma_table, create_ycbcr_components,
-    natural_to_zigzag, run_dc_trellis_by_row, try_alloc_vec, try_alloc_vec_array, write_sos_marker,
+    natural_to_zigzag, run_dc_trellis_by_row, try_alloc_vec, try_alloc_vec_array, write_dht_marker,
+    write_sos_marker,
 };
 pub use streaming::{EncodingStream, StreamingEncoder};
 
@@ -995,9 +996,162 @@ impl Encoder {
                 generate_minimal_progressive_scans(3)
             };
 
-            // Count symbol frequencies for optimized Huffman tables
-            let (opt_dc_luma, opt_dc_chroma, opt_ac_luma, opt_ac_chroma) = if self.optimize_huffman
-            {
+            // Build Huffman tables and encode scans
+            //
+            // When optimize_scans=true, each AC scan gets its own optimal Huffman table
+            // written immediately before the scan. This matches C mozjpeg behavior and
+            // ensures the trial encoder's size estimates match actual encoded sizes.
+            //
+            // When optimize_scans=false, all tables are built globally and written once.
+
+            if self.optimize_huffman && self.optimize_scans {
+                // Per-scan AC tables mode: DC tables global, AC tables per-scan
+                // This matches C mozjpeg's behavior with optimize_scans enabled
+
+                // Count DC frequencies across all DC scans
+                let mut dc_luma_freq = FrequencyCounter::new();
+                let mut dc_chroma_freq = FrequencyCounter::new();
+
+                for scan in &scans {
+                    let is_dc_scan = scan.ss == 0 && scan.se == 0;
+                    if is_dc_scan {
+                        self.count_dc_scan_symbols(
+                            scan,
+                            &y_blocks,
+                            &cb_blocks,
+                            &cr_blocks,
+                            mcu_rows,
+                            mcu_cols,
+                            luma_h,
+                            luma_v,
+                            &mut dc_luma_freq,
+                            &mut dc_chroma_freq,
+                        );
+                    }
+                }
+
+                // Generate and write DC tables upfront
+                let opt_dc_luma_huff = dc_luma_freq.generate_table()?;
+                let opt_dc_chroma_huff = dc_chroma_freq.generate_table()?;
+                marker_writer.write_dht_multiple(&[
+                    (0, false, &opt_dc_luma_huff),
+                    (1, false, &opt_dc_chroma_huff),
+                ])?;
+
+                let opt_dc_luma = DerivedTable::from_huff_table(&opt_dc_luma_huff, true)?;
+                let opt_dc_chroma = DerivedTable::from_huff_table(&opt_dc_chroma_huff, true)?;
+
+                // Get output writer from marker_writer
+                let output = marker_writer.into_inner();
+                let mut bit_writer = BitWriter::new(output);
+
+                // Encode each scan with per-scan AC tables
+                for scan in &scans {
+                    bit_writer.flush()?;
+                    let mut inner = bit_writer.into_inner();
+
+                    let is_dc_scan = scan.ss == 0 && scan.se == 0;
+
+                    if !is_dc_scan {
+                        // AC scan: build per-scan optimal Huffman table
+                        let comp_idx = scan.component_index[0] as usize;
+                        let blocks = match comp_idx {
+                            0 => &y_blocks,
+                            1 => &cb_blocks,
+                            2 => &cr_blocks,
+                            _ => &y_blocks,
+                        };
+                        let (block_cols, block_rows) = if comp_idx == 0 {
+                            (width.div_ceil(DCTSIZE), height.div_ceil(DCTSIZE))
+                        } else {
+                            (
+                                chroma_width.div_ceil(DCTSIZE),
+                                chroma_height.div_ceil(DCTSIZE),
+                            )
+                        };
+
+                        // Count frequencies for this scan only
+                        let mut ac_freq = FrequencyCounter::new();
+                        self.count_ac_scan_symbols(
+                            scan,
+                            blocks,
+                            mcu_rows,
+                            mcu_cols,
+                            luma_h,
+                            luma_v,
+                            comp_idx,
+                            block_cols,
+                            block_rows,
+                            &mut ac_freq,
+                        );
+
+                        // Build optimal table and write DHT
+                        let ac_huff = ac_freq.generate_table()?;
+                        let table_idx = if comp_idx == 0 { 0 } else { 1 };
+                        write_dht_marker(&mut inner, table_idx, true, &ac_huff)?;
+
+                        // Write SOS and encode
+                        write_sos_marker(&mut inner, scan, &components)?;
+                        bit_writer = BitWriter::new(inner);
+
+                        let ac_derived = DerivedTable::from_huff_table(&ac_huff, false)?;
+                        let mut prog_encoder = ProgressiveEncoder::new(&mut bit_writer);
+
+                        self.encode_progressive_scan(
+                            scan,
+                            &y_blocks,
+                            &cb_blocks,
+                            &cr_blocks,
+                            mcu_rows,
+                            mcu_cols,
+                            luma_h,
+                            luma_v,
+                            width,
+                            height,
+                            chroma_width,
+                            chroma_height,
+                            &opt_dc_luma,
+                            &opt_dc_chroma,
+                            &ac_derived,
+                            &ac_derived, // Not used for AC scans, but needed for signature
+                            &mut prog_encoder,
+                        )?;
+                        prog_encoder.finish_scan(Some(&ac_derived))?;
+                    } else {
+                        // DC scan: use global DC tables
+                        write_sos_marker(&mut inner, scan, &components)?;
+                        bit_writer = BitWriter::new(inner);
+
+                        let mut prog_encoder = ProgressiveEncoder::new(&mut bit_writer);
+                        self.encode_progressive_scan(
+                            scan,
+                            &y_blocks,
+                            &cb_blocks,
+                            &cr_blocks,
+                            mcu_rows,
+                            mcu_cols,
+                            luma_h,
+                            luma_v,
+                            width,
+                            height,
+                            chroma_width,
+                            chroma_height,
+                            &opt_dc_luma,
+                            &opt_dc_chroma,
+                            &ac_luma_derived, // Not used for DC scans
+                            &ac_chroma_derived,
+                            &mut prog_encoder,
+                        )?;
+                        prog_encoder.finish_scan(None)?;
+                    }
+                }
+
+                // Flush and write EOI
+                bit_writer.flush()?;
+                let mut output = bit_writer.into_inner();
+                output.write_all(&[0xFF, 0xD9])?;
+            } else if self.optimize_huffman {
+                // Global tables mode (original behavior for non-optimize_scans)
                 let mut dc_luma_freq = FrequencyCounter::new();
                 let mut dc_chroma_freq = FrequencyCounter::new();
                 let mut ac_luma_freq = FrequencyCounter::new();
@@ -1007,7 +1161,6 @@ impl Encoder {
                 for scan in &scans {
                     let is_dc_scan = scan.ss == 0 && scan.se == 0;
                     if is_dc_scan {
-                        // DC scan - count DC symbols for all components
                         self.count_dc_scan_symbols(
                             scan,
                             &y_blocks,
@@ -1021,7 +1174,6 @@ impl Encoder {
                             &mut dc_chroma_freq,
                         );
                     } else {
-                        // AC scan - count AC symbols for single component
                         let comp_idx = scan.component_index[0] as usize;
                         let blocks = match comp_idx {
                             0 => &y_blocks,
@@ -1034,7 +1186,6 @@ impl Encoder {
                         } else {
                             &mut ac_chroma_freq
                         };
-                        // Calculate actual block dimensions for this component
                         let (block_cols, block_rows) = if comp_idx == 0 {
                             (width.div_ceil(DCTSIZE), height.div_ceil(DCTSIZE))
                         } else {
@@ -1050,13 +1201,12 @@ impl Encoder {
                     }
                 }
 
-                // Generate optimized Huffman tables
+                // Generate and write all optimized Huffman tables
                 let opt_dc_luma_huff = dc_luma_freq.generate_table()?;
                 let opt_dc_chroma_huff = dc_chroma_freq.generate_table()?;
                 let opt_ac_luma_huff = ac_luma_freq.generate_table()?;
                 let opt_ac_chroma_huff = ac_chroma_freq.generate_table()?;
 
-                // Write DHT with optimized tables - combined into single marker
                 marker_writer.write_dht_multiple(&[
                     (0, false, &opt_dc_luma_huff),
                     (1, false, &opt_dc_chroma_huff),
@@ -1064,84 +1214,106 @@ impl Encoder {
                     (1, true, &opt_ac_chroma_huff),
                 ])?;
 
-                // Create derived tables for encoding
-                (
-                    DerivedTable::from_huff_table(&opt_dc_luma_huff, true)?,
-                    DerivedTable::from_huff_table(&opt_dc_chroma_huff, true)?,
-                    DerivedTable::from_huff_table(&opt_ac_luma_huff, false)?,
-                    DerivedTable::from_huff_table(&opt_ac_chroma_huff, false)?,
-                )
-            } else {
-                // Use standard tables (already written)
-                (
-                    dc_luma_derived.clone(),
-                    dc_chroma_derived.clone(),
-                    ac_luma_derived.clone(),
-                    ac_chroma_derived.clone(),
-                )
-            };
+                let opt_dc_luma = DerivedTable::from_huff_table(&opt_dc_luma_huff, true)?;
+                let opt_dc_chroma = DerivedTable::from_huff_table(&opt_dc_chroma_huff, true)?;
+                let opt_ac_luma = DerivedTable::from_huff_table(&opt_ac_luma_huff, false)?;
+                let opt_ac_chroma = DerivedTable::from_huff_table(&opt_ac_chroma_huff, false)?;
 
-            // Get output writer from marker_writer
-            let output = marker_writer.into_inner();
-            let mut bit_writer = BitWriter::new(output);
+                let output = marker_writer.into_inner();
+                let mut bit_writer = BitWriter::new(output);
 
-            // Encode each scan
-            for scan in &scans {
-                // Write SOS for this scan
-                // We need to temporarily get the output to write SOS
-                bit_writer.flush()?;
-                let mut inner = bit_writer.into_inner();
+                for scan in &scans {
+                    bit_writer.flush()?;
+                    let mut inner = bit_writer.into_inner();
+                    write_sos_marker(&mut inner, scan, &components)?;
 
-                // Write SOS marker manually
-                write_sos_marker(&mut inner, scan, &components)?;
+                    bit_writer = BitWriter::new(inner);
+                    let mut prog_encoder = ProgressiveEncoder::new(&mut bit_writer);
 
-                bit_writer = BitWriter::new(inner);
-                // Use standard tables mode when not optimizing (no extended EOBRUN)
-                let mut prog_encoder = if self.optimize_huffman {
-                    ProgressiveEncoder::new(&mut bit_writer)
-                } else {
-                    ProgressiveEncoder::new_standard_tables(&mut bit_writer)
-                };
+                    self.encode_progressive_scan(
+                        scan,
+                        &y_blocks,
+                        &cb_blocks,
+                        &cr_blocks,
+                        mcu_rows,
+                        mcu_cols,
+                        luma_h,
+                        luma_v,
+                        width,
+                        height,
+                        chroma_width,
+                        chroma_height,
+                        &opt_dc_luma,
+                        &opt_dc_chroma,
+                        &opt_ac_luma,
+                        &opt_ac_chroma,
+                        &mut prog_encoder,
+                    )?;
 
-                self.encode_progressive_scan(
-                    scan,
-                    &y_blocks,
-                    &cb_blocks,
-                    &cr_blocks,
-                    mcu_rows,
-                    mcu_cols,
-                    luma_h,
-                    luma_v,
-                    width,
-                    height,
-                    chroma_width,
-                    chroma_height,
-                    &opt_dc_luma,
-                    &opt_dc_chroma,
-                    &opt_ac_luma,
-                    &opt_ac_chroma,
-                    &mut prog_encoder,
-                )?;
-
-                // Finish this scan
-                let ac_table = if scan.ss > 0 {
-                    if scan.component_index[0] == 0 {
-                        Some(&opt_ac_luma)
+                    let ac_table = if scan.ss > 0 {
+                        if scan.component_index[0] == 0 {
+                            Some(&opt_ac_luma)
+                        } else {
+                            Some(&opt_ac_chroma)
+                        }
                     } else {
-                        Some(&opt_ac_chroma)
-                    }
-                } else {
-                    None
-                };
-                prog_encoder.finish_scan(ac_table)?;
+                        None
+                    };
+                    prog_encoder.finish_scan(ac_table)?;
+                }
+
+                bit_writer.flush()?;
+                let mut output = bit_writer.into_inner();
+                output.write_all(&[0xFF, 0xD9])?;
+            } else {
+                // Standard tables mode (no optimization)
+                let output = marker_writer.into_inner();
+                let mut bit_writer = BitWriter::new(output);
+
+                for scan in &scans {
+                    bit_writer.flush()?;
+                    let mut inner = bit_writer.into_inner();
+                    write_sos_marker(&mut inner, scan, &components)?;
+
+                    bit_writer = BitWriter::new(inner);
+                    let mut prog_encoder = ProgressiveEncoder::new_standard_tables(&mut bit_writer);
+
+                    self.encode_progressive_scan(
+                        scan,
+                        &y_blocks,
+                        &cb_blocks,
+                        &cr_blocks,
+                        mcu_rows,
+                        mcu_cols,
+                        luma_h,
+                        luma_v,
+                        width,
+                        height,
+                        chroma_width,
+                        chroma_height,
+                        &dc_luma_derived,
+                        &dc_chroma_derived,
+                        &ac_luma_derived,
+                        &ac_chroma_derived,
+                        &mut prog_encoder,
+                    )?;
+
+                    let ac_table = if scan.ss > 0 {
+                        if scan.component_index[0] == 0 {
+                            Some(&ac_luma_derived)
+                        } else {
+                            Some(&ac_chroma_derived)
+                        }
+                    } else {
+                        None
+                    };
+                    prog_encoder.finish_scan(ac_table)?;
+                }
+
+                bit_writer.flush()?;
+                let mut output = bit_writer.into_inner();
+                output.write_all(&[0xFF, 0xD9])?;
             }
-
-            // Flush and get output back
-            bit_writer.flush()?;
-            let mut output = bit_writer.into_inner();
-
-            // EOI
-            output.write_all(&[0xFF, 0xD9])?;
         } else if self.optimize_huffman {
             // Baseline mode with Huffman optimization (2-pass)
             // Pass 1: Collect blocks and count frequencies

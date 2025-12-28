@@ -24,13 +24,13 @@ fn load_png(path: &Path) -> Option<(Vec<u8>, u32, u32)> {
 fn main() {
     let (rgb, width, height) = load_png(Path::new("corpus/kodak/10.png")).unwrap();
     let quality = 85u8;
-    
+
     // Get the SA scan script
     let sa_scans = generate_mozjpeg_max_compression_scans(3);
-    
+
     println!("Testing individual scans for Q{}...", quality);
     println!();
-    
+
     // For each scan, encode just that scan and measure size
     for (i, scan) in sa_scans.iter().enumerate() {
         let scan_type = if scan.ss == 0 && scan.se == 0 {
@@ -40,13 +40,13 @@ fn main() {
         } else {
             "AC first"
         };
-        
+
         println!(
             "Scan {:2}: {:10} | Ss={:2} Se={:2} Ah={} Al={} | comp={}",
             i, scan_type, scan.ss, scan.se, scan.ah, scan.al, scan.component_index[0]
         );
     }
-    
+
     // Now let's compare what happens when we encode with the SA script
     println!();
     println!("Encoding with SA script requires modifying encode.rs - skipping for now");

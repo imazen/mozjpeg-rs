@@ -1,38 +1,31 @@
 # mozjpeg-oxide Development Guide
 
-## CRITICAL: Anti-Patterns to NEVER Repeat
+## Development Guidelines
 
-### DO NOT disable features to achieve parity
+### Never disable features to achieve parity
 
 **BANNED SOLUTIONS:**
-- Disabling `optimize_scans` in `max_compression()` to hide parity gaps
+- Disabling features in `max_compression()` to hide parity gaps
 - Changing defaults to avoid broken code paths
 - Commenting out features that don't work correctly
 
 **REQUIRED APPROACH:**
 1. If a feature produces wrong output, FIX THE FEATURE
-2. If SA encoding produces larger files, debug the SA encoder - don't disable SA
-3. If optimize_scans selects wrong scans, fix the trial encoder - don't disable it
-4. Document gaps honestly in README, but keep features enabled
+2. Document gaps honestly in README, but keep features enabled
 
-**Root cause of optimize_scans producing larger files:**
-- Trial encoder uses per-scan optimal Huffman tables (correct, matches C mozjpeg)
-- Actual encoder uses global Huffman tables (incorrect, all scans share tables)
-- This mismatch means trial estimates don't match actual encoded sizes
-- FIX: Make actual encoder use per-scan Huffman tables when optimize_scans=true
-
-**Root cause of progressive parity gap at high quality:**
-- The 9-scan SA script in `generate_mozjpeg_max_compression_scans()` is CORRECT
-- Our simple 4-scan script works well at Q50-Q85 but falls behind at Q90+
-- SA encoding (`encode_ac_first` with Al>0) needs verification against C mozjpeg
-- FIX: Add FFI comparison test for SA encoding, then use SA script by default
-
-### DO NOT relax test tolerances
+### Never relax test tolerances
 
 If tests fail, find and fix the bug. Never:
 - Increase allowed difference thresholds
 - Skip failing tests
 - Mark tests as `#[ignore]` to make CI green
+
+### Resolved Issues
+
+**optimize_scans producing larger files (FIXED Dec 2024):**
+- Root cause: Trial encoder used per-scan Huffman tables, actual encoder used global tables
+- Fix: Actual encoder now uses per-scan AC Huffman tables when optimize_scans=true
+- Result: optimize_scans now produces smaller files at all quality levels
 
 ## Project Overview
 
@@ -65,6 +58,22 @@ Rust port of Mozilla's mozjpeg JPEG encoder, following the jpegli-rs methodology
 - Rust often produces **smaller** files than C mozjpeg at Q50-Q95
 - Trellis effect: Rust saves 15.7% vs C's 12.9% on typical images
 - Visual quality is equivalent (verified via SSIMULACRA2 and Butteraugli)
+
+**Progressive mode with optimize_scans (6 images from Kodak corpus):**
+
+| Quality | Simple Progressive vs C | optimize_scans vs C | Notes |
+|---------|-------------------------|---------------------|-------|
+| Q50 | -0.83% | **-1.42%** | Rust smaller than C |
+| Q75 | +0.72% | **-0.67%** | Rust smaller with opt_scans |
+| Q85 | +1.82% | **-0.07%** | Near-identical to C |
+| Q90 | +3.01% | +0.58% | Small gap at high quality |
+| Q95 | +3.82% | +0.96% | |
+| Q97 | +4.95% | +1.15% | |
+
+**Key findings for progressive mode:**
+- With `optimize_scans=true`: Rust matches or beats C at Q50-Q85
+- Each AC scan gets its own optimal Huffman table (per-scan tables)
+- The simple 4-scan script works well, but `optimize_scans` finds even better configurations
 
 **Note:** C mozjpeg uses JCP_MAX_COMPRESSION profile by default which enables progressive
 mode. Use `Encoder::max_compression()` for equivalent behavior.

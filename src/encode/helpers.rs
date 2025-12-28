@@ -7,7 +7,7 @@ use std::io::Write;
 
 use crate::consts::{
     AC_CHROMINANCE_BITS, AC_CHROMINANCE_VALUES, AC_LUMINANCE_BITS, AC_LUMINANCE_VALUES, DCTSIZE2,
-    DC_CHROMINANCE_BITS, DC_CHROMINANCE_VALUES, DC_LUMINANCE_BITS, DC_LUMINANCE_VALUES,
+    DC_CHROMINANCE_BITS, DC_CHROMINANCE_VALUES, DC_LUMINANCE_BITS, DC_LUMINANCE_VALUES, JPEG_DHT,
     JPEG_NATURAL_ORDER, JPEG_SOS,
 };
 use crate::error::Result;
@@ -165,6 +165,55 @@ pub(crate) fn write_sos_marker<W: Write>(
 
     // Spectral selection start (Ss), end (Se), successive approximation (Ah, Al)
     output.write_all(&[scan.ss, scan.se, (scan.ah << 4) | scan.al])?;
+
+    Ok(())
+}
+
+/// Write a DHT marker directly to a writer.
+///
+/// Used for per-scan Huffman tables when optimize_scans is enabled.
+/// Each AC scan gets its own optimal table written immediately before the scan.
+///
+/// # Arguments
+/// * `output` - The output writer
+/// * `table_index` - Huffman table index (0 for luma, 1 for chroma)
+/// * `is_ac` - True for AC table, false for DC table
+/// * `table` - The Huffman table to write
+pub(crate) fn write_dht_marker<W: Write>(
+    output: &mut W,
+    table_index: u8,
+    is_ac: bool,
+    table: &HuffTable,
+) -> std::io::Result<()> {
+    // Count symbols in the table
+    let num_symbols: usize = table.bits[1..=16].iter().map(|&b| b as usize).sum();
+
+    // Length: 2 (length field) + 1 (Tc/Th) + 16 (bits) + num_symbols
+    let length = 2 + 1 + 16 + num_symbols;
+
+    // DHT marker
+    output.write_all(&[0xFF, JPEG_DHT])?;
+
+    // Length
+    output.write_all(&[(length >> 8) as u8, (length & 0xFF) as u8])?;
+
+    // Tc (table class) in high nibble, Th (table index) in low nibble
+    let tc_th = if is_ac {
+        0x10 | (table_index & 0x0F)
+    } else {
+        table_index & 0x0F
+    };
+    output.write_all(&[tc_th])?;
+
+    // Bits array (counts for each code length)
+    for i in 1..=16 {
+        output.write_all(&[table.bits[i]])?;
+    }
+
+    // Huffval array (symbols)
+    for i in 0..num_symbols {
+        output.write_all(&[table.huffval[i]])?;
+    }
 
     Ok(())
 }

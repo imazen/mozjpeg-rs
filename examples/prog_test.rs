@@ -19,7 +19,7 @@ fn main() {
         .progressive(true)
         .trellis(TrellisConfig::default())
         .optimize_huffman(true)
-        .optimize_scans(false)  // Simple progressive
+        .optimize_scans(false) // Simple progressive
         .encode_rgb(rgb_data, width, height)
         .unwrap();
 
@@ -41,8 +41,14 @@ fn main() {
     println!("Rust (optimize_scans):     {} bytes", rust_opt.len());
     println!("C (optimize_scans):        {} bytes", c_jpeg.len());
     println!();
-    println!("Diff (simple vs C): {:+.2}%", (rust_prog.len() as f64 / c_jpeg.len() as f64 - 1.0) * 100.0);
-    println!("Diff (opt vs C):    {:+.2}%", (rust_opt.len() as f64 / c_jpeg.len() as f64 - 1.0) * 100.0);
+    println!(
+        "Diff (simple vs C): {:+.2}%",
+        (rust_prog.len() as f64 / c_jpeg.len() as f64 - 1.0) * 100.0
+    );
+    println!(
+        "Diff (opt vs C):    {:+.2}%",
+        (rust_opt.len() as f64 / c_jpeg.len() as f64 - 1.0) * 100.0
+    );
 }
 
 fn encode_c_max_compression(rgb: &[u8], width: u32, height: u32, quality: u8) -> Vec<u8> {
@@ -54,7 +60,11 @@ fn encode_c_max_compression(rgb: &[u8], width: u32, height: u32, quality: u8) ->
         let mut jerr: jpeg_error_mgr = std::mem::zeroed();
 
         cinfo.common.err = jpeg_std_error(&mut jerr);
-        jpeg_CreateCompress(&mut cinfo, JPEG_LIB_VERSION as i32, std::mem::size_of::<jpeg_compress_struct>());
+        jpeg_CreateCompress(
+            &mut cinfo,
+            JPEG_LIB_VERSION as i32,
+            std::mem::size_of::<jpeg_compress_struct>(),
+        );
 
         let mut outbuffer: *mut u8 = ptr::null_mut();
         let mut outsize: libc::c_ulong = 0;
@@ -67,7 +77,11 @@ fn encode_c_max_compression(rgb: &[u8], width: u32, height: u32, quality: u8) ->
 
         jpeg_set_defaults(&mut cinfo);
 
-        jpeg_c_set_int_param(&mut cinfo, JINT_COMPRESS_PROFILE, JCP_MAX_COMPRESSION as i32);
+        jpeg_c_set_int_param(
+            &mut cinfo,
+            JINT_COMPRESS_PROFILE,
+            JCP_MAX_COMPRESSION as i32,
+        );
         jpeg_c_set_int_param(&mut cinfo, JINT_BASE_QUANT_TBL_IDX, 3);
         jpeg_set_quality(&mut cinfo, quality as i32, 1);
 
