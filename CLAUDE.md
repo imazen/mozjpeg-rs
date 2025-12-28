@@ -127,42 +127,49 @@ Rust produces files with quality matching C mozjpeg across all image sizes and s
 
 ### Known Issues / Active Investigations
 
-#### File Size Gap at High Quality (Q90+) - ROOT CAUSE IDENTIFIED
+#### File Size Gap (2-4% with optimize_scans) - ROOT CAUSE IDENTIFIED
 
-**Symptom:** Rust produces ~5% larger files at Q97 compared to C mozjpeg.
+**Symptom:** Rust produces ~2-4% larger files with `optimize_scans` enabled.
 
-**Root Cause:** Different progressive scan scripts.
+**Root Cause:** Trial encoding for refinement scans is fundamentally broken.
 
-C mozjpeg uses a 10-scan successive approximation script:
-1. DC scan (Ah=0, Al=1) - coarse DC bits
-2. Y: AC 1-5, Ah=0, Al=2
-3. Cr: AC 1-63, Ah=0, Al=1
-4. Cb: AC 1-63, Ah=0, Al=1
-5. Y: AC 6-63, Ah=0, Al=2
-6. Y: AC 1-63, Ah=2, Al=1 (refinement)
-7. DC refinement (Ah=1, Al=0)
-8-10. AC refinements for each component
+When `optimize_scans` is enabled, C mozjpeg:
+1. Generates 64 candidate scans (matching Rust exactly as of Dec 2024)
+2. Encodes ALL scans **in sequence**, storing the bytes in buffers
+3. Uses scan sizes to select optimal Al levels and frequency splits
+4. **Copies pre-encoded bytes** directly to output (copy_buffer)
 
-Rust uses a minimal 4-scan script:
-1. DC scan for all components (Ah=0, Al=0)
-2-4. Full AC (1-63) for Y, Cb, Cr (Ah=0, Al=0)
+Rust's approach differs critically:
+1. Generates 64 candidate scans (matching C exactly ✓)
+2. Trial-encodes each scan **independently** to get sizes
+3. Uses sizes to select configuration (algorithm matches C ✓)
+4. **Re-encodes** the selected scans from scratch
 
-**Why successive approximation helps:**
-- Splits coefficients into coarse (high) and fine (low) bits
-- Each bit layer has different statistical properties
-- Huffman encoding is more efficient on each layer separately
-- Result: Better compression at high quality where more bits matter
+**The problem:** Refinement scans (Ah > 0) cannot be encoded independently.
+They require the state from previous "first" scans to know which bits to refine.
 
-**Investigation verified (Dec 2024):**
-- Trellis quantization matches C exactly (FFI test confirms 0 differences)
-- DC coefficient clamping fixed (was missing MAX_COEF_VAL=1023 check)
-- All other components match: DCT, color, downsampling, Huffman tables
+When we trial-encode a refinement scan alone, it produces garbage sizes:
+- Scan 3 (Y refine Ah=1→Al=0): **22,728 bytes** (should be ~200-500)
+- This causes Al=1 cost to be ~10x higher than Al=0
+- Optimizer always picks Al=0 (no successive approximation)
 
-**Future work:** Implement successive approximation progressive script for better
-high-quality compression. This is a significant change requiring:
-- Progressive Huffman encoder modifications for Al/Ah handling
-- Coefficient bit-plane extraction
-- Multi-pass refinement encoding
+**Evidence:**
+```
+Scan sizes: [2466, 2128, 11, 22728, 657, 5, 21922, 24, 2, 21515, ...]
+                           ^^^^^ garbage refine scan size
+Al=0 cost: 2128 + 11 = 2139
+Al=1 cost: 657 + 5 + 22728 = 23390 (10x higher due to garbage refine)
+```
+
+**To fully match C mozjpeg's optimize_scans:**
+1. Encode all 64 candidate scans in proper sequence (with state)
+2. Store encoded bytes for each scan in buffers
+3. Select optimal configuration based on sizes
+4. Copy selected scan buffers directly to output
+
+This is a significant architectural change. The current implementation still
+produces valid, well-optimized progressive JPEGs - just not with successive
+approximation, which limits high-quality compression gains.
 
 #### Rust vs C Pixel Difference - RESOLVED ✅
 
