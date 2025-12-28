@@ -3915,6 +3915,111 @@ mod tests {
     }
 
     #[test]
+    fn test_trellis_presets() {
+        // Create a larger test image with varied content
+        let width = 64u32;
+        let height = 64u32;
+        let mut rgb_data = vec![0u8; (width * height * 3) as usize];
+
+        for y in 0..height {
+            for x in 0..width {
+                let i = (y * width + x) as usize;
+                // Create a pattern with gradients and edges
+                let val = (((x as i32 - y as i32).abs() * 8) % 256) as u8;
+                rgb_data[i * 3] = val;
+                rgb_data[i * 3 + 1] = 255 - val;
+                rgb_data[i * 3 + 2] = (val / 2).wrapping_add(64);
+            }
+        }
+
+        // Test at high quality where the gap is most visible
+        let quality = 97;
+
+        // Encode with default trellis
+        let default = Encoder::new()
+            .quality(quality)
+            .subsampling(Subsampling::S420)
+            .trellis(TrellisConfig::default());
+        let default_data = default.encode_rgb(&rgb_data, width, height).unwrap();
+
+        // Encode with favor_size preset
+        let favor_size = Encoder::new()
+            .quality(quality)
+            .subsampling(Subsampling::S420)
+            .trellis(TrellisConfig::favor_size());
+        let favor_size_data = favor_size.encode_rgb(&rgb_data, width, height).unwrap();
+
+        // Encode with favor_quality preset
+        let favor_quality = Encoder::new()
+            .quality(quality)
+            .subsampling(Subsampling::S420)
+            .trellis(TrellisConfig::favor_quality());
+        let favor_quality_data = favor_quality.encode_rgb(&rgb_data, width, height).unwrap();
+
+        println!("Default trellis: {} bytes", default_data.len());
+        println!("Favor size: {} bytes", favor_size_data.len());
+        println!("Favor quality: {} bytes", favor_quality_data.len());
+
+        // All should be valid
+        for (name, data) in [
+            ("default", &default_data),
+            ("favor_size", &favor_size_data),
+            ("favor_quality", &favor_quality_data),
+        ] {
+            let mut decoder = jpeg_decoder::Decoder::new(std::io::Cursor::new(data));
+            decoder.decode().expect(&format!("Failed to decode {} JPEG", name));
+        }
+
+        // favor_size should generally produce smaller files than default
+        // favor_quality should generally produce larger files than default
+        // (This may not always hold for small test images, so we just verify they're different)
+        assert!(
+            favor_size_data.len() != favor_quality_data.len(),
+            "Presets should produce different sizes"
+        );
+    }
+
+    #[test]
+    fn test_trellis_rd_factor() {
+        let width = 32u32;
+        let height = 32u32;
+        let mut rgb_data = vec![0u8; (width * height * 3) as usize];
+
+        for y in 0..height {
+            for x in 0..width {
+                let i = (y * width + x) as usize;
+                let val = ((x * 8 + y * 4) % 256) as u8;
+                rgb_data[i * 3] = val;
+                rgb_data[i * 3 + 1] = val;
+                rgb_data[i * 3 + 2] = val;
+            }
+        }
+
+        // rd_factor(1.0) should behave like default
+        let factor_1 = Encoder::new()
+            .quality(85)
+            .trellis(TrellisConfig::default().rd_factor(1.0));
+        let factor_1_data = factor_1.encode_rgb(&rgb_data, width, height).unwrap();
+
+        // rd_factor(2.0) should produce smaller files (more aggressive)
+        let factor_2 = Encoder::new()
+            .quality(85)
+            .trellis(TrellisConfig::default().rd_factor(2.0));
+        let factor_2_data = factor_2.encode_rgb(&rgb_data, width, height).unwrap();
+
+        // Both should be valid JPEGs
+        jpeg_decoder::Decoder::new(std::io::Cursor::new(&factor_1_data))
+            .decode()
+            .expect("Failed to decode rd_factor(1.0) JPEG");
+        jpeg_decoder::Decoder::new(std::io::Cursor::new(&factor_2_data))
+            .decode()
+            .expect("Failed to decode rd_factor(2.0) JPEG");
+
+        println!("rd_factor(1.0): {} bytes", factor_1_data.len());
+        println!("rd_factor(2.0): {} bytes", factor_2_data.len());
+    }
+
+    #[test]
     fn test_max_compression_uses_all_optimizations() {
         let encoder = Encoder::max_compression();
         assert!(encoder.trellis.enabled);

@@ -516,6 +516,81 @@ impl TrellisConfig {
             delta_dc_weight: 0.0,
         }
     }
+
+    /// Preset that favors smaller file sizes over quality.
+    ///
+    /// Uses lower lambda values which makes the trellis algorithm more aggressive
+    /// about zeroing coefficients, resulting in smaller files at the cost of some
+    /// quality loss.
+    ///
+    /// Lambda = 2^scale1 / (2^scale2 + norm). Lower lambda = more aggressive zeroing.
+    pub fn favor_size() -> Self {
+        Self {
+            lambda_log_scale1: 14.0, // Lower = less distortion penalty
+            lambda_log_scale2: 17.0, // Higher = smaller lambda
+            ..Self::default()
+        }
+    }
+
+    /// Preset that favors quality over file size.
+    ///
+    /// Uses higher lambda values which makes the trellis algorithm more conservative,
+    /// preserving more coefficients for better quality at the cost of larger files.
+    ///
+    /// Lambda = 2^scale1 / (2^scale2 + norm). Higher lambda = more conservative.
+    pub fn favor_quality() -> Self {
+        Self {
+            lambda_log_scale1: 15.5, // Higher = more distortion penalty
+            lambda_log_scale2: 16.0, // Lower = larger lambda
+            ..Self::default()
+        }
+    }
+
+    /// Set the lambda log scale parameters directly.
+    ///
+    /// These control the rate-distortion tradeoff in trellis quantization:
+    /// - `scale1`: Controls rate penalty (higher = smaller files, default 14.75)
+    /// - `scale2`: Controls distortion sensitivity (higher = better quality, default 16.5)
+    ///
+    /// The effective lambda is: `2^scale1 / (2^scale2 + block_norm)`
+    pub fn lambda_scales(mut self, scale1: f32, scale2: f32) -> Self {
+        self.lambda_log_scale1 = scale1;
+        self.lambda_log_scale2 = scale2;
+        self
+    }
+
+    /// Adjust rate-distortion balance with a simple factor.
+    ///
+    /// - `factor > 1.0`: Favor quality (higher lambda, more conservative)
+    /// - `factor < 1.0`: Favor smaller files (lower lambda, more aggressive)
+    /// - `factor = 1.0`: Default behavior
+    ///
+    /// The factor multiplies the effective lambda value logarithmically.
+    pub fn rd_factor(mut self, factor: f32) -> Self {
+        // Adjust scale1 by log2 of the factor
+        // factor=2.0 adds 1.0 to scale1 (doubles lambda → more quality)
+        // factor=0.5 subtracts 1.0 from scale1 (halves lambda → smaller files)
+        self.lambda_log_scale1 = 14.75 + factor.log2();
+        self
+    }
+
+    /// Enable or disable AC coefficient trellis optimization.
+    pub fn ac_trellis(mut self, enabled: bool) -> Self {
+        self.enabled = enabled;
+        self
+    }
+
+    /// Enable or disable DC coefficient trellis optimization.
+    pub fn dc_trellis(mut self, enabled: bool) -> Self {
+        self.dc_enabled = enabled;
+        self
+    }
+
+    /// Enable or disable EOB run optimization.
+    pub fn eob_optimization(mut self, enabled: bool) -> Self {
+        self.eob_opt = enabled;
+        self
+    }
 }
 
 // =============================================================================
@@ -598,5 +673,46 @@ mod tests {
 
         let disabled = TrellisConfig::disabled();
         assert!(!disabled.enabled);
+    }
+
+    #[test]
+    fn test_trellis_config_presets() {
+        let favor_size = TrellisConfig::favor_size();
+        assert!(favor_size.enabled);
+        assert!(favor_size.lambda_log_scale1 < 14.75); // Lower = more aggressive
+
+        let favor_quality = TrellisConfig::favor_quality();
+        assert!(favor_quality.enabled);
+        assert!(favor_quality.lambda_log_scale1 > 14.75); // Higher = more conservative
+    }
+
+    #[test]
+    fn test_trellis_config_builder() {
+        let config = TrellisConfig::default()
+            .lambda_scales(15.0, 17.0)
+            .ac_trellis(true)
+            .dc_trellis(false)
+            .eob_optimization(false);
+
+        assert_eq!(config.lambda_log_scale1, 15.0);
+        assert_eq!(config.lambda_log_scale2, 17.0);
+        assert!(config.enabled);
+        assert!(!config.dc_enabled);
+        assert!(!config.eob_opt);
+    }
+
+    #[test]
+    fn test_trellis_rd_factor() {
+        // factor=1.0 should give default scale1
+        let config = TrellisConfig::default().rd_factor(1.0);
+        assert!((config.lambda_log_scale1 - 14.75).abs() < 0.01);
+
+        // factor=2.0 should add 1.0 to scale1
+        let config = TrellisConfig::default().rd_factor(2.0);
+        assert!((config.lambda_log_scale1 - 15.75).abs() < 0.01);
+
+        // factor=0.5 should subtract 1.0 from scale1
+        let config = TrellisConfig::default().rd_factor(0.5);
+        assert!((config.lambda_log_scale1 - 13.75).abs() < 0.01);
     }
 }
