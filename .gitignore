@@ -4,6 +4,7 @@ Cargo.lock
 # Downloaded corpus and comparison outputs
 /corpus/
 /comparison_outputs/
+benchmark_results.csv
 
 # IDE
 .idea/
