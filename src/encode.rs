@@ -33,16 +33,12 @@
 use std::io::Write;
 
 use crate::bitstream::BitWriter;
-use crate::consts::{
-    QuantTableIdx, AC_CHROMINANCE_BITS, AC_CHROMINANCE_VALUES, AC_LUMINANCE_BITS,
-    AC_LUMINANCE_VALUES, DCTSIZE, DCTSIZE2, DC_CHROMINANCE_BITS, DC_CHROMINANCE_VALUES,
-    DC_LUMINANCE_BITS, DC_LUMINANCE_VALUES, JPEG_NATURAL_ORDER,
-};
+use crate::consts::{DCTSIZE, DCTSIZE2, QuantTableIdx};
 use crate::deringing::preprocess_deringing;
 use crate::entropy::{EntropyEncoder, ProgressiveEncoder, ProgressiveSymbolCounter, SymbolCounter};
 use crate::error::{Error, Result};
 use crate::huffman::FrequencyCounter;
-use crate::huffman::{DerivedTable, HuffTable};
+use crate::huffman::DerivedTable;
 use crate::marker::MarkerWriter;
 use crate::progressive::{generate_baseline_scan, generate_minimal_progressive_scans};
 use crate::quant::{create_quant_tables, quantize_block};
@@ -50,10 +46,17 @@ use crate::sample;
 use crate::scan_optimize::{generate_search_scans, ScanSearchConfig, ScanSelector};
 use crate::scan_trial::ScanTrialEncoder;
 use crate::simd::SimdOps;
-use crate::trellis::{dc_trellis_optimize_indexed, trellis_quantize_block};
-use crate::types::{ComponentInfo, PixelDensity, Subsampling, TrellisConfig};
+use crate::trellis::trellis_quantize_block;
+use crate::types::{PixelDensity, Subsampling, TrellisConfig};
 
+mod helpers;
 mod streaming;
+
+pub(crate) use helpers::{
+    create_components, create_std_ac_chroma_table, create_std_ac_luma_table,
+    create_std_dc_chroma_table, create_std_dc_luma_table, create_ycbcr_components,
+    natural_to_zigzag, run_dc_trellis_by_row, try_alloc_vec, try_alloc_vec_array, write_sos_marker,
+};
 pub use streaming::{EncodingStream, StreamingEncoder};
 
 // ============================================================================
@@ -80,29 +83,6 @@ pub trait Encode {
     /// * `width` - Image width in pixels
     /// * `height` - Image height in pixels
     fn encode_gray(&self, gray_data: &[u8], width: u32, height: u32) -> Result<Vec<u8>>;
-}
-
-// ============================================================================
-// Helper Functions
-// ============================================================================
-
-/// Helper to allocate a Vec with fallible allocation.
-/// Returns Error::AllocationFailed if allocation fails.
-#[inline]
-pub(crate) fn try_alloc_vec<T: Clone>(value: T, len: usize) -> Result<Vec<T>> {
-    let mut v = Vec::new();
-    v.try_reserve_exact(len)?;
-    v.resize(len, value);
-    Ok(v)
-}
-
-/// Helper to allocate a Vec of arrays with fallible allocation.
-#[inline]
-fn try_alloc_vec_array<T: Copy + Default, const N: usize>(len: usize) -> Result<Vec<[T; N]>> {
-    let mut v = Vec::new();
-    v.try_reserve_exact(len)?;
-    v.resize(len, [T::default(); N]);
-    Ok(v)
 }
 
 /// JPEG encoder with configurable quality and features.
@@ -2174,212 +2154,6 @@ impl Encoder {
         // Flush any pending EOBRUN
         counter.finish_scan(Some(ac_freq));
     }
-}
-
-// Helper functions
-
-/// Get MCU-order index for a block at (block_row, block_col) in image coordinates.
-///
-/// For multi-block MCUs (e.g., 4:2:0 luma with 2x2 blocks per MCU), blocks are stored
-/// in MCU order: all blocks for MCU (0,0), then all for MCU (0,1), etc.
-/// Within each MCU, blocks are stored row-by-row: (0,0), (0,1), (1,0), (1,1) for 2x2.
-fn block_to_mcu_index(
-    block_row: usize,
-    block_col: usize,
-    mcu_cols: usize,
-    h_samp: usize,
-    v_samp: usize,
-) -> usize {
-    let mcu_row = block_row / v_samp;
-    let mcu_col = block_col / h_samp;
-    let v = block_row % v_samp;
-    let h = block_col % h_samp;
-    (mcu_row * mcu_cols + mcu_col) * (h_samp * v_samp) + v * h_samp + h
-}
-
-/// Get indices for one row of blocks in row order, mapped to MCU-order storage.
-fn get_row_indices(
-    block_row: usize,
-    block_cols: usize,
-    mcu_cols: usize,
-    h_samp: usize,
-    v_samp: usize,
-) -> Vec<usize> {
-    (0..block_cols)
-        .map(|block_col| block_to_mcu_index(block_row, block_col, mcu_cols, h_samp, v_samp))
-        .collect()
-}
-
-/// Run DC trellis optimization row by row (matching C mozjpeg behavior).
-///
-/// C mozjpeg processes DC trellis one block row at a time, with each row
-/// forming an independent chain. This is different from processing all blocks
-/// as one giant chain.
-#[allow(clippy::too_many_arguments)]
-fn run_dc_trellis_by_row(
-    raw_blocks: &[[i32; DCTSIZE2]],
-    quantized_blocks: &mut [[i16; DCTSIZE2]],
-    dc_quantval: u16,
-    dc_table: &DerivedTable,
-    lambda_log_scale1: f32,
-    lambda_log_scale2: f32,
-    block_rows: usize,
-    block_cols: usize,
-    mcu_cols: usize,
-    h_samp: usize,
-    v_samp: usize,
-) {
-    // Process each block row independently
-    for block_row in 0..block_rows {
-        let indices = get_row_indices(block_row, block_cols, mcu_cols, h_samp, v_samp);
-
-        // Each row starts with last_dc = 0 (C mozjpeg behavior for trellis pass)
-        dc_trellis_optimize_indexed(
-            raw_blocks,
-            quantized_blocks,
-            &indices,
-            dc_quantval,
-            dc_table,
-            0, // last_dc = 0 for each row
-            lambda_log_scale1,
-            lambda_log_scale2,
-        );
-    }
-}
-
-/// Write an SOS (Start of Scan) marker.
-fn write_sos_marker<W: Write>(
-    output: &mut W,
-    scan: &crate::types::ScanInfo,
-    components: &[ComponentInfo],
-) -> std::io::Result<()> {
-    use crate::consts::JPEG_SOS;
-
-    // SOS marker
-    output.write_all(&[0xFF, JPEG_SOS])?;
-
-    // Length (2 bytes): 6 + 2*Ns
-    let ns = scan.comps_in_scan as usize;
-    let length = 6 + 2 * ns;
-    output.write_all(&[(length >> 8) as u8, (length & 0xFF) as u8])?;
-
-    // Number of components in scan
-    output.write_all(&[scan.comps_in_scan])?;
-
-    // Component selector + Huffman table selectors for each component
-    // Per JPEG spec (ITU-T T.81):
-    // - For DC scans (Ss=0, Se=0): Ta (AC table) must be 0
-    // - For AC scans (Ss>0): Td (DC table) must be 0
-    let is_dc_scan = scan.ss == 0 && scan.se == 0;
-
-    for i in 0..scan.comps_in_scan as usize {
-        let comp_idx = scan.component_index[i] as usize;
-        let comp = &components[comp_idx];
-        let table_selector = if is_dc_scan {
-            // DC scan: Td = dc_tbl_no, Ta = 0
-            comp.dc_tbl_no << 4
-        } else {
-            // AC scan: Td = 0, Ta = ac_tbl_no
-            comp.ac_tbl_no
-        };
-        output.write_all(&[comp.component_id, table_selector])?;
-    }
-
-    // Spectral selection start (Ss), end (Se), successive approximation (Ah, Al)
-    output.write_all(&[scan.ss, scan.se, (scan.ah << 4) | scan.al])?;
-
-    Ok(())
-}
-
-/// Create component info for the given subsampling mode.
-/// Returns 1 component for grayscale, 3 for color modes.
-fn create_components(subsampling: Subsampling) -> Vec<ComponentInfo> {
-    if subsampling == Subsampling::Gray {
-        // Grayscale: single Y component
-        vec![ComponentInfo {
-            component_id: 1,
-            component_index: 0,
-            h_samp_factor: 1,
-            v_samp_factor: 1,
-            quant_tbl_no: 0,
-            dc_tbl_no: 0,
-            ac_tbl_no: 0,
-        }]
-    } else {
-        // Color: Y, Cb, Cr components
-        let (h_samp, v_samp) = subsampling.luma_factors();
-        vec![
-            ComponentInfo {
-                component_id: 1, // Y
-                component_index: 0,
-                h_samp_factor: h_samp,
-                v_samp_factor: v_samp,
-                quant_tbl_no: 0,
-                dc_tbl_no: 0,
-                ac_tbl_no: 0,
-            },
-            ComponentInfo {
-                component_id: 2, // Cb
-                component_index: 1,
-                h_samp_factor: 1,
-                v_samp_factor: 1,
-                quant_tbl_no: 1,
-                dc_tbl_no: 1,
-                ac_tbl_no: 1,
-            },
-            ComponentInfo {
-                component_id: 3, // Cr
-                component_index: 2,
-                h_samp_factor: 1,
-                v_samp_factor: 1,
-                quant_tbl_no: 1,
-                dc_tbl_no: 1,
-                ac_tbl_no: 1,
-            },
-        ]
-    }
-}
-
-// Keep for backwards compatibility
-fn create_ycbcr_components(subsampling: Subsampling) -> Vec<ComponentInfo> {
-    create_components(subsampling)
-}
-
-#[allow(clippy::needless_range_loop)]
-fn natural_to_zigzag(natural: &[u16; DCTSIZE2]) -> [u16; DCTSIZE2] {
-    let mut zigzag = [0u16; DCTSIZE2];
-    for i in 0..DCTSIZE2 {
-        zigzag[i] = natural[JPEG_NATURAL_ORDER[i]];
-    }
-    zigzag
-}
-
-pub(crate) fn create_std_dc_luma_table() -> HuffTable {
-    let mut htbl = HuffTable::default();
-    htbl.bits.copy_from_slice(&DC_LUMINANCE_BITS);
-    htbl.huffval[..DC_LUMINANCE_VALUES.len()].copy_from_slice(&DC_LUMINANCE_VALUES);
-    htbl
-}
-
-pub(crate) fn create_std_dc_chroma_table() -> HuffTable {
-    let mut htbl = HuffTable::default();
-    htbl.bits.copy_from_slice(&DC_CHROMINANCE_BITS);
-    htbl.huffval[..DC_CHROMINANCE_VALUES.len()].copy_from_slice(&DC_CHROMINANCE_VALUES);
-    htbl
-}
-
-pub(crate) fn create_std_ac_luma_table() -> HuffTable {
-    let mut htbl = HuffTable::default();
-    htbl.bits.copy_from_slice(&AC_LUMINANCE_BITS);
-    htbl.huffval[..AC_LUMINANCE_VALUES.len()].copy_from_slice(&AC_LUMINANCE_VALUES);
-    htbl
-}
-
-pub(crate) fn create_std_ac_chroma_table() -> HuffTable {
-    let mut htbl = HuffTable::default();
-    htbl.bits.copy_from_slice(&AC_CHROMINANCE_BITS);
-    htbl.huffval[..AC_CHROMINANCE_VALUES.len()].copy_from_slice(&AC_CHROMINANCE_VALUES);
-    htbl
 }
 
 // ============================================================================
