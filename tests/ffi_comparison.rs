@@ -933,7 +933,7 @@ fn test_trellis_matches_c_quality_levels() {
 /// and the trellis optimizes the entire chain of DC values.
 #[test]
 fn test_dc_trellis_matches_c() {
-    use mozjpeg_oxide::consts::{DC_LUMINANCE_BITS, DC_LUMINANCE_VALUES, DCTSIZE2};
+    use mozjpeg_oxide::consts::{DCTSIZE2, DC_LUMINANCE_BITS, DC_LUMINANCE_VALUES};
     use mozjpeg_oxide::huffman::{DerivedTable, HuffTable};
     use mozjpeg_oxide::trellis::dc_trellis_optimize;
     use mozjpeg_oxide::TrellisConfig;
@@ -1039,9 +1039,15 @@ fn test_dc_trellis_matches_c() {
         }
 
         if diffs > 0 {
-            println!("Seed {}: {} differences out of {} blocks", seed, diffs, num_blocks);
+            println!(
+                "Seed {}: {} differences out of {} blocks",
+                seed, diffs, num_blocks
+            );
             println!("  DC quant value: {}", dc_quantval);
-            println!("  Lambda: scale1={}, scale2={}", config.lambda_log_scale1, config.lambda_log_scale2);
+            println!(
+                "  Lambda: scale1={}, scale2={}",
+                config.lambda_log_scale1, config.lambda_log_scale2
+            );
         }
 
         assert_eq!(
