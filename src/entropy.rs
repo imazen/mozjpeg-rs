@@ -455,10 +455,13 @@ impl<'a, W: Write> ProgressiveEncoder<'a, W> {
         al: u8,
         ac_table: &DerivedTable,
     ) -> std::io::Result<()> {
-        // Find last non-zero coefficient in this band
+        // Find last non-zero coefficient in this band.
+        // C mozjpeg: checks (abs(coef) >> Al) != 0
         let mut k = se;
         while k >= ss {
-            if (block[JPEG_NATURAL_ORDER[k as usize]] >> al) != 0 {
+            let coef = block[JPEG_NATURAL_ORDER[k as usize]];
+            let abs_shifted = coef.unsigned_abs() >> al;
+            if abs_shifted != 0 {
                 break;
             }
             k -= 1;
@@ -468,9 +471,11 @@ impl<'a, W: Write> ProgressiveEncoder<'a, W> {
         let mut run = 0u32;
 
         for k in ss..=se {
-            let coef = block[JPEG_NATURAL_ORDER[k as usize]] >> al;
+            let coef = block[JPEG_NATURAL_ORDER[k as usize]];
+            // Apply point transform to ABSOLUTE value (C mozjpeg does this in prepare)
+            let abs_shifted = coef.unsigned_abs() >> al;
 
-            if coef == 0 {
+            if abs_shifted == 0 {
                 run += 1;
                 continue;
             }
@@ -490,8 +495,8 @@ impl<'a, W: Write> ProgressiveEncoder<'a, W> {
                 run -= 16;
             }
 
-            // Calculate category (number of bits needed)
-            let nbits = jpeg_nbits(coef);
+            // Calculate category (number of bits needed for shifted absolute value)
+            let nbits = jpeg_nbits_nonzero(abs_shifted);
 
             // Symbol = (run << 4) | nbits
             let symbol = ((run as u8) << 4) | nbits;
@@ -502,12 +507,13 @@ impl<'a, W: Write> ProgressiveEncoder<'a, W> {
             }
             self.writer.put_bits(code, size)?;
 
-            // Emit value bits (sign bit first for negative)
+            // Emit value bits.
+            // For negative: emit (abs_shifted - 1)
+            // For positive: emit abs_shifted
             if coef < 0 {
-                let value = (coef as u16).wrapping_sub(1) & ((1u16 << nbits) - 1);
-                self.writer.put_bits(value as u32, nbits)?;
+                self.writer.put_bits((abs_shifted - 1) as u32, nbits)?;
             } else {
-                self.writer.put_bits(coef as u32, nbits)?;
+                self.writer.put_bits(abs_shifted as u32, nbits)?;
             }
 
             run = 0;
@@ -840,9 +846,12 @@ impl ProgressiveSymbolCounter {
         ac_counter: &mut FrequencyCounter,
     ) {
         // Find last non-zero coefficient in this band
+        // C mozjpeg: checks (abs(coef) >> Al) != 0
         let mut k = se;
         while k >= ss {
-            if (block[JPEG_NATURAL_ORDER[k as usize]] >> al) != 0 {
+            let coef = block[JPEG_NATURAL_ORDER[k as usize]];
+            let abs_shifted = coef.unsigned_abs() >> al;
+            if abs_shifted != 0 {
                 break;
             }
             k -= 1;
@@ -852,9 +861,11 @@ impl ProgressiveSymbolCounter {
         let mut run = 0u32;
 
         for k in ss..=se {
-            let coef = block[JPEG_NATURAL_ORDER[k as usize]] >> al;
+            let coef = block[JPEG_NATURAL_ORDER[k as usize]];
+            // Apply point transform to ABSOLUTE value
+            let abs_shifted = coef.unsigned_abs() >> al;
 
-            if coef == 0 {
+            if abs_shifted == 0 {
                 run += 1;
                 continue;
             }
@@ -871,7 +882,7 @@ impl ProgressiveSymbolCounter {
             }
 
             // Symbol = (run << 4) | nbits
-            let nbits = jpeg_nbits(coef);
+            let nbits = jpeg_nbits_nonzero(abs_shifted);
             let symbol = ((run as u8) << 4) | nbits;
             ac_counter.count(symbol);
 

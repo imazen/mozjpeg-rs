@@ -1006,9 +1006,9 @@ impl Encoder {
                     &ac_chroma_derived,
                 )?
             } else {
-                // Temporarily use minimal progressive script to debug
-                // TODO: restore generate_mozjpeg_max_compression_scans(3) after fixing SA
-                generate_minimal_progressive_scans(3)
+                // Use C mozjpeg's JCP_MAX_COMPRESSION progressive script (9 scans)
+                // This includes successive approximation for luma (Al=2, refinements to Al=0)
+                generate_mozjpeg_max_compression_scans(3)
             };
 
             // Count symbol frequencies for optimized Huffman tables
