@@ -926,3 +926,130 @@ fn test_trellis_matches_c_quality_levels() {
         );
     }
 }
+
+/// Test that Rust DC trellis optimization matches C DC trellis optimization.
+///
+/// This is critical for file size parity - DC coefficients use DPCM coding
+/// and the trellis optimizes the entire chain of DC values.
+#[test]
+fn test_dc_trellis_matches_c() {
+    use mozjpeg_oxide::consts::{DC_LUMINANCE_BITS, DC_LUMINANCE_VALUES, DCTSIZE2};
+    use mozjpeg_oxide::huffman::{DerivedTable, HuffTable};
+    use mozjpeg_oxide::trellis::dc_trellis_optimize;
+    use mozjpeg_oxide::TrellisConfig;
+
+    // Build the DC Huffman table
+    let mut htbl = HuffTable::default();
+    htbl.bits.copy_from_slice(&DC_LUMINANCE_BITS);
+    for (i, &v) in DC_LUMINANCE_VALUES.iter().enumerate() {
+        htbl.huffval[i] = v;
+    }
+    let dc_table = DerivedTable::from_huff_table(&htbl, true).unwrap();
+
+    // Extract DC code sizes (for bits 0-16)
+    let mut dc_huffsi = [0i8; 17];
+    for bits in 0..=16 {
+        let (_, size) = dc_table.get_code(bits as u8);
+        dc_huffsi[bits] = size as i8;
+    }
+
+    let config = TrellisConfig::default();
+
+    // Test with various block sequences
+    let num_blocks = 16; // Test with 16 blocks (one row)
+    let dc_quantval: u16 = 8; // Typical DC quant value at Q75
+
+    // Test pattern: pseudo-random DC values like a real image row
+    for seed in 0..10 {
+        // Generate raw DC values (scaled by 8)
+        let mut raw_dc = vec![0i32; num_blocks];
+        let mut ac_norms = vec![0.0f32; num_blocks];
+
+        for i in 0..num_blocks {
+            // DC value varies smoothly like a real image
+            let base_dc = 1000 + (seed * 50) as i32;
+            let variation = ((i as i32 * 7 + seed as i32 * 13) % 200) - 100;
+            raw_dc[i] = (base_dc + variation) * 8; // Scale by 8
+
+            // AC norm (block energy) - typical values
+            ac_norms[i] = 5000.0 + ((i * 1000) % 3000) as f32;
+        }
+
+        // Create mock raw DCT blocks for Rust (only DC is used)
+        let mut raw_dct_blocks: Vec<[i32; DCTSIZE2]> = vec![[0i32; DCTSIZE2]; num_blocks];
+        for i in 0..num_blocks {
+            raw_dct_blocks[i][0] = raw_dc[i];
+            // Fill AC with values that produce the same norm
+            let ac_val = (ac_norms[i] * 63.0).sqrt() as i32;
+            raw_dct_blocks[i][1] = ac_val;
+        }
+
+        // Pre-quantize blocks (DC trellis modifies existing quantized DC values)
+        let mut rust_quantized: Vec<[i16; DCTSIZE2]> = vec![[0i16; DCTSIZE2]; num_blocks];
+        let q = 8 * dc_quantval as i32;
+        for i in 0..num_blocks {
+            let x = raw_dc[i].abs();
+            let sign = if raw_dc[i] < 0 { -1i16 } else { 1i16 };
+            let qval = ((x + q / 2) / q).min(1023) as i16;
+            rust_quantized[i][0] = qval * sign;
+        }
+
+        // Run Rust DC trellis
+        dc_trellis_optimize(
+            &raw_dct_blocks,
+            &mut rust_quantized,
+            dc_quantval,
+            &dc_table,
+            0, // last_dc = 0
+            config.lambda_log_scale1,
+            config.lambda_log_scale2,
+        );
+
+        // Extract Rust DC results
+        let rust_dc: Vec<i16> = rust_quantized.iter().map(|b| b[0]).collect();
+
+        // Run C DC trellis
+        let mut c_quantized_dc = vec![0i16; num_blocks];
+        unsafe {
+            ffi::mozjpeg_test_dc_trellis_optimize(
+                raw_dc.as_ptr(),
+                ac_norms.as_ptr(),
+                c_quantized_dc.as_mut_ptr(),
+                num_blocks as i32,
+                dc_quantval,
+                dc_huffsi.as_ptr(),
+                0, // last_dc = 0
+                config.lambda_log_scale1,
+                config.lambda_log_scale2,
+            );
+        }
+
+        // Compare results
+        let mut diffs = 0;
+        for i in 0..num_blocks {
+            if rust_dc[i] != c_quantized_dc[i] {
+                diffs += 1;
+                if diffs <= 5 {
+                    println!(
+                        "Seed {} block {}: Rust={}, C={}, raw_dc={}, ac_norm={}",
+                        seed, i, rust_dc[i], c_quantized_dc[i], raw_dc[i], ac_norms[i]
+                    );
+                }
+            }
+        }
+
+        if diffs > 0 {
+            println!("Seed {}: {} differences out of {} blocks", seed, diffs, num_blocks);
+            println!("  DC quant value: {}", dc_quantval);
+            println!("  Lambda: scale1={}, scale2={}", config.lambda_log_scale1, config.lambda_log_scale2);
+        }
+
+        assert_eq!(
+            diffs, 0,
+            "Seed {}: DC trellis should produce identical results to C",
+            seed
+        );
+    }
+
+    println!("DC trellis comparison: all tests passed!");
+}

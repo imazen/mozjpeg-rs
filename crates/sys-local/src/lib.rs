@@ -226,6 +226,28 @@ extern "C" {
         lambda_log_scale1: libc::c_float,
         lambda_log_scale2: libc::c_float,
     );
+
+    /// DC trellis optimization on a sequence of blocks
+    /// raw_dc: Raw DC coefficients (num_blocks values, each scaled by 8)
+    /// ac_norms: AC energy per block (num_blocks values, each = sum(ac^2)/63)
+    /// quantized_dc: Output optimized DC coefficients (num_blocks values)
+    /// num_blocks: Number of blocks
+    /// dc_quantval: DC quantization value
+    /// dc_huffsi: DC Huffman code sizes (17 values, for sizes 0-16)
+    /// last_dc: Previous DC value for differential encoding
+    /// lambda_log_scale1: Lambda scale parameter 1 (default: 14.75)
+    /// lambda_log_scale2: Lambda scale parameter 2 (default: 16.5)
+    pub fn mozjpeg_test_dc_trellis_optimize(
+        raw_dc: *const libc::c_int,
+        ac_norms: *const libc::c_float,
+        quantized_dc: *mut JCOEF,
+        num_blocks: libc::c_int,
+        dc_quantval: UINT16,
+        dc_huffsi: *const libc::c_char,
+        last_dc: JCOEF,
+        lambda_log_scale1: libc::c_float,
+        lambda_log_scale2: libc::c_float,
+    );
 }
 
 // Version constant for jpeg_CreateCompress

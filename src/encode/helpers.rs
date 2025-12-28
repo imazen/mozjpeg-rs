@@ -82,9 +82,11 @@ pub(crate) fn get_row_indices(
 
 /// Run DC trellis optimization row by row (matching C mozjpeg behavior).
 ///
-/// C mozjpeg processes DC trellis one block row at a time, with each row
-/// forming an independent chain. This is different from processing all blocks
-/// as one giant chain.
+/// C mozjpeg processes DC trellis one block row at a time, with the last DC
+/// value from each row propagating to the next row. This differs from
+/// processing all blocks as one giant chain in that each row's optimization
+/// is independent, but the differential encoding cost uses the previous row's
+/// final DC value.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn run_dc_trellis_by_row(
     raw_blocks: &[[i32; DCTSIZE2]],
@@ -99,18 +101,22 @@ pub(crate) fn run_dc_trellis_by_row(
     h_samp: usize,
     v_samp: usize,
 ) {
-    // Process each block row independently
+    // Start with last_dc = 0 for the first row (matching C mozjpeg)
+    let mut last_dc = 0i16;
+
+    // Process each block row, propagating last_dc between rows
     for block_row in 0..block_rows {
         let indices = get_row_indices(block_row, block_cols, mcu_cols, h_samp, v_samp);
 
-        // Each row starts with last_dc = 0 (C mozjpeg behavior for trellis pass)
-        dc_trellis_optimize_indexed(
+        // Use last_dc from previous row (or 0 for first row)
+        // The function returns the final DC value for the next row
+        last_dc = dc_trellis_optimize_indexed(
             raw_blocks,
             quantized_blocks,
             &indices,
             dc_quantval,
             dc_table,
-            0, // last_dc = 0 for each row
+            last_dc,
             lambda_log_scale1,
             lambda_log_scale2,
         );
