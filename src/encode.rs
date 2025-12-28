@@ -3967,7 +3967,9 @@ mod tests {
             ("favor_quality", &favor_quality_data),
         ] {
             let mut decoder = jpeg_decoder::Decoder::new(std::io::Cursor::new(data));
-            decoder.decode().expect(&format!("Failed to decode {} JPEG", name));
+            decoder
+                .decode()
+                .expect(&format!("Failed to decode {} JPEG", name));
         }
 
         // favor_size should generally produce smaller files than default

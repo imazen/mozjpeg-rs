@@ -265,6 +265,10 @@ pub const DEFAULT_TRELLIS_NUM_LOOPS: i32 = 1;
 /// Default DC delta weight for trellis
 pub const DEFAULT_TRELLIS_DELTA_DC_WEIGHT: f32 = 0.0;
 
+// Note: C mozjpeg defines jpeg_lambda_weights_csf_luma (CSF perceptual weights),
+// but mode=1 is hardcoded which overrides it with flat weights (1/q^2).
+// So the CSF weights are never actually used in practice.
+
 // =============================================================================
 // Standard Huffman Tables
 // =============================================================================

@@ -37,7 +37,8 @@ pub fn trellis_quantize_block(
     config: &TrellisConfig,
 ) {
     // Calculate per-coefficient lambda weights: 1/q^2
-    // This matches mozjpeg's mode 1 (use_lambda_weight_tbl with flat weights)
+    // Note: C mozjpeg has CSF weights but mode=1 is hardcoded, which always
+    // uses flat weights. The use_lambda_weight_tbl flag is effectively ignored.
     let mut lambda_tbl = [0.0f32; DCTSIZE2];
     for i in 0..DCTSIZE2 {
         let q = qtable[i] as f32;
@@ -241,7 +242,7 @@ pub fn trellis_quantize_block_with_eob_info(
     ss: usize,
     se: usize,
 ) -> BlockEobInfo {
-    // Calculate per-coefficient lambda weights
+    // Calculate per-coefficient lambda weights: 1/q^2
     let mut lambda_tbl = [0.0f32; DCTSIZE2];
     for i in 0..DCTSIZE2 {
         let q = qtable[i] as f32;
