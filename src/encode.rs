@@ -46,7 +46,6 @@ use crate::huffman::{DerivedTable, HuffTable};
 use crate::marker::MarkerWriter;
 use crate::progressive::{
     generate_baseline_scan, generate_minimal_progressive_scans,
-    generate_mozjpeg_max_compression_scans,
 };
 use crate::quant::{create_quant_tables, quantize_block};
 use crate::sample;

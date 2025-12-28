@@ -923,7 +923,7 @@ impl ProgressiveSymbolCounter {
         block: &[i16; DCTSIZE2],
         ss: u8,
         se: u8,
-        ah: u8,
+        _ah: u8,
         al: u8,
         ac_counter: &mut FrequencyCounter,
     ) {
