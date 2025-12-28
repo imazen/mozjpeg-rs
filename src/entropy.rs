@@ -927,25 +927,26 @@ impl ProgressiveSymbolCounter {
         al: u8,
         ac_counter: &mut FrequencyCounter,
     ) {
+        // Track run (zeros before next symbol) and br (correction bits in this block).
+        // br tracks whether there are "already coded" coefficients that need correction
+        // bits output with EOB. These don't generate Huffman symbols but affect EOBRUN.
         let mut run = 0u32;
+        let mut br = 0usize;
 
         for k in ss..=se {
             let coef = block[JPEG_NATURAL_ORDER[k as usize]];
             let abs_coef = coef.unsigned_abs();
 
-            // Check if previously coded (matches C mozjpeg's temp > 1 check)
             if (abs_coef >> al) > 1 {
-                // Previously coded - no Huffman symbol needed (just correction bit)
-                // Correction bits are sent raw, not Huffman coded
-                // Don't increment run - previously coded positions don't count as zeros
+                // Previously coded - just adds a correction bit (no Huffman symbol)
+                br += 1;
             } else if (abs_coef >> al) == 1 {
-                // Newly non-zero coefficient
-                // Flush any pending EOBRUN
+                // Newly non-zero coefficient - flush EOBRUN and emit symbol
                 if self.eobrun > 0 {
                     self.flush_eobrun_count(ac_counter);
                 }
 
-                // Count ZRL for runs of 16+ zeros
+                // Count ZRL for runs of 16 zeros
                 while run >= 16 {
                     ac_counter.count(0xF0); // ZRL
                     run -= 16;
@@ -956,20 +957,26 @@ impl ProgressiveSymbolCounter {
                 ac_counter.count(symbol);
 
                 run = 0;
+                br = 0; // Correction bits flushed with the symbol
             } else {
                 // Zero coefficient - increment run
                 run += 1;
 
                 // Emit ZRL incrementally when run reaches 16
                 if run == 16 {
+                    if self.eobrun > 0 {
+                        self.flush_eobrun_count(ac_counter);
+                    }
                     ac_counter.count(0xF0); // ZRL
                     run = 0;
+                    br = 0; // Correction bits flushed with ZRL
                 }
             }
         }
 
-        // Handle remaining run (EOB)
-        if run > 0 {
+        // Handle remaining run (EOB) - matches encoding's "if run > 0 || br > 0"
+        // Need EOB if there are trailing zeros OR trailing correction bits
+        if run > 0 || br > 0 {
             self.eobrun += 1;
             if self.eobrun == 0x7FFF {
                 self.flush_eobrun_count(ac_counter);
