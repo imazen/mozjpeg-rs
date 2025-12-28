@@ -61,7 +61,7 @@ codec-eval = { git = "https://github.com/imazen/codec-eval", rev = "be389c2" }
 # To run ffi_comparison tests locally, uncomment below:
 # sys-local = { path = "crates/sys-local" }
 # Butteraugli perceptual image quality metric
-butteraugli-oxide = "0.2"
+butteraugli = "0.2"
 
 [[bench]]
 name = "encode"

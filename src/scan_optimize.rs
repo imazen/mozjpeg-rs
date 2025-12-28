@@ -6,6 +6,9 @@
 
 use crate::types::ScanInfo;
 
+/// Enable debug instrumentation for scan optimization
+const DEBUG_SCAN_OPT: bool = false;
+
 /// Configuration for scan optimization search.
 #[derive(Debug, Clone)]
 pub struct ScanSearchConfig {
@@ -62,9 +65,10 @@ pub fn generate_search_scans(num_components: u8, config: &ScanSearchConfig) -> V
     scans.push(ScanInfo::ac_scan(0, 9, 63, 0, 0));
 
     // Successive approximation test scans for luma
-    // For each Al level (0, 1, 2): refinement scan + two band scans at next level
+    // For each Al level (0, 1, 2): refinement scan + full scan at next level + two band scans
     for al in 0..config.al_max_luma {
-        scans.push(ScanInfo::ac_scan(0, 1, 63, al + 1, al)); // Refinement
+        scans.push(ScanInfo::ac_scan(0, 1, 63, al + 1, al)); // Refinement 1-63
+        scans.push(ScanInfo::ac_scan(0, 1, 63, 0, al + 1)); // Full 1-63 at higher Al
         scans.push(ScanInfo::ac_scan(0, 1, 8, 0, al + 1)); // Low freq at higher Al
         scans.push(ScanInfo::ac_scan(0, 9, 63, 0, al + 1)); // High freq at higher Al
     }
@@ -174,6 +178,10 @@ impl ScanSearchResult {
     ///
     /// When best_freq_split is 0, we use full 1-63 AC scans (most efficient for simple images).
     /// When best_freq_split > 0, we use the selected frequency split.
+    ///
+    /// When successive approximation (Al > 0) is selected, we also apply it to DC:
+    /// - Initial DC scan with point transform (al=1)
+    /// - DC refinement scan at the end (ah=1, al=0)
     pub fn build_final_scans(
         &self,
         num_components: u8,
@@ -181,11 +189,23 @@ impl ScanSearchResult {
     ) -> Vec<ScanInfo> {
         let mut scans = Vec::new();
 
-        // DC scan
+        // Determine if we should use DC successive approximation
+        // Use it when either luma or chroma Al is > 0 (using successive approximation)
+        let use_dc_succ_approx = self.best_al_luma > 0 || self.best_al_chroma > 0;
+
+        // DC scan - use point transform if doing successive approximation
         if config.dc_scan_opt_mode == 0 {
-            scans.push(ScanInfo::dc_scan(num_components));
+            let mut dc_scan = ScanInfo::dc_scan(num_components);
+            if use_dc_succ_approx {
+                dc_scan.al = 1; // Point transform for DC
+            }
+            scans.push(dc_scan);
         } else {
-            scans.push(ScanInfo::dc_scan(1));
+            let mut dc_scan = ScanInfo::dc_scan(1);
+            if use_dc_succ_approx {
+                dc_scan.al = 1;
+            }
+            scans.push(dc_scan);
         }
 
         // Luma AC scans based on best Al and frequency split
@@ -236,6 +256,18 @@ impl ScanSearchResult {
             }
         }
 
+        // DC refinement scan (if using successive approximation)
+        if use_dc_succ_approx {
+            let mut dc_refine = if config.dc_scan_opt_mode == 0 {
+                ScanInfo::dc_scan(num_components)
+            } else {
+                ScanInfo::dc_scan(1)
+            };
+            dc_refine.ah = 1;
+            dc_refine.al = 0;
+            scans.push(dc_refine);
+        }
+
         scans
     }
 }
@@ -268,12 +300,13 @@ impl ScanSelector {
         let al_max_chroma = config.al_max_chroma as usize;
         let num_freq_splits = config.frequency_splits.len();
 
-        // Calculate scan indices (matching C mozjpeg's layout)
-        // Layout: DC + 2 base + 3*al_max (refinements+bands) + 1 full + 2*num_splits
+        // Calculate scan indices
+        // Layout: DC + 2 base + 4*al_max (refine+full+bands per level) + 1 full@al0 + 2*num_splits
         let num_scans_luma_dc = 1;
-        let num_scans_luma = num_scans_luma_dc + (3 * al_max_luma + 2) + (2 * num_freq_splits + 1);
-        // Full 1-63 scan is at index 12 (1 + 2 + 3*3), splits start at 13
-        let luma_freq_split_scan_start = num_scans_luma_dc + 3 * al_max_luma + 3;
+        let num_scans_luma = num_scans_luma_dc + 2 + (4 * al_max_luma) + 1 + (2 * num_freq_splits);
+        // Full 1-63 at Al=0 is at index: 1 + 2 + 4*al_max = 3 + 4*al_max
+        // Frequency splits start after that
+        let luma_freq_split_scan_start = num_scans_luma_dc + 2 + (4 * al_max_luma) + 1 + 1;
 
         let num_scans_chroma_dc = if num_components >= 3 { 3 } else { 0 };
         let chroma_freq_split_scan_start = if num_components >= 3 {
@@ -306,6 +339,13 @@ impl ScanSelector {
                 (0, 0, false)
             };
 
+        if DEBUG_SCAN_OPT {
+            eprintln!(
+                "[SCAN_OPT] Selection: al_luma={}, al_chroma={}, freq_luma={}, freq_chroma={}, interleave={}",
+                best_al_luma, best_al_chroma, best_freq_split_luma, best_freq_split_chroma, interleave_chroma_dc
+            );
+        }
+
         ScanSearchResult {
             best_al_luma,
             best_al_chroma,
@@ -320,37 +360,53 @@ impl ScanSelector {
     fn select_luma_params(&self, scan_sizes: &[usize]) -> (u8, usize) {
         let al_max = self.config.al_max_luma as usize;
 
-        // Find best Al by comparing costs
-        // Scan layout:
+        // Find best Al by comparing costs using FULL 1-63 scans
+        // Scan layout (4 scans per Al level):
         //   0: DC
-        //   1: 1-8 at Al=0 (base)
-        //   2: 9-63 at Al=0 (base)
-        //   3: refinement ah=1,al=0 (refines Al=1 -> Al=0)
-        //   4: 1-8 at Al=1
-        //   5: 9-63 at Al=1
-        //   6: refinement ah=2,al=1 (refines Al=2 -> Al=1)
-        //   7: 1-8 at Al=2
-        //   8: 9-63 at Al=2
-        //   ...
+        //   1: 1-8 at Al=0 (base band)
+        //   2: 9-63 at Al=0 (base band)
+        //   3: refinement 1-63 ah=1,al=0
+        //   4: full 1-63 at Al=1
+        //   5: 1-8 at Al=1
+        //   6: 9-63 at Al=1
+        //   7: refinement 1-63 ah=2,al=1
+        //   8: full 1-63 at Al=2
+        //   9: 1-8 at Al=2
+        //   10: 9-63 at Al=2
+        //   11: refinement 1-63 ah=3,al=2
+        //   12: full 1-63 at Al=3
+        //   13: 1-8 at Al=3
+        //   14: 9-63 at Al=3
+        //   15: full 1-63 at Al=0 (baseline)
+        //   16+: frequency splits
+
+        // Index of full 1-63 at Al=0 (after all SA scans)
+        let full_al0_idx = 3 + 4 * al_max;
 
         let mut best_al = 0u8;
         let mut best_al_cost = usize::MAX;
 
         for al in 0..=al_max {
+            // Compare using full 1-63 scans (not band splits)
             let cost = if al == 0 {
-                // Cost = base scans (1-8) + (9-63)
-                scan_sizes.get(1).copied().unwrap_or(0) + scan_sizes.get(2).copied().unwrap_or(0)
+                // Cost = full 1-63 at Al=0
+                scan_sizes.get(full_al0_idx).copied().unwrap_or(usize::MAX)
             } else {
-                // Band scans at Al=k are at indices: 3*k + 1 and 3*k + 2
-                let mut c = scan_sizes.get(3 * al + 1).copied().unwrap_or(0)
-                    + scan_sizes.get(3 * al + 2).copied().unwrap_or(0);
+                // Full 1-63 at Al=k is at index: 3 + 4*(k-1) + 1 = 4*k
+                let full_idx = 4 * al;
+                let mut c = scan_sizes.get(full_idx).copied().unwrap_or(0);
 
-                // Add refinement costs: refinement from Al=k to Al=k-1 is at index 3*k
+                // Add refinement costs: refinement from Al=k to Al=k-1 is at index 4*(k-1)+3
                 for k in 1..=al {
-                    c += scan_sizes.get(3 * k).copied().unwrap_or(0);
+                    let refine_idx = 4 * (k - 1) + 3;
+                    c += scan_sizes.get(refine_idx).copied().unwrap_or(0);
                 }
                 c
             };
+
+            if DEBUG_SCAN_OPT {
+                eprintln!("[SCAN_OPT] Luma Al={}: cost={} (full 1-63)", al, cost);
+            }
 
             if cost < best_al_cost {
                 best_al_cost = cost;
@@ -473,7 +529,10 @@ mod tests {
     fn test_generate_search_scans_ycbcr() {
         let config = ScanSearchConfig::default();
         let scans = generate_search_scans(3, &config);
-        assert_eq!(scans.len(), 64, "YCbCr should generate 64 scans");
+        // Layout: DC + 2 base + 4*al_max_luma + 1 full + 2*num_splits (luma)
+        //       + 3 DC variants + 4 base + 6*al_max_chroma + 2 full + 4*num_splits (chroma)
+        // = 1 + 2 + 12 + 1 + 10 + 3 + 4 + 12 + 2 + 20 = 67
+        assert_eq!(scans.len(), 67, "YCbCr should generate 67 scans");
     }
 
     #[test]
@@ -503,30 +562,36 @@ mod tests {
         let selector = ScanSelector::new(3, config);
 
         // Make Al=2 much cheaper than Al=0
-        // Scan layout:
-        //   1, 2: base scans at Al=0
-        //   3: refinement Al=1->Al=0
-        //   4, 5: bands at Al=1
-        //   6: refinement Al=2->Al=1
-        //   7, 8: bands at Al=2
-        let mut scan_sizes = vec![1000usize; 64];
+        // New scan layout (4 scans per Al level):
+        //   0: DC
+        //   1, 2: base band scans at Al=0
+        //   3: refinement 1-63 ah=1,al=0
+        //   4: full 1-63 at Al=1
+        //   5, 6: bands at Al=1
+        //   7: refinement 1-63 ah=2,al=1
+        //   8: full 1-63 at Al=2
+        //   9, 10: bands at Al=2
+        //   11: refinement 1-63 ah=3,al=2
+        //   12: full 1-63 at Al=3
+        //   13, 14: bands at Al=3
+        //   15: full 1-63 at Al=0 (baseline)
+        let mut scan_sizes = vec![1000usize; 67];
 
-        // Al=0 cost = scan[1] + scan[2] = 1000 + 1000 = 2000
+        // Al=0 cost = scan[15] (full 1-63 at Al=0) = 1000
         // (leave at default)
 
-        // Al=2 cost = scan[7] + scan[8] + scan[6] + scan[3]
-        scan_sizes[7] = 10; // 1-8 at Al=2
-        scan_sizes[8] = 10; // 9-63 at Al=2
-        scan_sizes[6] = 5; // refinement Al=2 -> Al=1
+        // Al=2 cost = scan[8] (full 1-63 at Al=2) + scan[7] + scan[3]
+        scan_sizes[8] = 10; // full 1-63 at Al=2
+        scan_sizes[7] = 5; // refinement Al=2 -> Al=1
         scan_sizes[3] = 5; // refinement Al=1 -> Al=0
-                           // Al=2 cost = 10 + 10 + 5 + 5 = 30 << 2000
+        // Al=2 cost = 10 + 5 + 5 = 20 << 1000
 
         let result = selector.select_best(&scan_sizes);
 
-        // Should pick Al=2 since it's much cheaper (30 vs 2000)
+        // Should pick Al=2 since it's much cheaper (20 vs 1000)
         assert_eq!(
             result.best_al_luma, 2,
-            "Should prefer Al=2 when it's much cheaper (cost 30 vs 2000)"
+            "Should prefer Al=2 when it's much cheaper (cost 20 vs 1000)"
         );
     }
 
@@ -559,8 +624,9 @@ mod tests {
         let selector = ScanSelector::new(3, config);
 
         // Make interleaved DC cheaper
-        let mut scan_sizes = vec![100usize; 64];
-        let base = 23; // num_scans_luma for YCbCr
+        let mut scan_sizes = vec![100usize; 67];
+        // num_scans_luma = 1 + 2 + 4*3 + 1 + 2*5 = 26
+        let base = 26;
         scan_sizes[base] = 50; // Combined Cb+Cr DC
         scan_sizes[base + 1] = 30; // Cb DC
         scan_sizes[base + 2] = 30; // Cr DC
@@ -646,27 +712,34 @@ mod tests {
 
         let scans = result.build_final_scans(3, &config);
 
-        // Count refinement scans (ah > 0)
-        let luma_refinements: Vec<_> = scans
+        // Count AC refinement scans for luma (ah > 0, ss > 0)
+        let luma_ac_refinements: Vec<_> = scans
             .iter()
-            .filter(|s| s.component_index[0] == 0 && s.ah > 0)
+            .filter(|s| s.component_index[0] == 0 && s.ah > 0 && s.ss > 0)
             .collect();
 
-        // Should have refinements from Al=2 to Al=1 and Al=1 to Al=0
+        // Should have AC refinements from Al=2 to Al=1 and Al=1 to Al=0
         assert_eq!(
-            luma_refinements.len(),
+            luma_ac_refinements.len(),
             2,
-            "Should have 2 luma refinement scans for Al=2"
+            "Should have 2 luma AC refinement scans for Al=2"
+        );
+
+        // Also check for DC refinement scan
+        let dc_refinements: Vec<_> = scans.iter().filter(|s| s.is_dc_scan() && s.ah > 0).collect();
+        assert_eq!(
+            dc_refinements.len(),
+            1,
+            "Should have 1 DC refinement scan"
         );
     }
 
     #[test]
-    fn test_scan_layout_matches_c_mozjpeg() {
-        // Verify the scan layout matches C mozjpeg's jpeg_search_progression
+    fn test_scan_layout_structure() {
+        // Verify the scan layout structure after changes
         let config = ScanSearchConfig::default();
         let scans = generate_search_scans(3, &config);
 
-        // C mozjpeg layout verification (from verify_scans example)
         // Scan 0: DC all components
         assert_eq!(scans[0].comps_in_scan, 3);
         assert!(scans[0].is_dc_scan());
@@ -677,13 +750,23 @@ mod tests {
         assert_eq!(scans[2].component_index[0], 0);
         assert_eq!((scans[2].ss, scans[2].se), (9, 63));
 
-        // Scan 12: Y full AC 1-63
-        assert_eq!(scans[12].component_index[0], 0);
-        assert_eq!((scans[12].ss, scans[12].se), (1, 63));
-        assert_eq!((scans[12].ah, scans[12].al), (0, 0));
+        // New layout: 4 scans per Al level
+        // Scan 3: refinement 1-63 ah=1,al=0
+        assert_eq!((scans[3].ss, scans[3].se), (1, 63));
+        assert_eq!((scans[3].ah, scans[3].al), (1, 0));
 
-        // Scan 23: Cb+Cr combined DC
-        assert_eq!(scans[23].comps_in_scan, 2);
-        assert!(scans[23].is_dc_scan());
+        // Scan 4: full 1-63 at Al=1
+        assert_eq!((scans[4].ss, scans[4].se), (1, 63));
+        assert_eq!((scans[4].ah, scans[4].al), (0, 1));
+
+        // Scan 15 (3 + 4*3): Y full AC 1-63 at Al=0
+        assert_eq!(scans[15].component_index[0], 0);
+        assert_eq!((scans[15].ss, scans[15].se), (1, 63));
+        assert_eq!((scans[15].ah, scans[15].al), (0, 0));
+
+        // Chroma scans start at index 26 (1 + 2 + 12 + 1 + 10)
+        // Scan 26: Cb+Cr combined DC
+        assert_eq!(scans[26].comps_in_scan, 2);
+        assert!(scans[26].is_dc_scan());
     }
 }

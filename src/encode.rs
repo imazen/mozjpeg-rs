@@ -1003,7 +1003,9 @@ impl Encoder {
                     &ac_chroma_derived,
                 )?
             } else {
-                // Use minimal (4 scans) to match C mozjpeg's jpeg_simple_progression()
+                // Use minimal progressive (no successive approximation) for simpler encoding
+                // This matches C mozjpeg's jpeg_simple_progression()
+                // Successive approximation is only beneficial at high quality with optimize_scans
                 generate_minimal_progressive_scans(3)
             };
 
