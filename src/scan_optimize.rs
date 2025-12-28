@@ -434,7 +434,29 @@ impl ScanSelector {
             };
 
             if DEBUG_SCAN_OPT {
-                eprintln!("[SCAN_OPT] Luma Al={}: cost={}", al, cost);
+                if al == 0 {
+                    eprintln!(
+                        "[SCAN_OPT] Luma Al={}: cost={} (sizes[1]={}, sizes[2]={})",
+                        al,
+                        cost,
+                        scan_sizes.get(1).copied().unwrap_or(0),
+                        scan_sizes.get(2).copied().unwrap_or(0)
+                    );
+                } else {
+                    let refine_costs: Vec<usize> = (0..al)
+                        .map(|i| scan_sizes.get(3 + 3 * i).copied().unwrap_or(0))
+                        .collect();
+                    eprintln!(
+                        "[SCAN_OPT] Luma Al={}: cost={} (sizes[{}]={}, sizes[{}]={}, refine={:?})",
+                        al,
+                        cost,
+                        3 * al + 1,
+                        scan_sizes.get(3 * al + 1).copied().unwrap_or(0),
+                        3 * al + 2,
+                        scan_sizes.get(3 * al + 2).copied().unwrap_or(0),
+                        refine_costs
+                    );
+                }
             }
 
             if al == 0 || cost < best_cost {

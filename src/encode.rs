@@ -167,6 +167,10 @@ impl Encoder {
     ///
     /// Enables progressive mode, trellis quantization, Huffman optimization,
     /// and overshoot deringing.
+    ///
+    /// Note: optimize_scans is disabled by default as the current implementation
+    /// can produce slightly larger files than simple progressive mode. Use
+    /// `.optimize_scans(true)` to enable it for experimental scan optimization.
     pub fn max_compression() -> Self {
         Self {
             quality: 75,
@@ -179,7 +183,7 @@ impl Encoder {
             force_baseline: false,
             optimize_huffman: true,
             overshoot_deringing: true,
-            optimize_scans: true,
+            optimize_scans: false,
             restart_interval: 0,
             pixel_density: PixelDensity::default(),
             exif_data: None,
@@ -2253,6 +2257,7 @@ mod tests {
         assert!(encoder.trellis.enabled);
         assert!(encoder.progressive);
         assert!(encoder.optimize_huffman);
-        assert!(encoder.optimize_scans);
+        // optimize_scans is disabled by default as it can produce larger files
+        assert!(!encoder.optimize_scans);
     }
 }

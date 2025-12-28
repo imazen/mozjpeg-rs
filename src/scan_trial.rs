@@ -6,14 +6,18 @@
 //! The C mozjpeg implementation encodes all 64 candidate scans in sequence,
 //! storing each scan's bytes. Refinement scans (Ah > 0) only work correctly
 //! when they have context from the scans that came before them.
+//!
+//! IMPORTANT: Each scan uses its OWN optimal Huffman table, built from the
+//! symbol frequencies in that specific scan. This matches C mozjpeg behavior
+//! with optimize_scans enabled.
 
 use std::io::Write;
 
 use crate::bitstream::BitWriter;
 use crate::consts::DCTSIZE2;
-use crate::entropy::ProgressiveEncoder;
+use crate::entropy::{ProgressiveEncoder, ProgressiveSymbolCounter};
 use crate::error::Result;
-use crate::huffman::DerivedTable;
+use crate::huffman::{DerivedTable, FrequencyCounter};
 use crate::types::ScanInfo;
 
 /// State for a coefficient across the encoding sequence.
@@ -51,6 +55,8 @@ impl Default for BlockState {
 ///
 /// Encodes scans in sequence while maintaining state about which coefficients
 /// have been coded. This allows accurate size estimation for refinement scans.
+///
+/// Each scan uses its own optimal Huffman table, matching C mozjpeg's behavior.
 pub struct ScanTrialEncoder<'a> {
     /// Y component blocks
     y_blocks: &'a [[i16; DCTSIZE2]],
@@ -66,10 +72,12 @@ pub struct ScanTrialEncoder<'a> {
     /// Block state for Cr component
     cr_state: Vec<BlockState>,
 
-    /// Huffman tables
+    /// Stored Huffman tables (fallback for DC scans)
     dc_luma: &'a DerivedTable,
     dc_chroma: &'a DerivedTable,
+    #[allow(dead_code)]
     ac_luma: &'a DerivedTable,
+    #[allow(dead_code)]
     ac_chroma: &'a DerivedTable,
 
     /// MCU dimensions
@@ -147,49 +155,140 @@ impl<'a> ScanTrialEncoder<'a> {
 
     /// Encode a single scan and return its size.
     ///
-    /// Updates internal state to track which coefficients have been coded.
+    /// This does two-pass encoding like C mozjpeg:
+    /// 1. First pass: count symbol frequencies
+    /// 2. Build optimal Huffman table from frequencies
+    /// 3. Second pass: encode with optimal table
     fn encode_scan(&mut self, scan: &ScanInfo) -> Result<usize> {
-        let mut buffer = Vec::new();
-        let mut bit_writer = BitWriter::new(&mut buffer);
-        let mut encoder = ProgressiveEncoder::new(&mut bit_writer);
-
         let is_dc_scan = scan.ss == 0 && scan.se == 0;
         let is_refinement = scan.ah != 0;
 
         if is_dc_scan {
-            self.encode_dc_scan(scan, is_refinement, &mut encoder)?;
+            // DC scans - use stored tables (DC scans are small, optimization less impactful)
+            let mut buffer = Vec::new();
+            let mut bit_writer = BitWriter::new(&mut buffer);
+            let mut encoder = ProgressiveEncoder::new(&mut bit_writer);
+
+            self.encode_dc_scan_with_stored_tables(scan, is_refinement, &mut encoder)?;
+            encoder.finish_scan(None)?;
+            bit_writer.flush()?;
+
+            let size = buffer.len();
+            self.scan_buffers.push(buffer);
+            Ok(size)
         } else {
-            self.encode_ac_scan(scan, is_refinement, &mut encoder)?;
+            // AC scans - use per-scan optimal Huffman tables
+            // Pass 1: Count symbol frequencies
+            let mut ac_counter = FrequencyCounter::new();
+            self.count_ac_scan_symbols(scan, is_refinement, &mut ac_counter)?;
+
+            // Build optimal Huffman table from frequencies
+            let ac_huff = ac_counter.generate_table()?;
+            let ac_table = DerivedTable::from_huff_table(&ac_huff, false)?;
+
+            // Pass 2: Encode with optimal table
+            let mut buffer = Vec::new();
+            let mut bit_writer = BitWriter::new(&mut buffer);
+            let mut encoder = ProgressiveEncoder::new(&mut bit_writer);
+
+            self.encode_ac_scan_with_table(scan, is_refinement, &ac_table, &mut encoder)?;
+            encoder.finish_scan(Some(&ac_table))?;
+            bit_writer.flush()?;
+
+            let size = buffer.len();
+            self.scan_buffers.push(buffer);
+            Ok(size)
         }
-
-        // Finish the scan
-        let ac_table = if scan.ss > 0 {
-            if scan.component_index[0] == 0 {
-                Some(self.ac_luma)
-            } else {
-                Some(self.ac_chroma)
-            }
-        } else {
-            None
-        };
-        encoder.finish_scan(ac_table)?;
-        bit_writer.flush()?;
-
-        // Store the buffer for potential later use
-        let size = buffer.len();
-        self.scan_buffers.push(buffer);
-
-        Ok(size)
     }
 
-    /// Encode a DC scan.
-    fn encode_dc_scan<W: Write>(
+    /// Count AC scan symbols (pass 1).
+    fn count_ac_scan_symbols(
+        &self,
+        scan: &ScanInfo,
+        is_refinement: bool,
+        ac_counter: &mut FrequencyCounter,
+    ) -> Result<()> {
+        let comp_idx = scan.component_index[0] as usize;
+        let blocks = match comp_idx {
+            0 => self.y_blocks,
+            1 => self.cb_blocks,
+            2 => self.cr_blocks,
+            _ => return Ok(()),
+        };
+
+        let ss = scan.ss;
+        let se = scan.se;
+        let al = scan.al;
+
+        let (num_block_rows, num_block_cols) = if comp_idx == 0 {
+            ((self.actual_height + 7) / 8, (self.actual_width + 7) / 8)
+        } else {
+            ((self.chroma_height + 7) / 8, (self.chroma_width + 7) / 8)
+        };
+
+        // For Y component with subsampling, blocks are stored in MCU-interleaved order
+        // but AC scans encode them in component raster order.
+        let blocks_per_mcu = if comp_idx == 0 {
+            self.h_samp as usize * self.v_samp as usize
+        } else {
+            1
+        };
+
+        let mut counter = ProgressiveSymbolCounter::new();
+
+        if blocks_per_mcu == 1 {
+            // Chroma or 4:4:4 Y: storage order = raster order
+            let total_blocks = num_block_rows * num_block_cols;
+            for block in blocks.iter().take(total_blocks) {
+                if is_refinement {
+                    counter.count_ac_refine(block, ss, se, scan.ah, al, ac_counter);
+                } else {
+                    counter.count_ac_first(block, ss, se, al, ac_counter);
+                }
+            }
+        } else {
+            // Y component with subsampling - iterate in raster order but access MCU storage
+            let h = self.h_samp as usize;
+            let v = self.v_samp as usize;
+
+            for block_row in 0..num_block_rows {
+                for block_col in 0..num_block_cols {
+                    // Convert raster position to MCU-interleaved storage index
+                    let mcu_row = block_row / v;
+                    let mcu_col = block_col / h;
+                    let v_idx = block_row % v;
+                    let h_idx = block_col % h;
+                    let storage_idx = mcu_row * (self.mcu_cols * blocks_per_mcu)
+                        + mcu_col * blocks_per_mcu
+                        + v_idx * h
+                        + h_idx;
+
+                    if storage_idx < blocks.len() {
+                        let block = &blocks[storage_idx];
+
+                        if is_refinement {
+                            counter.count_ac_refine(block, ss, se, scan.ah, al, ac_counter);
+                        } else {
+                            counter.count_ac_first(block, ss, se, al, ac_counter);
+                        }
+                    }
+                }
+            }
+        }
+
+        // Finish to flush any pending EOBRUN
+        counter.finish_scan(Some(ac_counter));
+
+        Ok(())
+    }
+
+    /// Encode DC scan with stored Huffman tables.
+    fn encode_dc_scan_with_stored_tables<W: Write>(
         &mut self,
         scan: &ScanInfo,
         is_refinement: bool,
         encoder: &mut ProgressiveEncoder<W>,
     ) -> Result<()> {
-        // DC scan encoding - update state to track DC coding
         let al = scan.al;
 
         for mcu_row in 0..self.mcu_rows {
@@ -203,7 +302,6 @@ impl<'a> ScanTrialEncoder<'a> {
                         _ => continue,
                     };
 
-                    // Calculate block indices for this component in this MCU
                     let (h_blocks, v_blocks) = if comp_idx == 0 {
                         (self.h_samp as usize, self.v_samp as usize)
                     } else {
@@ -227,12 +325,10 @@ impl<'a> ScanTrialEncoder<'a> {
                                 let block_state = &mut state[block_idx];
 
                                 if is_refinement {
-                                    // DC refinement - encode the next bit of already-coded DC
                                     if block_state.dc_coded {
                                         encoder.encode_dc_refine(block, al)?;
                                     }
                                 } else {
-                                    // DC first scan
                                     encoder.encode_dc_first(block, comp_idx, dc_table, al)?;
                                     block_state.dc_coded = true;
                                     block_state.dc_first_al = al;
@@ -247,18 +343,19 @@ impl<'a> ScanTrialEncoder<'a> {
         Ok(())
     }
 
-    /// Encode an AC scan.
-    fn encode_ac_scan<W: Write>(
+    /// Encode AC scan with a specific Huffman table (pass 2).
+    fn encode_ac_scan_with_table<W: Write>(
         &mut self,
         scan: &ScanInfo,
         is_refinement: bool,
+        ac_table: &DerivedTable,
         encoder: &mut ProgressiveEncoder<W>,
     ) -> Result<()> {
         let comp_idx = scan.component_index[0] as usize;
-        let (blocks, _state, ac_table) = match comp_idx {
-            0 => (self.y_blocks, &mut self.y_state, self.ac_luma),
-            1 => (self.cb_blocks, &mut self.cb_state, self.ac_chroma),
-            2 => (self.cr_blocks, &mut self.cr_state, self.ac_chroma),
+        let blocks = match comp_idx {
+            0 => self.y_blocks,
+            1 => self.cb_blocks,
+            2 => self.cr_blocks,
             _ => return Ok(()),
         };
 
@@ -266,40 +363,63 @@ impl<'a> ScanTrialEncoder<'a> {
         let se = scan.se as usize;
         let al = scan.al;
 
-        // Calculate number of blocks for this component
         let (num_block_rows, num_block_cols) = if comp_idx == 0 {
-            let block_width = (self.actual_width + 7) / 8;
-            let block_height = (self.actual_height + 7) / 8;
-            (block_height, block_width)
+            ((self.actual_height + 7) / 8, (self.actual_width + 7) / 8)
         } else {
-            let block_width = (self.chroma_width + 7) / 8;
-            let block_height = (self.chroma_height + 7) / 8;
-            (block_height, block_width)
+            ((self.chroma_height + 7) / 8, (self.chroma_width + 7) / 8)
         };
 
-        let blocks_per_row = if comp_idx == 0 {
-            self.mcu_cols * self.h_samp as usize
+        // For Y component with subsampling, blocks are stored in MCU-interleaved order
+        // but AC scans encode them in component raster order.
+        let blocks_per_mcu = if comp_idx == 0 {
+            self.h_samp as usize * self.v_samp as usize
         } else {
-            self.mcu_cols
+            1
         };
 
-        // Iterate over actual blocks (not MCU-padded)
-        for block_row in 0..num_block_rows {
-            for block_col in 0..num_block_cols {
-                let block_idx = block_row * blocks_per_row + block_col;
+        if blocks_per_mcu == 1 {
+            // Chroma or 4:4:4 Y: storage order = raster order
+            let total_blocks = num_block_rows * num_block_cols;
+            for block in blocks.iter().take(total_blocks) {
+                if is_refinement {
+                    encoder
+                        .encode_ac_refine(block, ss as u8, se as u8, scan.ah, al, ac_table)?;
+                } else {
+                    encoder.encode_ac_first(block, ss as u8, se as u8, al, ac_table)?;
+                }
+            }
+        } else {
+            // Y component with subsampling - iterate in raster order but access MCU storage
+            let h = self.h_samp as usize;
+            let v = self.v_samp as usize;
 
-                if block_idx < blocks.len() {
-                    let block = &blocks[block_idx];
+            for block_row in 0..num_block_rows {
+                for block_col in 0..num_block_cols {
+                    // Convert raster position to MCU-interleaved storage index
+                    let mcu_row = block_row / v;
+                    let mcu_col = block_col / h;
+                    let v_idx = block_row % v;
+                    let h_idx = block_col % h;
+                    let storage_idx = mcu_row * (self.mcu_cols * blocks_per_mcu)
+                        + mcu_col * blocks_per_mcu
+                        + v_idx * h
+                        + h_idx;
 
-                    if is_refinement {
-                        // AC refinement - encode based on actual coefficient values.
-                        // The encoder looks at bit `al` of each coefficient to determine
-                        // what refinement bits to encode.
-                        encoder
-                            .encode_ac_refine(block, ss as u8, se as u8, scan.ah, al, ac_table)?;
-                    } else {
-                        // AC first scan
-                        encoder.encode_ac_first(block, ss as u8, se as u8, al, ac_table)?;
+                    if storage_idx < blocks.len() {
+                        let block = &blocks[storage_idx];
+
+                        if is_refinement {
+                            encoder.encode_ac_refine(
+                                block,
+                                ss as u8,
+                                se as u8,
+                                scan.ah,
+                                al,
+                                ac_table,
+                            )?;
+                        } else {
+                            encoder.encode_ac_first(block, ss as u8, se as u8, al, ac_table)?;
+                        }
                     }
                 }
             }
