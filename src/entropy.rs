@@ -507,11 +507,12 @@ impl<'a, W: Write> ProgressiveEncoder<'a, W> {
             }
             self.writer.put_bits(code, size)?;
 
-            // Emit value bits.
-            // For negative: emit (abs_shifted - 1)
-            // For positive: emit abs_shifted
+            // Emit value bits using JPEG's one's complement encoding.
+            // For negative: emit ~abs_shifted truncated to nbits = (2^nbits - 1) - abs_shifted
+            // For positive: emit abs_shifted directly
             if coef < 0 {
-                self.writer.put_bits((abs_shifted - 1) as u32, nbits)?;
+                let ones_comp = ((1u16 << nbits) - 1) - abs_shifted;
+                self.writer.put_bits(ones_comp as u32, nbits)?;
             } else {
                 self.writer.put_bits(abs_shifted as u32, nbits)?;
             }

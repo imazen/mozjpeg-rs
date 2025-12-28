@@ -1006,9 +1006,8 @@ impl Encoder {
                     &ac_chroma_derived,
                 )?
             } else {
-                // Use C mozjpeg's JCP_MAX_COMPRESSION progressive script (9 scans)
-                // This includes successive approximation for luma (Al=2, refinements to Al=0)
-                generate_mozjpeg_max_compression_scans(3)
+                // Temporarily use minimal progressive to debug non-MCU aligned issue
+                generate_minimal_progressive_scans(3)
             };
 
             // Count symbol frequencies for optimized Huffman tables
@@ -1051,7 +1050,7 @@ impl Encoder {
                             &mut ac_chroma_freq
                         };
                         // Calculate actual block dimensions for this component
-                        let (actual_block_cols, actual_block_rows) = if comp_idx == 0 {
+                        let (block_cols, block_rows) = if comp_idx == 0 {
                             (width.div_ceil(DCTSIZE), height.div_ceil(DCTSIZE))
                         } else {
                             (
@@ -1067,8 +1066,8 @@ impl Encoder {
                             luma_h,
                             luma_v,
                             comp_idx,
-                            actual_block_cols,
-                            actual_block_rows,
+                            block_cols,
+                            block_rows,
                             ac_freq,
                         );
                     }
@@ -1935,8 +1934,11 @@ impl Encoder {
             };
             let ac_table = if comp_idx == 0 { ac_luma } else { ac_chroma };
 
-            // Calculate actual block dimensions for this component
-            let (actual_block_cols, actual_block_rows) = if comp_idx == 0 {
+            // Calculate actual block dimensions for this component.
+            // Non-interleaved AC scans encode only the actual image blocks, not MCU padding.
+            // This differs from interleaved DC scans which encode all MCU blocks.
+            // Reference: ITU-T T.81 Section F.2.3
+            let (block_cols, block_rows) = if comp_idx == 0 {
                 // Y component: full resolution
                 (
                     actual_width.div_ceil(DCTSIZE),
@@ -1958,8 +1960,8 @@ impl Encoder {
                 h_samp,
                 v_samp,
                 comp_idx,
-                actual_block_cols,
-                actual_block_rows,
+                block_cols,
+                block_rows,
                 ac_table,
                 is_refinement,
                 encoder,
@@ -2032,6 +2034,8 @@ impl Encoder {
     /// For non-interleaved scans, the number of blocks is determined by the actual
     /// component dimensions (ceil(width/8) × ceil(height/8)), NOT the MCU-padded
     /// dimensions. This is different from interleaved DC scans which use MCU order.
+    /// The padding blocks (beyond actual image dimensions) have DC coefficients but
+    /// no AC coefficients - the decoder only outputs the actual image dimensions.
     ///
     /// Reference: ITU-T T.81 Section F.2.3 - "The scan data for a non-interleaved
     /// scan shall consist of a sequence of entropy-coded segments... The data units
@@ -2046,8 +2050,8 @@ impl Encoder {
         h_samp: u8,
         v_samp: u8,
         comp_idx: usize,
-        actual_block_cols: usize,
-        actual_block_rows: usize,
+        block_cols: usize,
+        block_rows: usize,
         ac_table: &DerivedTable,
         is_refinement: bool,
         encoder: &mut ProgressiveEncoder<W>,
@@ -2055,6 +2059,9 @@ impl Encoder {
         // For Y component with subsampling, blocks are stored in MCU-interleaved order
         // but AC scans must encode them in component raster order.
         // For chroma components (1 block per MCU), the orders are identical.
+        //
+        // For non-interleaved scans, encode only the actual image blocks (block_rows × block_cols),
+        // not all MCU-padded blocks. Padding blocks have DC coefficients but no AC coefficients.
 
         let blocks_per_mcu = if comp_idx == 0 {
             (h_samp * v_samp) as usize
@@ -2064,9 +2071,8 @@ impl Encoder {
 
         if blocks_per_mcu == 1 {
             // Chroma or 4:4:4 Y: storage order = raster order
-            // Only encode actual_block_rows × actual_block_cols blocks
-            let total_actual = actual_block_rows * actual_block_cols;
-            for block in blocks.iter().take(total_actual) {
+            let total_blocks = block_rows * block_cols;
+            for block in blocks.iter().take(total_blocks) {
                 if is_refinement {
                     encoder.encode_ac_refine(block, scan.ss, scan.se, scan.ah, scan.al, ac_table)?;
                 } else {
@@ -2076,12 +2082,11 @@ impl Encoder {
         } else {
             // Y component with subsampling (h_samp > 1 or v_samp > 1)
             // Convert from MCU-interleaved storage to component raster order
-            // Use actual block dimensions, not MCU-padded dimensions
             let h = h_samp as usize;
             let v = v_samp as usize;
 
-            for block_row in 0..actual_block_rows {
-                for block_col in 0..actual_block_cols {
+            for block_row in 0..block_rows {
+                for block_col in 0..block_cols {
                     // Convert raster position to MCU-interleaved storage index
                     let mcu_row = block_row / v;
                     let mcu_col = block_col / h;
@@ -2169,8 +2174,8 @@ impl Encoder {
         h_samp: u8,
         v_samp: u8,
         comp_idx: usize,
-        actual_block_cols: usize,
-        actual_block_rows: usize,
+        block_cols: usize,
+        block_rows: usize,
         ac_freq: &mut FrequencyCounter,
     ) {
         let blocks_per_mcu = if comp_idx == 0 {
@@ -2184,9 +2189,8 @@ impl Encoder {
 
         if blocks_per_mcu == 1 {
             // Chroma or 4:4:4 Y: storage order = raster order
-            // Only count actual_block_rows × actual_block_cols blocks
-            let total_actual = actual_block_rows * actual_block_cols;
-            for block in blocks.iter().take(total_actual) {
+            let total_blocks = block_rows * block_cols;
+            for block in blocks.iter().take(total_blocks) {
                 if is_refinement {
                     counter.count_ac_refine(block, scan.ss, scan.se, scan.ah, scan.al, ac_freq);
                 } else {
@@ -2195,12 +2199,11 @@ impl Encoder {
             }
         } else {
             // Y component with subsampling - iterate in raster order (matching encode_ac_scan)
-            // Use actual block dimensions, not MCU-padded dimensions
             let h = h_samp as usize;
             let v = v_samp as usize;
 
-            for block_row in 0..actual_block_rows {
-                for block_col in 0..actual_block_cols {
+            for block_row in 0..block_rows {
+                for block_col in 0..block_cols {
                     // Convert raster position to MCU-interleaved storage index
                     let mcu_row = block_row / v;
                     let mcu_col = block_col / h;
