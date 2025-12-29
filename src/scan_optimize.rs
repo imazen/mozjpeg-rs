@@ -25,12 +25,9 @@ pub struct ScanSearchConfig {
 impl Default for ScanSearchConfig {
     fn default() -> Self {
         Self {
-            // Disable successive approximation for now.
-            // Our AC refinement encoding has bugs that cause "failed to decode huffman code"
-            // errors. Setting al_max to 0 avoids generating refinement scans (Ah > 0).
-            // TODO: Fix AC refinement encoding and restore al_max_luma=3, al_max_chroma=2
-            al_max_luma: 0,
-            al_max_chroma: 0,
+            // Match C mozjpeg's defaults for optimize_scans
+            al_max_luma: 3,
+            al_max_chroma: 2,
             frequency_splits: vec![2, 8, 5, 12, 18],
             dc_scan_opt_mode: 0,
         }

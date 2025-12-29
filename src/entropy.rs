@@ -564,88 +564,96 @@ impl<'a, W: Write> ProgressiveEncoder<'a, W> {
         al: u8,
         ac_table: &DerivedTable,
     ) -> std::io::Result<()> {
-        let mut run = 0u32;
-        // br_start = index where THIS block's bits start in correction_bits.
-        // BE (before) bits are 0..br_start, BR (current block) bits are br_start..
-        let mut br_start = self.correction_bits.len();
+        // Pre-pass: compute absvalues and find EOB (last newly-nonzero position)
+        // This matches C mozjpeg's structure in jcphuff.c
+        let mut absvalues = [0u16; DCTSIZE2];
+        let mut eob = 0u8;
 
         for k in ss..=se {
             let coef = block[JPEG_NATURAL_ORDER[k as usize]];
-            let abs_coef = coef.unsigned_abs();
+            let temp = (coef.unsigned_abs() >> al) as u16;
+            absvalues[k as usize] = temp;
+            if temp == 1 {
+                eob = k; // EOB = index of last newly-nonzero coef
+            }
+        }
 
-            // Check if this is a previously-coded non-zero coefficient.
-            // C mozjpeg: temp >>= Al, then if (temp > 1) it was previously coded.
-            // This is equivalent to: (abs_coef >> al) > 1
-            // Note: The first scan encoded coef if (abs >> (al+1)) != 0
-            //       In refinement, (abs >> al) > 1 implies (abs >> (al+1)) >= 1 > 0
-            if (abs_coef >> al) > 1 {
-                // Already coded - just queue the refinement bit
-                // Use absolute value since magnitude bits are what we're refining
-                let correction_bit = ((abs_coef >> al) & 1) as u32;
-                self.correction_bits.push(correction_bit);
-            } else if (abs_coef >> al) == 1 {
-                // New non-zero coefficient
-                // First, flush any pending EOBRUN with BE (previous blocks') correction bits
+        // Main pass: encode coefficients per JPEG spec G.1.2.3, fig. G.7
+        let mut run = 0u32;
+        let mut br_start = self.correction_bits.len();
+
+        for k in ss..=se {
+            let temp = absvalues[k as usize];
+
+            if temp == 0 {
+                run += 1;
+                continue;
+            }
+
+            // Emit any required ZRLs, but not if they can be folded into EOB.
+            // This loop runs for BOTH temp > 1 and temp == 1, matching C mozjpeg.
+            while run >= 16 && k <= eob {
+                // Flush any pending EOBRUN and BE correction bits
                 if self.eobrun > 0 {
                     self.flush_eobrun_be_bits(ac_table, br_start)?;
-                    // After flush, BE bits are gone but BR bits remain
-                    // Move BR bits to start of buffer
                     let br_bits: Vec<u32> = self.correction_bits[br_start..].to_vec();
                     self.correction_bits.clear();
                     self.correction_bits.extend(br_bits);
                     br_start = 0;
                 }
 
-                // Emit ZRL for runs of 16
-                while run >= 16 {
-                    // Emit ZRL
-                    let (code, size) = ac_table.get_code(0xF0);
-                    self.writer.put_bits(code, size)?;
-
-                    // Output correction bits accumulated so far in this block
-                    for &bit in &self.correction_bits[br_start..] {
-                        self.writer.put_bits(bit, 1)?;
-                    }
-                    self.correction_bits.truncate(br_start);
-                    run -= 16;
-                }
-
-                // Emit the coefficient
-                let symbol = ((run as u8) << 4) | 1;
-                let (code, size) = ac_table.get_code(symbol);
+                // Emit ZRL
+                let (code, size) = ac_table.get_code(0xF0);
                 self.writer.put_bits(code, size)?;
+                run -= 16;
 
-                // Sign bit (1 for positive, 0 for negative)
-                let sign_bit = if coef < 0 { 0u32 } else { 1u32 };
-                self.writer.put_bits(sign_bit, 1)?;
-
-                // Output correction bits accumulated so far in this block
+                // Emit buffered correction bits that must be associated with ZRL
                 for &bit in &self.correction_bits[br_start..] {
                     self.writer.put_bits(bit, 1)?;
                 }
                 self.correction_bits.truncate(br_start);
-                run = 0;
-            } else {
-                // Zero coefficient - just increment run.
-                // ZRL will be emitted when/if we find a newly-nonzero coefficient.
-                // Trailing zeros (after the last newly-nonzero) fold into EOBRUN.
-                // This matches C mozjpeg's behavior where ZRL is only emitted
-                // when cabsvalue <= EOBPTR (i.e., we're still before/at the last
-                // newly-nonzero coefficient).
-                run += 1;
             }
+
+            // If the coef was previously nonzero, it only needs a correction bit.
+            if temp > 1 {
+                let correction_bit = (temp & 1) as u32;
+                self.correction_bits.push(correction_bit);
+                continue;
+            }
+
+            // temp == 1: New non-zero coefficient
+            // Flush any pending EOBRUN and BE correction bits
+            if self.eobrun > 0 {
+                self.flush_eobrun_be_bits(ac_table, br_start)?;
+                let br_bits: Vec<u32> = self.correction_bits[br_start..].to_vec();
+                self.correction_bits.clear();
+                self.correction_bits.extend(br_bits);
+                br_start = 0;
+            }
+
+            // Emit the coefficient symbol
+            let symbol = ((run as u8) << 4) | 1;
+            let (code, size) = ac_table.get_code(symbol);
+            self.writer.put_bits(code, size)?;
+
+            // Sign bit (1 for positive, 0 for negative)
+            let coef = block[JPEG_NATURAL_ORDER[k as usize]];
+            let sign_bit = if coef < 0 { 0u32 } else { 1u32 };
+            self.writer.put_bits(sign_bit, 1)?;
+
+            // Emit buffered correction bits that must be associated with this code
+            for &bit in &self.correction_bits[br_start..] {
+                self.writer.put_bits(bit, 1)?;
+            }
+            self.correction_bits.truncate(br_start);
+            run = 0;
         }
 
         // Handle remaining run (EOB)
-        // BR = bits accumulated in this block = correction_bits.len() - br_start
         let br = self.correction_bits.len() - br_start;
         if run > 0 || br > 0 {
             self.eobrun += 1;
-            // Correction bits stay in self.correction_bits (they're already there)
-            // We force out the EOB if we risk either:
-            // 1. overflow of the EOB counter (0x7FFF max)
-            // 2. overflow of the correction bit buffer (use 1000 as max like C mozjpeg)
-            // 3. EOBRUN is disabled (standard tables)
+            // We force out the EOB if we risk overflow
             if !self.allow_eobrun
                 || self.eobrun == 0x7FFF
                 || self.correction_bits.len() > (1000 - DCTSIZE2 + 1)
@@ -910,47 +918,61 @@ impl ProgressiveSymbolCounter {
         al: u8,
         ac_counter: &mut FrequencyCounter,
     ) {
-        // Track run (zeros before next symbol) and br (correction bits in this block).
-        // br tracks whether there are "already coded" coefficients that need correction
-        // bits output with EOB. These don't generate Huffman symbols but affect EOBRUN.
+        // Pre-pass: compute absvalues and find EOB (matching encode_ac_refine)
+        let mut absvalues = [0u16; DCTSIZE2];
+        let mut eob = 0u8;
+
+        for k in ss..=se {
+            let coef = block[JPEG_NATURAL_ORDER[k as usize]];
+            let temp = (coef.unsigned_abs() >> al) as u16;
+            absvalues[k as usize] = temp;
+            if temp == 1 {
+                eob = k;
+            }
+        }
+
+        // Main pass: count symbols (matching encode_ac_refine structure)
         let mut run = 0u32;
         let mut br = 0usize;
 
         for k in ss..=se {
-            let coef = block[JPEG_NATURAL_ORDER[k as usize]];
-            let abs_coef = coef.unsigned_abs();
+            let temp = absvalues[k as usize];
 
-            if (abs_coef >> al) > 1 {
-                // Previously coded - just adds a correction bit (no Huffman symbol)
-                br += 1;
-            } else if (abs_coef >> al) == 1 {
-                // Newly non-zero coefficient - flush EOBRUN and emit symbol
+            if temp == 0 {
+                run += 1;
+                continue;
+            }
+
+            // Count ZRLs, but not if they can be folded into EOB
+            // This loop runs for BOTH temp > 1 and temp == 1, matching C mozjpeg
+            while run >= 16 && k <= eob {
                 if self.eobrun > 0 {
                     self.flush_eobrun_count(ac_counter);
                 }
-
-                // Count ZRL for runs of 16 zeros
-                while run >= 16 {
-                    ac_counter.count(0xF0); // ZRL
-                    run -= 16;
-                }
-
-                // Symbol = (run << 4) | 1 (always category 1 for refinement)
-                let symbol = ((run as u8) << 4) | 1;
-                ac_counter.count(symbol);
-
-                run = 0;
-                br = 0; // Correction bits flushed with the symbol
-            } else {
-                // Zero coefficient - just increment run.
-                // ZRL will be counted when/if we find a newly-nonzero coefficient.
-                // Trailing zeros fold into EOBRUN, matching C mozjpeg's behavior.
-                run += 1;
+                ac_counter.count(0xF0); // ZRL
+                run -= 16;
             }
+
+            if temp > 1 {
+                // Previously coded - just adds a correction bit (no Huffman symbol)
+                br += 1;
+                continue;
+            }
+
+            // temp == 1: Newly non-zero coefficient
+            if self.eobrun > 0 {
+                self.flush_eobrun_count(ac_counter);
+            }
+
+            // Symbol = (run << 4) | 1 (always category 1 for refinement)
+            let symbol = ((run as u8) << 4) | 1;
+            ac_counter.count(symbol);
+
+            run = 0;
+            br = 0;
         }
 
-        // Handle remaining run (EOB) - matches encoding's "if run > 0 || br > 0"
-        // Need EOB if there are trailing zeros OR trailing correction bits
+        // Handle remaining run (EOB)
         if run > 0 || br > 0 {
             self.eobrun += 1;
             if self.eobrun == 0x7FFF {

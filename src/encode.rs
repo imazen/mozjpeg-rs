@@ -40,7 +40,7 @@ use crate::error::{Error, Result};
 use crate::huffman::DerivedTable;
 use crate::huffman::FrequencyCounter;
 use crate::marker::MarkerWriter;
-use crate::progressive::{generate_baseline_scan, generate_minimal_progressive_scans};
+use crate::progressive::{generate_baseline_scan, generate_mozjpeg_max_compression_scans};
 use crate::quant::{create_quant_tables, quantize_block_raw};
 use crate::sample;
 use crate::scan_optimize::{generate_search_scans, ScanSearchConfig, ScanSelector};
@@ -993,12 +993,13 @@ impl Encoder {
                     &ac_chroma_derived,
                 )?
             } else {
-                // Use simple 4-scan progressive script:
-                // 1. DC scan for all components
-                // 2. Full AC (1-63) for Y
-                // 3. Full AC (1-63) for Cb
-                // 4. Full AC (1-63) for Cr
-                generate_minimal_progressive_scans(3)
+                // Use C mozjpeg's 9-scan JCP_MAX_COMPRESSION script.
+                // This matches jcparam.c lines 932-947 (the JCP_MAX_COMPRESSION branch).
+                // mozjpeg-sys defaults to JCP_MAX_COMPRESSION profile, which uses:
+                // - DC with no successive approximation (Al=0)
+                // - 8/9 frequency split for luma with successive approximation
+                // - No successive approximation for chroma
+                generate_mozjpeg_max_compression_scans(3)
             };
 
             // Build Huffman tables and encode scans
