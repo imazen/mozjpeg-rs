@@ -13,7 +13,7 @@ use std::fs::File;
 use std::path::Path;
 
 /// Instrumentation flag - set to true to print detailed debug output
-const DEBUG_INSTRUMENTATION: bool = false;
+const DEBUG_INSTRUMENTATION: bool = true;
 
 /// Configuration for a progressive test case
 #[derive(Debug, Clone)]
@@ -127,7 +127,18 @@ fn encode_c(rgb: &[u8], width: u32, height: u32, quality: u8, optimize_scans: bo
         // Use ImageMagick quant tables (index 3) to match Rust
         jpeg_c_set_int_param(&mut cinfo, JINT_BASE_QUANT_TBL_IDX, 3);
 
-        // Enable progressive mode
+        // Must set optimize_scans BEFORE jpeg_simple_progression!
+        // jpeg_set_defaults enables it by default (via JCP_MAX_COMPRESSION profile).
+        // jpeg_simple_progression checks this flag to decide between:
+        //   - 64-scan candidate set (optimize_scans=true)
+        //   - 10-scan SA script (optimize_scans=false)
+        jpeg_c_set_bool_param(
+            &mut cinfo,
+            JBOOLEAN_OPTIMIZE_SCANS,
+            if optimize_scans { 1 } else { 0 },
+        );
+
+        // Enable progressive mode - must come AFTER setting optimize_scans
         jpeg_simple_progression(&mut cinfo);
         jpeg_set_quality(&mut cinfo, quality as i32, 1);
 
@@ -144,10 +155,6 @@ fn encode_c(rgb: &[u8], width: u32, height: u32, quality: u8, optimize_scans: bo
         jpeg_c_set_bool_param(&mut cinfo, JBOOLEAN_TRELLIS_QUANT, 1);
         jpeg_c_set_bool_param(&mut cinfo, JBOOLEAN_TRELLIS_QUANT_DC, 1);
         jpeg_c_set_bool_param(&mut cinfo, JBOOLEAN_OVERSHOOT_DERINGING, 1);
-
-        if optimize_scans {
-            jpeg_c_set_bool_param(&mut cinfo, JBOOLEAN_OPTIMIZE_SCANS, 1);
-        }
 
         jpeg_start_compress(&mut cinfo, 1);
 

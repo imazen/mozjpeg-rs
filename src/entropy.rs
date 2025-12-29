@@ -626,30 +626,13 @@ impl<'a, W: Write> ProgressiveEncoder<'a, W> {
                 self.correction_bits.truncate(br_start);
                 run = 0;
             } else {
-                // Zero coefficient - increment run
+                // Zero coefficient - just increment run.
+                // ZRL will be emitted when/if we find a newly-nonzero coefficient.
+                // Trailing zeros (after the last newly-nonzero) fold into EOBRUN.
+                // This matches C mozjpeg's behavior where ZRL is only emitted
+                // when cabsvalue <= EOBPTR (i.e., we're still before/at the last
+                // newly-nonzero coefficient).
                 run += 1;
-
-                // If run reaches 16, emit ZRL immediately with correction bits.
-                if run == 16 {
-                    // Flush EOBRUN first if needed (with only BE bits)
-                    if self.eobrun > 0 {
-                        self.flush_eobrun_be_bits(ac_table, br_start)?;
-                        let br_bits: Vec<u32> = self.correction_bits[br_start..].to_vec();
-                        self.correction_bits.clear();
-                        self.correction_bits.extend(br_bits);
-                        br_start = 0;
-                    }
-
-                    let (code, size) = ac_table.get_code(0xF0);
-                    self.writer.put_bits(code, size)?;
-
-                    // Output correction bits accumulated so far in this block
-                    for &bit in &self.correction_bits[br_start..] {
-                        self.writer.put_bits(bit, 1)?;
-                    }
-                    self.correction_bits.truncate(br_start);
-                    run = 0;
-                }
             }
         }
 
@@ -959,18 +942,10 @@ impl ProgressiveSymbolCounter {
                 run = 0;
                 br = 0; // Correction bits flushed with the symbol
             } else {
-                // Zero coefficient - increment run
+                // Zero coefficient - just increment run.
+                // ZRL will be counted when/if we find a newly-nonzero coefficient.
+                // Trailing zeros fold into EOBRUN, matching C mozjpeg's behavior.
                 run += 1;
-
-                // Emit ZRL incrementally when run reaches 16
-                if run == 16 {
-                    if self.eobrun > 0 {
-                        self.flush_eobrun_count(ac_counter);
-                    }
-                    ac_counter.count(0xF0); // ZRL
-                    run = 0;
-                    br = 0; // Correction bits flushed with ZRL
-                }
             }
         }
 
