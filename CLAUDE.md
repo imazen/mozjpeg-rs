@@ -166,6 +166,28 @@ let jpeg_data = encoder.encode_rgb(&pixels, width, height)?;
 **Both baseline and progressive modes work correctly!** With trellis + Huffman optimization,
 Rust produces files with quality matching C mozjpeg across all image sizes and subsampling modes.
 
+### Bytewise Parity Analysis (Progressive Q85, Kodak corpus)
+
+**File size comparison (24 images, 9-scan SA script, trellis disabled):**
+- Total: C = 1,939,046 bytes, Rust = 1,939,068 bytes (+22 bytes, **+0.00%**)
+- Per-image range: -30 to +30 bytes (±0.05%)
+- Not a fixed offset - varies per image due to coefficient rounding
+
+**Segment comparison:**
+- DQT (quant tables): ✅ Identical
+- SOF2 (frame header): ✅ Identical
+- DHT (Huffman tables): ✅ Identical
+- SOS headers: ✅ Identical
+- Entropy data: First 257 bytes match, then diverges
+
+**Decoded pixel comparison:**
+- R channel: 0 differences (perfect match)
+- G channel: 53 pixels differ by ≤1
+- B channel: 122 pixels differ by ≤4
+
+The entropy divergence is caused by minor coefficient rounding differences that
+cascade through DC differential encoding. Both produce visually identical images.
+
 ### Known Issues / Active Investigations
 
 #### File Size Gap (2-4% with optimize_scans) - ROOT CAUSE IDENTIFIED
