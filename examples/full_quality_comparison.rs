@@ -280,7 +280,11 @@ where
     F2: Fn(&[u8], u32, u32, u8) -> Vec<u8>,
 {
     println!("\n=== {} ===", mode_name);
-    println!("Processing {} images × {} qualities...\n", images.len(), qualities.len());
+    println!(
+        "Processing {} images × {} qualities...\n",
+        images.len(),
+        qualities.len()
+    );
 
     let metrics = MetricConfig::perceptual();
     let config = EvalConfig::builder()
@@ -428,19 +432,37 @@ fn main() {
 
     // 20 quality levels spread across the range
     let qualities: Vec<u8> = vec![
-        30, 35, 40, 45, 50, 55, 60, 65, 70, 75, 78, 80, 83, 85, 88, 90, 92, 94, 96, 98
+        30, 35, 40, 45, 50, 55, 60, 65, 70, 75, 78, 80, 83, 85, 88, 90, 92, 94, 96, 98,
     ];
 
     println!("Quality levels: {:?}\n", qualities);
 
     // Run all three modes
-    let baseline = run_mode(&images, &qualities, encode_rust_baseline, encode_c_baseline, "BASELINE");
+    let baseline = run_mode(
+        &images,
+        &qualities,
+        encode_rust_baseline,
+        encode_c_baseline,
+        "BASELINE",
+    );
     print_results(&baseline, "Baseline");
 
-    let progressive = run_mode(&images, &qualities, encode_rust_progressive, encode_c_progressive, "PROGRESSIVE (optimize_scans=false)");
+    let progressive = run_mode(
+        &images,
+        &qualities,
+        encode_rust_progressive,
+        encode_c_progressive,
+        "PROGRESSIVE (optimize_scans=false)",
+    );
     print_results(&progressive, "Progressive");
 
-    let max_comp = run_mode(&images, &qualities, encode_rust_max_compression, encode_c_max_compression, "MAX COMPRESSION (optimize_scans=true)");
+    let max_comp = run_mode(
+        &images,
+        &qualities,
+        encode_rust_max_compression,
+        encode_c_max_compression,
+        "MAX COMPRESSION (optimize_scans=true)",
+    );
     print_results(&max_comp, "Max Compression");
 
     // Summary

@@ -84,6 +84,45 @@ pub fn trellis_quantize_block(
     accumulated_zero_dist[0] = 0.0;
     accumulated_cost[0] = 0.0;
 
+    // ===== Speed Optimization: Adaptive Search Limiting =====
+    //
+    // Trellis quantization has O(n²) complexity due to the predecessor search.
+    // For high-entropy blocks (many non-zero coefficients at high quality),
+    // this becomes slow. We detect such blocks and limit the search.
+    //
+    // Only significant for Q80-100 on noisy images; at lower quality most
+    // blocks have few non-zero coefficients anyway.
+    let (max_lookback, max_candidates) = if config.speed_level > 0 {
+        // Count non-zero coefficients to determine block complexity
+        let mut nonzero_count = 0;
+        for i in 1..DCTSIZE2 {
+            let z = JPEG_NATURAL_ORDER[i];
+            let x = src[z].abs();
+            let q = 8 * qtable[z] as i32;
+            if (x + q / 2) / q > 0 {
+                nonzero_count += 1;
+            }
+        }
+
+        // Threshold decreases as level increases (more blocks affected)
+        // Level 1: threshold=58, Level 7: threshold=40, Level 10: threshold=31
+        let threshold = 61 - (config.speed_level as i32) * 3;
+
+        if nonzero_count > threshold {
+            // Lookback limit: decreases as level increases
+            // Level 1: 24, Level 7: 12, Level 10: 6
+            let lookback = (26 - (config.speed_level as usize) * 2).max(4);
+            // Candidate limit: decreases as level increases
+            // Level 1: 8, Level 7: 5, Level 10: 3
+            let candidates = (9 - ((config.speed_level as usize) + 1) / 2).max(2);
+            (lookback, candidates)
+        } else {
+            (63, 16) // Full search
+        }
+    } else {
+        (63, 16) // Full search when speed_level=0
+    };
+
     // Process AC coefficients in zigzag order (positions 1 to 63)
     for i in 1..DCTSIZE2 {
         let z = JPEG_NATURAL_ORDER[i];
@@ -111,7 +150,7 @@ pub fn trellis_quantize_block(
 
         // Generate candidate quantized values
         // Candidates are: 1, 3, 7, 15, ..., (2^k - 1), and the rounded value
-        let num_candidates = jpeg_nbits(qval as i16) as usize;
+        let num_candidates = (jpeg_nbits(qval as i16) as usize).min(max_candidates);
         let mut candidates = [(0i32, 0u8, 0.0f32); 16]; // (value, bits, distortion)
 
         for k in 0..num_candidates {
@@ -130,7 +169,9 @@ pub fn trellis_quantize_block(
         accumulated_cost[i] = f32::MAX;
 
         // Try starting a run from each valid previous position
-        for j in 0..i {
+        // Limit lookback for high-entropy blocks (speed optimization)
+        let j_start = i.saturating_sub(max_lookback);
+        for j in j_start..i {
             let zz = JPEG_NATURAL_ORDER[j];
             // j=0 is always valid (after DC), otherwise need non-zero coef
             if j != 0 && quantized[zz] == 0 {
@@ -288,6 +329,29 @@ pub fn trellis_quantize_block_with_eob_info(
     accumulated_zero_dist[ss - 1] = 0.0;
     accumulated_cost[ss - 1] = 0.0;
 
+    // Speed optimization: detect high-entropy blocks and limit search
+    let (max_lookback, max_candidates) = if config.speed_level > 0 {
+        let mut nonzero_count = 0;
+        for i in ss..=se {
+            let z = JPEG_NATURAL_ORDER[i];
+            let x = src[z].abs();
+            let q = 8 * qtable[z] as i32;
+            if (x + q / 2) / q > 0 {
+                nonzero_count += 1;
+            }
+        }
+        let threshold = 61 - (config.speed_level as i32) * 3;
+        if nonzero_count > threshold {
+            let lookback = (26 - (config.speed_level as usize) * 2).max(4);
+            let candidates = (9 - ((config.speed_level as usize) + 1) / 2).max(2);
+            (lookback, candidates)
+        } else {
+            (63, 16)
+        }
+    } else {
+        (63, 16)
+    };
+
     // Process AC coefficients in zigzag order
     for i in ss..=se {
         let z = JPEG_NATURAL_ORDER[i];
@@ -312,7 +376,7 @@ pub fn trellis_quantize_block_with_eob_info(
         let qval = qval.min(1023);
 
         // Generate candidate quantized values
-        let num_candidates = jpeg_nbits(qval as i16) as usize;
+        let num_candidates = (jpeg_nbits(qval as i16) as usize).min(max_candidates);
         let mut candidates = [(0i32, 0u8, 0.0f32); 16];
 
         for k in 0..num_candidates {
@@ -329,7 +393,9 @@ pub fn trellis_quantize_block_with_eob_info(
         // Find optimal choice using dynamic programming
         accumulated_cost[i] = f32::MAX;
 
-        for j in (ss - 1)..i {
+        // Limit lookback for high-entropy blocks
+        let j_start = i.saturating_sub(max_lookback).max(ss - 1);
+        for j in j_start..i {
             let zz = JPEG_NATURAL_ORDER[j];
             if j != ss - 1 && quantized[zz] == 0 {
                 continue;
