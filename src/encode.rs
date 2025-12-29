@@ -521,9 +521,9 @@ impl Encoder {
         let luma_qtable_zz = natural_to_zigzag(&luma_qtable.values);
         marker_writer.write_dqt(0, &luma_qtable_zz, false)?;
 
-        // SOF (baseline for grayscale - progressive would need multi-scan support)
+        // SOF (baseline or progressive)
         marker_writer.write_sof(
-            false, // Use baseline for grayscale (simpler)
+            self.progressive,
             8,
             height as u16,
             width as u16,
@@ -535,20 +535,184 @@ impl Encoder {
             marker_writer.write_dri(self.restart_interval)?;
         }
 
-        // DHT (only luma tables for grayscale)
-        if !self.optimize_huffman {
+        // DHT (only luma tables for grayscale) - written later for progressive
+        if !self.progressive && !self.optimize_huffman {
             marker_writer
                 .write_dht_multiple(&[(0, false, &dc_luma_huff), (0, true, &ac_luma_huff)])?;
         }
 
-        // Grayscale uses baseline encoding
         let mcu_rows = mcu_height / DCTSIZE;
         let mcu_cols = mcu_width / DCTSIZE;
         let num_blocks = mcu_rows
             .checked_mul(mcu_cols)
             .ok_or(Error::AllocationFailed)?;
 
-        if self.optimize_huffman {
+        if self.progressive {
+            // Progressive mode: collect all blocks, then encode multiple scans
+            let mut y_blocks = try_alloc_vec_array::<i16, DCTSIZE2>(num_blocks)?;
+            let mut dct_block = [0i16; DCTSIZE2];
+
+            // Optionally collect raw DCT for DC trellis
+            let dc_trellis_enabled = self.trellis.enabled && self.trellis.dc_enabled;
+            let mut y_raw_dct = if dc_trellis_enabled {
+                Some(try_alloc_vec_array::<i32, DCTSIZE2>(num_blocks)?)
+            } else {
+                None
+            };
+
+            // Collect all blocks
+            for mcu_row in 0..mcu_rows {
+                for mcu_col in 0..mcu_cols {
+                    let block_idx = mcu_row * mcu_cols + mcu_col;
+                    self.process_block_to_storage_with_raw(
+                        &y_mcu,
+                        mcu_width,
+                        mcu_row,
+                        mcu_col,
+                        &luma_qtable.values,
+                        &ac_luma_derived,
+                        &mut y_blocks[block_idx],
+                        &mut dct_block,
+                        y_raw_dct.as_mut().map(|v| v[block_idx].as_mut_slice()),
+                    )?;
+                }
+            }
+
+            // Run DC trellis optimization if enabled
+            if dc_trellis_enabled {
+                if let Some(ref y_raw) = y_raw_dct {
+                    run_dc_trellis_by_row(
+                        y_raw,
+                        &mut y_blocks,
+                        luma_qtable.values[0],
+                        &dc_luma_derived,
+                        self.trellis.lambda_log_scale1,
+                        self.trellis.lambda_log_scale2,
+                        mcu_rows,
+                        mcu_cols,
+                        mcu_cols,
+                        1,
+                        1,
+                    );
+                }
+            }
+
+            // Generate progressive scan script for grayscale (1 component)
+            let scans = generate_mozjpeg_max_compression_scans(1);
+
+            // Build optimized Huffman tables
+            let mut dc_freq = FrequencyCounter::new();
+            let mut dc_counter = ProgressiveSymbolCounter::new();
+            for scan in &scans {
+                let is_dc_first_scan = scan.ss == 0 && scan.se == 0 && scan.ah == 0;
+                if is_dc_first_scan {
+                    // Count DC symbols using progressive counter
+                    for block in &y_blocks {
+                        dc_counter.count_dc_first(block, 0, scan.al, &mut dc_freq);
+                    }
+                }
+            }
+
+            let opt_dc_huff = dc_freq.generate_table()?;
+            let opt_dc_derived = DerivedTable::from_huff_table(&opt_dc_huff, true)?;
+
+            // Write DC Huffman table upfront
+            marker_writer.write_dht_multiple(&[(0, false, &opt_dc_huff)])?;
+
+            // Encode each scan
+            let output = marker_writer.into_inner();
+            let mut bit_writer = BitWriter::new(output);
+
+            for scan in &scans {
+                let is_dc_scan = scan.ss == 0 && scan.se == 0;
+
+                if is_dc_scan {
+                    // DC scan
+                    marker_writer = MarkerWriter::new(bit_writer.into_inner());
+                    marker_writer.write_sos(scan, &components)?;
+                    bit_writer = BitWriter::new(marker_writer.into_inner());
+
+                    let mut prog_encoder = ProgressiveEncoder::new(&mut bit_writer);
+
+                    if scan.ah == 0 {
+                        // DC first scan
+                        for block in &y_blocks {
+                            prog_encoder.encode_dc_first(block, 0, &opt_dc_derived, scan.al)?;
+                        }
+                    } else {
+                        // DC refinement scan
+                        for block in &y_blocks {
+                            prog_encoder.encode_dc_refine(block, scan.al)?;
+                        }
+                    }
+
+                    prog_encoder.finish_scan(None)?;
+                } else {
+                    // AC scan - generate per-scan Huffman table
+                    let mut ac_freq = FrequencyCounter::new();
+                    let mut ac_counter = ProgressiveSymbolCounter::new();
+
+                    for block in &y_blocks {
+                        if scan.ah == 0 {
+                            ac_counter.count_ac_first(
+                                block,
+                                scan.ss,
+                                scan.se,
+                                scan.al,
+                                &mut ac_freq,
+                            );
+                        } else {
+                            ac_counter.count_ac_refine(
+                                block,
+                                scan.ss,
+                                scan.se,
+                                scan.ah,
+                                scan.al,
+                                &mut ac_freq,
+                            );
+                        }
+                    }
+                    ac_counter.finish_scan(Some(&mut ac_freq));
+
+                    let opt_ac_huff = ac_freq.generate_table()?;
+                    let opt_ac_derived = DerivedTable::from_huff_table(&opt_ac_huff, false)?;
+
+                    // Write AC Huffman table and SOS
+                    marker_writer = MarkerWriter::new(bit_writer.into_inner());
+                    marker_writer.write_dht_multiple(&[(0, true, &opt_ac_huff)])?;
+                    marker_writer.write_sos(scan, &components)?;
+                    bit_writer = BitWriter::new(marker_writer.into_inner());
+
+                    let mut prog_encoder = ProgressiveEncoder::new(&mut bit_writer);
+
+                    for block in &y_blocks {
+                        if scan.ah == 0 {
+                            prog_encoder.encode_ac_first(
+                                block,
+                                scan.ss,
+                                scan.se,
+                                scan.al,
+                                &opt_ac_derived,
+                            )?;
+                        } else {
+                            prog_encoder.encode_ac_refine(
+                                block,
+                                scan.ss,
+                                scan.se,
+                                scan.ah,
+                                scan.al,
+                                &opt_ac_derived,
+                            )?;
+                        }
+                    }
+
+                    prog_encoder.finish_scan(Some(&opt_ac_derived))?;
+                }
+            }
+
+            let mut output = bit_writer.into_inner();
+            output.write_all(&[0xFF, 0xD9])?; // EOI
+        } else if self.optimize_huffman {
             // 2-pass: collect blocks, count frequencies, then encode
             let mut y_blocks = try_alloc_vec_array::<i16, DCTSIZE2>(num_blocks)?;
             let mut dct_block = [0i16; DCTSIZE2];

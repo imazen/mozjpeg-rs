@@ -147,7 +147,7 @@ mozjpeg-rs aims for compatibility with C mozjpeg but has some differences:
 | **optimize_scans** | Per-scan Huffman tables | Per-scan Huffman tables |
 | **Trellis EOB optimization** | Not implemented | Available (rarely used) |
 | **Arithmetic coding** | Not implemented | Available (rarely used) |
-| **Grayscale progressive** | Not implemented | Available |
+| **Grayscale progressive** | Yes | Yes |
 
 ### Why the file size gap at high quality?
 

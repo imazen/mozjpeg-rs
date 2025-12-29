@@ -16,18 +16,13 @@ fn create_gradient_image(width: usize, height: usize) -> Vec<u8> {
     rgb
 }
 
-/// Issue: Progressive grayscale encoding not supported.
+/// Test progressive grayscale encoding.
 ///
 /// When `.progressive(true)` is set for grayscale encoding, the output
-/// should contain SOF2 marker (0xFFC2) for progressive DCT. Currently,
-/// it always produces SOF0 (baseline) regardless of the progressive setting.
+/// should contain SOF2 marker (0xFFC2) for progressive DCT.
 ///
-/// Expected: SOF2 marker present
-/// Actual: SOF0 marker (baseline)
-///
-/// See: https://github.com/imazen/mozjpeg-oxide/issues/1
+/// This was previously Issue #1 - now fixed and this test validates the feature.
 #[test]
-#[ignore = "mozjpeg-oxide doesn't support progressive grayscale - issue #1"]
 fn test_progressive_grayscale_encoding() {
     let width = 64usize;
     let height = 64usize;

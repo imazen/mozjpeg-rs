@@ -141,21 +141,23 @@ let jpeg_data = encoder.encode_rgb(&pixels, width, height)?;
 
 ### Implemented Features
 - **Baseline JPEG encoding** - Standard sequential DCT
-- **Progressive JPEG encoding** - Multi-scan with DC first, then AC bands
+- **Progressive JPEG encoding** - Multi-scan with DC first, then AC bands (RGB and grayscale)
 - **Trellis quantization** - Rate-distortion optimized AC + DC quantization (mozjpeg core feature)
+- **Trellis speed optimization** - Adaptive search limiting for high-entropy blocks (Q80-100)
 - **DC trellis optimization** - Dynamic programming across blocks for optimal DC encoding
 - **Huffman table optimization** - 2-pass encoding for optimal tables
 - **Chroma subsampling** - 4:4:4, 4:2:2, 4:2:0 modes
 - **Quality presets** - `max_compression()` and `fastest()`
 - **Overshoot deringing** - Reduce ringing artifacts at sharp edges (see below)
 - **Optimize scans** - Try multiple scan configurations for progressive mode, pick smallest
+- **Grayscale progressive** - Full progressive JPEG support for grayscale images
 
 ### Remaining Work
 - **Performance optimization (SIMD)** - DCT and color conversion are 7.5x slower than C
-- EOB optimization integration (`trellis_eob_opt` - disabled by default in C mozjpeg)
+- EOB cross-block integration (`trellis_eob_opt` - disabled by default in C mozjpeg)
 - Arithmetic coding (optional, rarely used)
 
-### Recent Fixes
+### Recent Fixes (Dec 2024)
 - **AC refinement ZRL encoding** (Dec 2024): Fixed bug where ZRL (zero-run-length) symbols
   weren't emitted for previously-coded coefficients, causing decoder errors on 8/24 images.
   Now uses 9-scan JCP_MAX_COMPRESSION script with full successive approximation.
