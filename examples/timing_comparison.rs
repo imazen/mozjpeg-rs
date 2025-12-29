@@ -63,8 +63,7 @@ fn encode_with_c(rgb: &[u8], width: u32, height: u32, quality: u8, trellis: bool
 
         let row_stride = width as usize * 3;
         while cinfo.next_scanline < cinfo.image_height {
-            let row_ptr =
-                rgb.as_ptr().add(cinfo.next_scanline as usize * row_stride) as *const u8;
+            let row_ptr = rgb.as_ptr().add(cinfo.next_scanline as usize * row_stride) as *const u8;
             jpeg_write_scanlines(&mut cinfo, &row_ptr as *const *const u8, 1);
         }
 

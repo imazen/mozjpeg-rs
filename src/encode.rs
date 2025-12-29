@@ -123,6 +123,10 @@ pub struct Encoder {
     custom_markers: Vec<(u8, Vec<u8>)>,
     /// SIMD operations dispatch (detected once at construction)
     simd: SimdOps,
+    /// Smoothing factor (0-100, 0 = disabled)
+    /// Applies a weighted average filter to reduce fine-scale noise.
+    /// Useful for converting dithered images (like GIFs) to JPEG.
+    smoothing: u8,
 }
 
 impl Default for Encoder {
@@ -161,6 +165,7 @@ impl Encoder {
             icc_profile: None,
             custom_markers: Vec::new(),
             simd: SimdOps::detect(),
+            smoothing: 0,
         }
     }
 
@@ -190,6 +195,7 @@ impl Encoder {
             icc_profile: None,
             custom_markers: Vec::new(),
             simd: SimdOps::detect(),
+            smoothing: 0,
         }
     }
 
@@ -216,6 +222,7 @@ impl Encoder {
             icc_profile: None,
             custom_markers: Vec::new(),
             simd: SimdOps::detect(),
+            smoothing: 0,
         }
     }
 
@@ -285,6 +292,30 @@ impl Encoder {
     /// Only has effect when progressive mode is enabled.
     pub fn optimize_scans(mut self, enable: bool) -> Self {
         self.optimize_scans = enable;
+        self
+    }
+
+    /// Set input smoothing factor (0-100).
+    ///
+    /// Applies a weighted average filter to reduce fine-scale noise in the
+    /// input image before encoding. This is particularly useful for converting
+    /// dithered images (like GIFs) to JPEG.
+    ///
+    /// - 0 = disabled (default)
+    /// - 10-50 = recommended for dithered images
+    /// - Higher values = more smoothing (may blur the image)
+    ///
+    /// # Example
+    /// ```
+    /// use mozjpeg_rs::Encoder;
+    ///
+    /// // Convert a dithered GIF to JPEG with smoothing
+    /// let encoder = Encoder::new()
+    ///     .quality(85)
+    ///     .smoothing(30);
+    /// ```
+    pub fn smoothing(mut self, factor: u8) -> Self {
+        self.smoothing = factor.min(100);
         self
     }
 
@@ -458,8 +489,20 @@ impl Encoder {
             });
         }
 
+        // Apply smoothing if enabled
+        let rgb_data = if self.smoothing > 0 {
+            std::borrow::Cow::Owned(crate::smooth::smooth_rgb(
+                rgb_data,
+                width,
+                height,
+                self.smoothing,
+            ))
+        } else {
+            std::borrow::Cow::Borrowed(rgb_data)
+        };
+
         let mut output = Vec::new();
-        self.encode_rgb_to_writer(rgb_data, width, height, &mut output)?;
+        self.encode_rgb_to_writer(&rgb_data, width, height, &mut output)?;
         Ok(output)
     }
 
@@ -490,8 +533,20 @@ impl Encoder {
             });
         }
 
+        // Apply smoothing if enabled
+        let gray_data = if self.smoothing > 0 {
+            std::borrow::Cow::Owned(crate::smooth::smooth_grayscale(
+                gray_data,
+                width,
+                height,
+                self.smoothing,
+            ))
+        } else {
+            std::borrow::Cow::Borrowed(gray_data)
+        };
+
         let mut output = Vec::new();
-        self.encode_gray_to_writer(gray_data, width, height, &mut output)?;
+        self.encode_gray_to_writer(&gray_data, width, height, &mut output)?;
         Ok(output)
     }
 

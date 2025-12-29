@@ -183,6 +183,11 @@ pub mod quant;
 #[allow(dead_code)]
 pub mod sample;
 
+/// Input smoothing filter (internal).
+#[doc(hidden)]
+#[allow(dead_code)]
+pub mod smooth;
+
 /// Scan optimization (internal).
 #[doc(hidden)]
 #[allow(dead_code)]

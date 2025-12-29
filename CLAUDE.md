@@ -151,10 +151,15 @@ let jpeg_data = encoder.encode_rgb(&pixels, width, height)?;
 - **Overshoot deringing** - Reduce ringing artifacts at sharp edges (see below)
 - **Optimize scans** - Try multiple scan configurations for progressive mode, pick smallest
 - **Grayscale progressive** - Full progressive JPEG support for grayscale images
+- **Smoothing filter** - Noise reduction for dithered images (`.smoothing(30)`)
 
 ### Remaining Work
 - **Performance optimization (SIMD)** - DCT and color conversion are 7.5x slower than C
 - Arithmetic coding (optional, rarely used)
+
+### Not Implemented (Poor Tradeoff)
+- **Multipass trellis** (`use_scans_in_trellis`) - C mozjpeg benchmarks show +0.52% larger files,
+  imperceptible quality improvement (-0.05 butteraugli), 20% slower encoding. Not worth implementing.
 
 ### Optional Features (Disabled by Default)
 - **EOB cross-block optimization** (`TrellisConfig::eob_optimization(true)`) - Experimental

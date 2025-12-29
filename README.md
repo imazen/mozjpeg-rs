@@ -135,7 +135,8 @@ All combinations of settings are supported and tested:
 | **Other** | | | |
 | ├─ Deringing | ✅ | ✅ | Reduce overshoot artifacts |
 | ├─ Grayscale | ✅ | ✅ | Single-component encoding |
-| └─ EOB optimization | ✅ | ✅ | Cross-block EOB runs (opt-in) |
+| ├─ EOB optimization | ✅ | ✅ | Cross-block EOB runs (opt-in) |
+| └─ Smoothing | ✅ | ✅ | Noise reduction filter (for dithered images) |
 
 **Presets:**
 - `Encoder::new()` - Trellis (AC+DC) + Huffman optimization + Deringing
@@ -207,8 +208,22 @@ mozjpeg-rs aims for compatibility with C mozjpeg but has some differences:
 | **Progressive scan script** | Simple 4-scan (or optimize_scans) | 9-scan with successive approximation |
 | **optimize_scans** | Per-scan Huffman tables | Per-scan Huffman tables |
 | **Trellis EOB optimization** | Available (opt-in) | Available (rarely used) |
+| **Smoothing filter** | Available | Available |
+| **Multipass trellis** | Not implemented (poor tradeoff) | Available |
 | **Arithmetic coding** | Not implemented | Available (rarely used) |
 | **Grayscale progressive** | Yes | Yes |
+
+### Why multipass (`use_scans_in_trellis`) is not implemented
+
+C mozjpeg's multipass option makes trellis quantization "scan-aware" for progressive encoding by optimizing low and high frequency AC coefficients separately. Benchmarks on the Kodak corpus (Q85, progressive) show this is a poor tradeoff:
+
+| Metric | Without Multipass | With Multipass | Difference |
+|--------|-------------------|----------------|------------|
+| File size | 1,760 KB | 1,770 KB | **+0.52% larger** |
+| Quality (butteraugli) | 2.59 | 2.54 | -0.05 (imperceptible) |
+| Encoding time | ~7ms | ~8.5ms | **~20% slower** |
+
+Multipass produces larger files, is slower, and provides no perceptible quality improvement.
 
 ### Why the file size gap at high quality?
 
