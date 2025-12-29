@@ -114,6 +114,34 @@ let jpeg = Encoder::new()
 - **Chroma subsampling** - 4:4:4, 4:2:2, 4:2:0 modes
 - **Safe Rust** - `#![deny(unsafe_code)]` with exceptions only for SIMD intrinsics
 
+### Encoder Settings Matrix
+
+All combinations of settings are supported and tested:
+
+| Setting | Baseline | Progressive | Notes |
+|---------|:--------:|:-----------:|-------|
+| **Subsampling** | | | |
+| ├─ 4:4:4 | ✅ | ✅ | No chroma subsampling |
+| ├─ 4:2:2 | ✅ | ✅ | Horizontal subsampling |
+| └─ 4:2:0 | ✅ | ✅ | Full subsampling (default) |
+| **Trellis Quantization** | | | |
+| ├─ AC trellis | ✅ | ✅ | Rate-distortion optimized AC coefficients |
+| └─ DC trellis | ✅ | ✅ | Cross-block DC optimization |
+| **Huffman** | | | |
+| ├─ Default tables | ✅ | ✅ | Fast, slightly larger files |
+| └─ Optimized tables | ✅ | ✅ | 2-pass, smaller files |
+| **Progressive-only** | | | |
+| └─ optimize_scans | ❌ | ✅ | Per-scan Huffman tables |
+| **Other** | | | |
+| ├─ Deringing | ✅ | ✅ | Reduce overshoot artifacts |
+| ├─ Grayscale | ✅ | ✅ | Single-component encoding |
+| └─ EOB optimization | ✅ | ✅ | Cross-block EOB runs (opt-in) |
+
+**Presets:**
+- `Encoder::new()` - Trellis (AC+DC) + Huffman optimization + Deringing
+- `Encoder::max_compression()` - Above + Progressive + optimize_scans
+- `Encoder::fastest()` - No optimizations (libjpeg-turbo compatible)
+
 ## Performance
 
 Benchmarked on 512x768 image, 20 iterations, release mode:
