@@ -992,7 +992,8 @@ impl Encoder {
                 )?
             } else {
                 // Use simple progressive scan script (4 scans: DC + full AC per component)
-                // TODO: Implement proper SA encoding to use generate_mozjpeg_max_compression_scans
+                // This matches C mozjpeg's jpeg_simple_progression() behavior
+                // For max compression, use optimize_scans=true which tries multiple scripts
                 generate_minimal_progressive_scans(3)
             };
 

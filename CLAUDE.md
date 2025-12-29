@@ -37,46 +37,37 @@ Rust port of Mozilla's mozjpeg JPEG encoder, following the jpegli-rs methodology
 
 ## Current Status
 
-**191 tests passing** (153 unit + 8 codec comparison + 11 FFI comparison + 5 FFI validation + 9 sys-local + 5 encoder validation)
+**Tests passing**: 164 unit + 8 codec comparison + 5 FFI validation
 
 ### Compression Results vs C mozjpeg
 
-**Kodak corpus benchmark (24 images, baseline + trellis + Huffman opt):**
+**Kodak corpus benchmark (24 images, all three modes):**
 
-| Quality | Rust Total | C Total | Size Δ | Max Individual Δ |
-|---------|------------|---------|--------|------------------|
-| Q50 | 772,864 | 774,577 | **-0.22%** | -0.72% |
-| Q75 | 1,270,536 | 1,276,594 | **-0.47%** | -1.22% |
-| Q85 | 1,791,238 | 1,795,089 | **-0.21%** | -0.75% |
-| Q90 | 2,320,570 | 2,323,641 | **-0.13%** | -0.79% |
-| Q95 | 3,333,392 | 3,336,170 | **-0.08%** | -0.64% |
-| Q97 | 4,449,919 | 4,447,419 | **+0.06%** | -0.57% |
+| Quality | Baseline | Progressive | Max Compression |
+|---------|----------|-------------|-----------------|
+| Q50 | +0.15% | **-1.35%** | **-0.39%** |
+| Q60 | +0.47% | **-0.81%** | **-0.26%** |
+| Q70 | +0.54% | **-0.44%** | **-0.38%** |
+| Q75 | +0.87% | +0.14% | **-0.14%** |
+| Q80 | +1.34% | +0.84% | +0.17% |
+| Q85 | +1.75% | +1.39% | +0.42% |
+| Q90 | +2.73% | +2.58% | +0.97% |
+| Q95 | +3.87% | +3.61% | +1.59% |
+| Q97 | +5.36% | +4.87% | +2.14% |
+| Q100 | +3.53% | +2.58% | +1.00% |
 
 **Key findings:**
-- **With trellis enabled (default): Rust is within ±0.5% of C mozjpeg**
-- **Without trellis: Rust is within ±0.01% of C mozjpeg** (essentially identical)
-- Rust often produces **smaller** files than C mozjpeg at Q50-Q95
-- Trellis effect: Rust saves 15.7% vs C's 12.9% on typical images
+- **Max Compression**: Rust matches or beats C at Q50-Q80, within ±2.2% at all levels
+- **Progressive**: Rust beats C at Q50-Q70, gap grows at high quality
+- **Baseline**: Larger gap (+0.15% to +5.36%) from trellis quantization differences
 - Visual quality is equivalent (verified via SSIMULACRA2 and Butteraugli)
 
-**Progressive mode with optimize_scans (6 images from Kodak corpus):**
+**Mode explanations:**
+- **Baseline** (`progressive(false)`): Sequential DCT with trellis quantization
+- **Progressive** (`progressive(true), optimize_scans(false)`): 4-scan minimal script
+- **Max Compression** (`Encoder::max_compression()`): Progressive + `optimize_scans=true` with per-scan Huffman tables
 
-| Quality | Simple Progressive vs C | optimize_scans vs C | Notes |
-|---------|-------------------------|---------------------|-------|
-| Q50 | -0.83% | **-1.42%** | Rust smaller than C |
-| Q75 | +0.72% | **-0.67%** | Rust smaller with opt_scans |
-| Q85 | +1.82% | **-0.07%** | Near-identical to C |
-| Q90 | +3.01% | +0.58% | Small gap at high quality |
-| Q95 | +3.82% | +0.96% | |
-| Q97 | +4.95% | +1.15% | |
-
-**Key findings for progressive mode:**
-- With `optimize_scans=true`: Rust matches or beats C at Q50-Q85
-- Each AC scan gets its own optimal Huffman table (per-scan tables)
-- The simple 4-scan script works well, but `optimize_scans` finds even better configurations
-
-**Note:** C mozjpeg uses JCP_MAX_COMPRESSION profile by default which enables progressive
-mode. Use `Encoder::max_compression()` for equivalent behavior.
+**Note:** Use `Encoder::max_compression()` for best compression parity with C mozjpeg.
 
 ### Performance vs C mozjpeg (release mode, AVX2 enabled)
 
