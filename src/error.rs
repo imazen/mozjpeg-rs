@@ -128,3 +128,103 @@ impl From<std::collections::TryReserveError> for Error {
         Error::AllocationFailed
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_error_display() {
+        // Test that all error variants format correctly
+        let errors = [
+            (
+                Error::InvalidDimensions {
+                    width: 0,
+                    height: 100,
+                },
+                "Invalid image dimensions: 0x100",
+            ),
+            (
+                Error::BufferSizeMismatch {
+                    expected: 1000,
+                    actual: 500,
+                },
+                "Buffer size mismatch: expected 1000, got 500",
+            ),
+            (
+                Error::InvalidQuality(0),
+                "Invalid quality value: 0 (must be 1-100)",
+            ),
+            (
+                Error::InvalidQuantTableIndex(5),
+                "Invalid quantization table index: 5",
+            ),
+            (
+                Error::InvalidComponentIndex(4),
+                "Invalid component index: 4",
+            ),
+            (
+                Error::InvalidHuffmanTableIndex(8),
+                "Invalid Huffman table index: 8",
+            ),
+            (
+                Error::InvalidSamplingFactor { h: 5, v: 3 },
+                "Invalid sampling factor: 5x3",
+            ),
+            (
+                Error::InvalidScanSpec {
+                    reason: "test reason",
+                },
+                "Invalid scan specification: test reason",
+            ),
+            (
+                Error::InvalidHuffmanTable,
+                "Invalid Huffman table structure",
+            ),
+            (
+                Error::HuffmanCodeLengthOverflow,
+                "Huffman code length overflow (exceeds 16 bits)",
+            ),
+            (Error::UnsupportedColorSpace, "Unsupported color space"),
+            (
+                Error::UnsupportedFeature("arithmetic coding"),
+                "Unsupported feature: arithmetic coding",
+            ),
+            (
+                Error::InternalError("test error"),
+                "Internal encoder error: test error",
+            ),
+            (Error::IoError("disk full".into()), "I/O error: disk full"),
+            (Error::AllocationFailed, "Memory allocation failed"),
+        ];
+
+        for (error, expected_msg) in errors {
+            assert_eq!(error.to_string(), expected_msg);
+        }
+    }
+
+    #[test]
+    fn test_error_is_error_trait() {
+        let error: &dyn std::error::Error = &Error::InvalidQuality(0);
+        // Just verify it implements Error trait
+        let _ = error.to_string();
+    }
+
+    #[test]
+    fn test_from_io_error() {
+        let io_error = std::io::Error::new(std::io::ErrorKind::NotFound, "file not found");
+        let error: Error = io_error.into();
+        assert!(matches!(error, Error::IoError(_)));
+        assert!(error.to_string().contains("file not found"));
+    }
+
+    #[test]
+    fn test_error_clone_and_eq() {
+        let error1 = Error::InvalidQuality(50);
+        let error2 = error1.clone();
+        assert_eq!(error1, error2);
+
+        let error3 = Error::InvalidQuality(60);
+        assert_ne!(error1, error3);
+    }
+}

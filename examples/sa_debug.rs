@@ -36,7 +36,7 @@ fn main() {
     println!();
 
     // Encode with simple progressive (our current default)
-    let simple = Encoder::new()
+    let simple = Encoder::new(false)
         .quality(quality)
         .progressive(true)
         .optimize_huffman(true)

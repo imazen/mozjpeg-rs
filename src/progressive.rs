@@ -630,4 +630,128 @@ mod tests {
         let scans = generate_simple_progressive_scans(3);
         assert_eq!(count_scans(&scans), scans.len());
     }
+
+    #[test]
+    fn test_minimal_progressive_grayscale() {
+        let scans = generate_minimal_progressive_scans(1);
+        assert_eq!(scans.len(), 2); // DC + full AC
+        assert!(validate_scan_script(&scans, 1).is_ok());
+        assert!(is_progressive_script(&scans));
+    }
+
+    #[test]
+    fn test_minimal_progressive_color() {
+        let scans = generate_minimal_progressive_scans(3);
+        assert_eq!(scans.len(), 4); // DC + 3 full AC scans
+        assert!(validate_scan_script(&scans, 3).is_ok());
+    }
+
+    #[test]
+    fn test_dc_only_scan() {
+        let scans = generate_dc_only_scan(3);
+        assert_eq!(scans.len(), 1);
+        assert!(scans[0].is_dc_scan());
+        // DC-only is technically progressive (even with 1 scan) if it has split ranges
+        // But here it's a full DC scan, so let's just verify it's valid
+        assert!(validate_scan_script(&scans, 3).is_ok());
+    }
+
+    #[test]
+    fn test_mozjpeg_max_compression_scans() {
+        let scans = generate_mozjpeg_max_compression_scans(3);
+        assert!(validate_scan_script(&scans, 3).is_ok());
+        assert!(is_progressive_script(&scans));
+        // Should have more scans than simple progressive (uses SA)
+        assert!(scans.len() > 7);
+    }
+
+    #[test]
+    fn test_mozjpeg_max_compression_scans_grayscale() {
+        let scans = generate_mozjpeg_max_compression_scans(1);
+        assert!(validate_scan_script(&scans, 1).is_ok());
+        assert!(is_progressive_script(&scans));
+    }
+
+    #[test]
+    fn test_c_simple_progressive_scans() {
+        let scans = generate_c_simple_progressive_scans(3);
+        assert!(validate_scan_script(&scans, 3).is_ok());
+        assert!(is_progressive_script(&scans));
+    }
+
+    #[test]
+    fn test_c_simple_progressive_scans_grayscale() {
+        let scans = generate_c_simple_progressive_scans(1);
+        assert!(validate_scan_script(&scans, 1).is_ok());
+    }
+
+    #[test]
+    fn test_scan_candidates_grayscale() {
+        let candidates = generate_scan_candidates(1);
+        assert!(!candidates.is_empty());
+        // Each candidate should be a valid script
+        for script in &candidates {
+            assert!(validate_scan_script(script, 1).is_ok());
+        }
+    }
+
+    #[test]
+    fn test_scan_candidates_color() {
+        let candidates = generate_scan_candidates(3);
+        assert!(!candidates.is_empty());
+        // Each candidate should be a valid script
+        for script in &candidates {
+            assert!(validate_scan_script(script, 3).is_ok());
+        }
+    }
+
+    #[test]
+    fn test_validate_scan_script_ss_greater_than_63() {
+        let mut scan = ScanInfo::ac_scan(0, 1, 63, 0, 0);
+        scan.ss = 64; // Invalid
+        assert!(validate_scan_script(&[scan], 1).is_err());
+    }
+
+    #[test]
+    fn test_validate_scan_script_se_greater_than_63() {
+        let mut scan = ScanInfo::ac_scan(0, 1, 63, 0, 0);
+        scan.se = 64; // Invalid
+        assert!(validate_scan_script(&[scan], 1).is_err());
+    }
+
+    #[test]
+    fn test_validate_scan_script_al_too_high() {
+        let mut scan = ScanInfo::ac_scan(0, 1, 63, 0, 0);
+        scan.al = 14; // Invalid (max is 13)
+        assert!(validate_scan_script(&[scan], 1).is_err());
+    }
+
+    #[test]
+    fn test_validate_dc_scan_with_nonzero_ss() {
+        // DC scan should have ss=0, se=0
+        let mut scan = ScanInfo::dc_scan(3);
+        scan.ss = 1; // Invalid for DC scan
+        assert!(validate_scan_script(&[scan], 3).is_err());
+    }
+
+    #[test]
+    fn test_is_progressive_empty() {
+        let empty: Vec<ScanInfo> = vec![];
+        assert!(!is_progressive_script(&empty));
+    }
+
+    #[test]
+    fn test_single_partial_scan_is_progressive() {
+        // A single scan that doesn't cover all coefficients is progressive
+        let scans = vec![ScanInfo::dc_scan(3)]; // DC only (ss=0, se=0)
+                                                // DC-only scan has se=0, not 63, so it's considered progressive
+        assert!(is_progressive_script(&scans));
+    }
+
+    #[test]
+    fn test_single_full_scan_is_baseline() {
+        // A single scan covering all coefficients (0-63) is baseline
+        let scans = generate_baseline_scan(3);
+        assert!(!is_progressive_script(&scans));
+    }
 }

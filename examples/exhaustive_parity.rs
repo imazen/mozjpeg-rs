@@ -90,7 +90,7 @@ fn main() {
 }
 
 fn encode_rust(rgb: &[u8], width: u32, height: u32, quality: u8, progressive: bool, optimize_scans: bool) -> Vec<u8> {
-    Encoder::new()
+    Encoder::new(false)
         .quality(quality)
         .progressive(progressive)
         .subsampling(Subsampling::S420)

@@ -49,7 +49,7 @@ fn main() {
 
     for quality in [50, 75, 85, 90, 95, 97] {
         // Simple progressive
-        let simple = Encoder::new()
+        let simple = Encoder::new(false)
             .quality(quality)
             .progressive(true)
             .optimize_huffman(true)

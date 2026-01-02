@@ -503,4 +503,129 @@ mod tests {
         // Should be very close to 1.0 (within 1 unit)
         assert!((y_sum - one).abs() <= 1);
     }
+
+    #[test]
+    fn test_convert_rgb_to_ycbcr_simd() {
+        // Test the SIMD version of RGB to YCbCr conversion
+        // Use a size that exercises both SIMD (8-pixel chunks) and scalar paths
+        let width = 17; // Not a multiple of 8 to test scalar path
+        let height = 3;
+        let num_pixels = width * height;
+
+        let mut rgb = vec![0u8; num_pixels * 3];
+        let mut y_out = vec![0u8; num_pixels];
+        let mut cb_out = vec![0u8; num_pixels];
+        let mut cr_out = vec![0u8; num_pixels];
+
+        // Fill with various colors
+        for i in 0..num_pixels {
+            rgb[i * 3] = ((i * 7) % 256) as u8; // R
+            rgb[i * 3 + 1] = ((i * 11) % 256) as u8; // G
+            rgb[i * 3 + 2] = ((i * 13) % 256) as u8; // B
+        }
+
+        convert_rgb_to_ycbcr(&rgb, &mut y_out, &mut cb_out, &mut cr_out, width, height);
+
+        // Verify against scalar implementation
+        for i in 0..num_pixels {
+            let (y, cb, cr) = rgb_to_ycbcr(rgb[i * 3], rgb[i * 3 + 1], rgb[i * 3 + 2]);
+            assert_eq!(y_out[i], y, "Y mismatch at pixel {}", i);
+            assert_eq!(cb_out[i], cb, "Cb mismatch at pixel {}", i);
+            assert_eq!(cr_out[i], cr, "Cr mismatch at pixel {}", i);
+        }
+    }
+
+    #[test]
+    fn test_convert_rgb_to_ycbcr_simd_exact_multiple() {
+        // Test with exact multiple of 8 pixels (no scalar cleanup needed)
+        let width = 16;
+        let height = 2;
+        let num_pixels = width * height;
+
+        let mut rgb = vec![0u8; num_pixels * 3];
+        let mut y_out = vec![0u8; num_pixels];
+        let mut cb_out = vec![0u8; num_pixels];
+        let mut cr_out = vec![0u8; num_pixels];
+
+        // All white
+        for i in 0..num_pixels * 3 {
+            rgb[i] = 255;
+        }
+
+        convert_rgb_to_ycbcr(&rgb, &mut y_out, &mut cb_out, &mut cr_out, width, height);
+
+        // White -> Y=255, Cb=128, Cr=128
+        for i in 0..num_pixels {
+            assert_eq!(y_out[i], 255);
+            assert_eq!(cb_out[i], 128);
+            assert_eq!(cr_out[i], 128);
+        }
+    }
+
+    #[test]
+    fn test_convert_rgb_to_gray_simd() {
+        // Test the SIMD version of RGB to grayscale conversion
+        let width = 19; // Not a multiple of 8
+        let height = 2;
+        let num_pixels = width * height;
+
+        let mut rgb = vec![0u8; num_pixels * 3];
+        let mut gray_out = vec![0u8; num_pixels];
+
+        // Fill with gradient
+        for i in 0..num_pixels {
+            rgb[i * 3] = ((i * 5) % 256) as u8;
+            rgb[i * 3 + 1] = ((i * 9) % 256) as u8;
+            rgb[i * 3 + 2] = ((i * 3) % 256) as u8;
+        }
+
+        convert_rgb_to_gray(&rgb, &mut gray_out, width, height);
+
+        // Verify against scalar implementation
+        for i in 0..num_pixels {
+            let y = rgb_to_gray(rgb[i * 3], rgb[i * 3 + 1], rgb[i * 3 + 2]);
+            assert_eq!(gray_out[i], y, "Grayscale mismatch at pixel {}", i);
+        }
+    }
+
+    #[test]
+    fn test_convert_rgb_to_gray_simd_exact_multiple() {
+        // Test with exact multiple of 8 pixels
+        let width = 8;
+        let height = 4;
+        let num_pixels = width * height;
+
+        let mut rgb = vec![0u8; num_pixels * 3];
+        let mut gray_out = vec![0u8; num_pixels];
+
+        // All black
+        convert_rgb_to_gray(&rgb, &mut gray_out, width, height);
+
+        for i in 0..num_pixels {
+            assert_eq!(gray_out[i], 0);
+        }
+
+        // All white
+        for i in 0..num_pixels * 3 {
+            rgb[i] = 255;
+        }
+        convert_rgb_to_gray(&rgb, &mut gray_out, width, height);
+
+        for i in 0..num_pixels {
+            assert_eq!(gray_out[i], 255);
+        }
+    }
+
+    #[test]
+    fn test_fix_const_fn() {
+        // Test that the fix() const fn produces expected values
+        // FIX(0.5) should be approximately 32768 (1 << 15)
+        assert_eq!(fix(0.5), 32768);
+
+        // FIX(1.0) should be approximately 65536 (1 << 16)
+        assert_eq!(fix(1.0), 65536);
+
+        // FIX(0.0) should be 0
+        assert_eq!(fix(0.0), 0);
+    }
 }

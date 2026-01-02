@@ -21,7 +21,7 @@
 //! let rgb_pixels: Vec<u8> = vec![0; 640 * 480 * 3];
 //!
 //! // Default encoding (trellis + Huffman optimization)
-//! let jpeg_data = Encoder::new()
+//! let jpeg_data = Encoder::new(false)
 //!     .quality(85)
 //!     .encode_rgb(&rgb_pixels, 640, 480)?;
 //!
@@ -42,7 +42,7 @@
 //!
 //! | Preset | Progressive | Trellis | Huffman Opt | Use Case |
 //! |--------|------------|---------|-------------|----------|
-//! | [`Encoder::new()`] | No | Yes | Yes | Default, good balance |
+//! | [`Encoder::new(false)`] | No | Yes | Yes | Default, good balance |
 //! | [`Encoder::max_compression()`] | Yes | Yes | Yes | Smallest files |
 //! | [`Encoder::fastest()`] | No | No | No | Maximum speed |
 //!
@@ -53,7 +53,7 @@
 //!
 //! # fn main() -> Result<(), mozjpeg_rs::Error> {
 //! # let rgb_pixels: Vec<u8> = vec![0; 100 * 100 * 3];
-//! let jpeg_data = Encoder::new()
+//! let jpeg_data = Encoder::new(false)
 //!     .quality(75)
 //!     .progressive(true)
 //!     .subsampling(Subsampling::S420)      // 4:2:0 chroma subsampling
@@ -74,7 +74,7 @@
 //! # fn main() -> Result<(), mozjpeg_rs::Error> {
 //! let gray_pixels: Vec<u8> = vec![128; 100 * 100]; // 1 byte per pixel
 //!
-//! let jpeg_data = Encoder::new()
+//! let jpeg_data = Encoder::new(false)
 //!     .quality(85)
 //!     .encode_gray(&gray_pixels, 100, 100)?;
 //! # Ok(())
@@ -91,7 +91,7 @@
 //! # let rgb_pixels: Vec<u8> = vec![0; 100 * 100 * 3];
 //! let mut file = File::create("output.jpg")?;
 //!
-//! Encoder::new()
+//! Encoder::new(false)
 //!     .quality(85)
 //!     .encode_rgb_to_writer(&rgb_pixels, 100, 100, &mut file)?;
 //! # Ok(())
@@ -107,7 +107,7 @@
 //! # let rgb_pixels: Vec<u8> = vec![0; 100 * 100 * 3];
 //! # let exif_bytes: Vec<u8> = vec![];
 //! # let icc_profile: Vec<u8> = vec![];
-//! let jpeg_data = Encoder::new()
+//! let jpeg_data = Encoder::new(false)
 //!     .quality(85)
 //!     .pixel_density(PixelDensity::dpi(300, 300))  // 300 DPI
 //!     .exif_data(exif_bytes)                        // EXIF metadata
@@ -241,7 +241,7 @@ pub mod corpus;
 ///
 /// # Presets
 ///
-/// - [`Encoder::new()`] - Default settings with trellis quantization and Huffman optimization
+/// - [`Encoder::new(false)`] - Default settings with trellis quantization and Huffman optimization
 /// - [`Encoder::max_compression()`] - Progressive mode with all optimizations for smallest files
 /// - [`Encoder::fastest()`] - No optimizations, maximum encoding speed
 ///
@@ -253,7 +253,7 @@ pub mod corpus;
 /// # fn main() -> Result<(), mozjpeg_rs::Error> {
 /// let pixels: Vec<u8> = vec![0; 640 * 480 * 3];
 ///
-/// let jpeg = Encoder::new()
+/// let jpeg = Encoder::new(false)
 ///     .quality(85)
 ///     .encode_rgb(&pixels, 640, 480)?;
 /// # Ok(())
@@ -272,7 +272,7 @@ pub use encode::{Encode, Encoder, EncodingStream, StreamingEncoder};
 /// use mozjpeg_rs::{Encoder, Error};
 ///
 /// # fn example() {
-/// let result = Encoder::new().encode_rgb(&[], 0, 0);
+/// let result = Encoder::new(false).encode_rgb(&[], 0, 0);
 /// match result {
 ///     Ok(data) => println!("Encoded {} bytes", data.len()),
 ///     Err(Error::InvalidDimensions { width, height }) => {
@@ -310,12 +310,12 @@ pub use error::Result;
 /// # fn main() -> Result<(), mozjpeg_rs::Error> {
 /// # let pixels: Vec<u8> = vec![0; 100 * 100 * 3];
 /// // High quality - no color subsampling
-/// let jpeg = Encoder::new()
+/// let jpeg = Encoder::new(false)
 ///     .subsampling(Subsampling::S444)
 ///     .encode_rgb(&pixels, 100, 100)?;
 ///
 /// // Smaller files - standard 4:2:0 subsampling
-/// let jpeg = Encoder::new()
+/// let jpeg = Encoder::new(false)
 ///     .subsampling(Subsampling::S420)
 ///     .encode_rgb(&pixels, 100, 100)?;
 /// # Ok(())
@@ -336,12 +336,12 @@ pub use types::Subsampling;
 /// # fn main() -> Result<(), mozjpeg_rs::Error> {
 /// # let pixels: Vec<u8> = vec![0; 100 * 100 * 3];
 /// // 300 DPI for print
-/// let jpeg = Encoder::new()
+/// let jpeg = Encoder::new(false)
 ///     .pixel_density(PixelDensity::dpi(300, 300))
 ///     .encode_rgb(&pixels, 100, 100)?;
 ///
 /// // 2:1 pixel aspect ratio
-/// let jpeg = Encoder::new()
+/// let jpeg = Encoder::new(false)
 ///     .pixel_density(PixelDensity::aspect_ratio(2, 1))
 ///     .encode_rgb(&pixels, 100, 100)?;
 /// # Ok(())
@@ -367,13 +367,13 @@ pub use types::DensityUnit;
 ///
 /// # fn main() -> Result<(), mozjpeg_rs::Error> {
 /// # let pixels: Vec<u8> = vec![0; 100 * 100 * 3];
-/// // Default trellis settings (enabled by default with Encoder::new())
-/// let jpeg = Encoder::new()
+/// // Default trellis settings (enabled by default with Encoder::new(false))
+/// let jpeg = Encoder::new(false)
 ///     .trellis(TrellisConfig::default())
 ///     .encode_rgb(&pixels, 100, 100)?;
 ///
 /// // Disable trellis for faster encoding
-/// let jpeg = Encoder::new()
+/// let jpeg = Encoder::new(false)
 ///     .trellis(TrellisConfig::disabled())
 ///     .encode_rgb(&pixels, 100, 100)?;
 /// # Ok(())
@@ -405,7 +405,7 @@ pub use types::TrellisConfig;
 ///
 /// # fn main() -> Result<(), mozjpeg_rs::Error> {
 /// # let pixels: Vec<u8> = vec![0; 100 * 100 * 3];
-/// let jpeg = Encoder::new()
+/// let jpeg = Encoder::new(false)
 ///     .quant_tables(QuantTableIdx::Flat)
 ///     .encode_rgb(&pixels, 100, 100)?;
 /// # Ok(())

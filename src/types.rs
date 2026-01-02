@@ -760,4 +760,165 @@ mod tests {
         let config = TrellisConfig::default().rd_factor(0.5);
         assert!((config.lambda_log_scale1 - 13.75).abs() < 0.01);
     }
+
+    #[test]
+    fn test_pixel_density_constructors() {
+        let dpi = PixelDensity::dpi(300, 300);
+        assert_eq!(dpi.unit, DensityUnit::DotsPerInch);
+        assert_eq!(dpi.x, 300);
+        assert_eq!(dpi.y, 300);
+
+        let dpcm = PixelDensity::dpcm(118, 118);
+        assert_eq!(dpcm.unit, DensityUnit::DotsPerCm);
+        assert_eq!(dpcm.x, 118);
+        assert_eq!(dpcm.y, 118);
+
+        let aspect = PixelDensity::aspect_ratio(16, 9);
+        assert_eq!(aspect.unit, DensityUnit::None);
+        assert_eq!(aspect.x, 16);
+        assert_eq!(aspect.y, 9);
+    }
+
+    #[test]
+    fn test_pixel_density_default() {
+        let default = PixelDensity::default();
+        assert_eq!(default.unit, DensityUnit::DotsPerInch);
+        assert_eq!(default.x, 72);
+        assert_eq!(default.y, 72);
+    }
+
+    #[test]
+    fn test_colorspace_bytes_per_pixel() {
+        assert_eq!(ColorSpace::Grayscale.bytes_per_pixel(), 1);
+        assert_eq!(ColorSpace::Rgb.bytes_per_pixel(), 3);
+        assert_eq!(ColorSpace::ExtRgba.bytes_per_pixel(), 4);
+        assert_eq!(ColorSpace::Unknown.bytes_per_pixel(), 0);
+    }
+
+    #[test]
+    fn test_colorspace_is_rgb_variant() {
+        assert!(ColorSpace::Rgb.is_rgb_variant());
+        assert!(ColorSpace::ExtRgb.is_rgb_variant());
+        assert!(ColorSpace::ExtBgr.is_rgb_variant());
+        assert!(ColorSpace::ExtRgba.is_rgb_variant());
+        assert!(ColorSpace::ExtBgra.is_rgb_variant());
+        assert!(ColorSpace::ExtAbgr.is_rgb_variant());
+        assert!(ColorSpace::ExtArgb.is_rgb_variant());
+        assert!(ColorSpace::ExtRgbx.is_rgb_variant());
+        assert!(ColorSpace::ExtBgrx.is_rgb_variant());
+        assert!(ColorSpace::ExtXbgr.is_rgb_variant());
+        assert!(ColorSpace::ExtXrgb.is_rgb_variant());
+        assert!(!ColorSpace::YCbCr.is_rgb_variant());
+        assert!(!ColorSpace::Grayscale.is_rgb_variant());
+        assert!(!ColorSpace::Cmyk.is_rgb_variant());
+        assert!(!ColorSpace::Ycck.is_rgb_variant());
+        assert!(!ColorSpace::Unknown.is_rgb_variant());
+    }
+
+    #[test]
+    fn test_colorspace_all_variants_num_components() {
+        // Cover all colorspace variants for num_components
+        assert_eq!(ColorSpace::Unknown.num_components(), 0);
+        assert_eq!(ColorSpace::Grayscale.num_components(), 1);
+        assert_eq!(ColorSpace::Rgb.num_components(), 3);
+        assert_eq!(ColorSpace::YCbCr.num_components(), 3);
+        assert_eq!(ColorSpace::ExtRgb.num_components(), 3);
+        assert_eq!(ColorSpace::ExtBgr.num_components(), 3);
+        assert_eq!(ColorSpace::Cmyk.num_components(), 4);
+        assert_eq!(ColorSpace::Ycck.num_components(), 4);
+        assert_eq!(ColorSpace::ExtRgbx.num_components(), 4);
+        assert_eq!(ColorSpace::ExtBgrx.num_components(), 4);
+        assert_eq!(ColorSpace::ExtXbgr.num_components(), 4);
+        assert_eq!(ColorSpace::ExtXrgb.num_components(), 4);
+        assert_eq!(ColorSpace::ExtRgba.num_components(), 4);
+        assert_eq!(ColorSpace::ExtBgra.num_components(), 4);
+        assert_eq!(ColorSpace::ExtAbgr.num_components(), 4);
+        assert_eq!(ColorSpace::ExtArgb.num_components(), 4);
+    }
+
+    #[test]
+    fn test_density_unit_default() {
+        let unit = DensityUnit::default();
+        assert_eq!(unit, DensityUnit::None);
+    }
+
+    #[test]
+    fn test_subsampling_chroma_factors() {
+        // Chroma always 1x1 relative to max
+        assert_eq!(Subsampling::S444.chroma_factors(), (1, 1));
+        assert_eq!(Subsampling::S422.chroma_factors(), (1, 1));
+        assert_eq!(Subsampling::S420.chroma_factors(), (1, 1));
+        assert_eq!(Subsampling::S440.chroma_factors(), (1, 1));
+        assert_eq!(Subsampling::Gray.chroma_factors(), (1, 1));
+    }
+
+    #[test]
+    fn test_subsampling_s440_luma_factors() {
+        // S440 is 1x2 (vertical subsampling only)
+        assert_eq!(Subsampling::S440.luma_factors(), (1, 2));
+    }
+
+    #[test]
+    fn test_subsampling_gray_luma_factors() {
+        // Grayscale is 1x1
+        assert_eq!(Subsampling::Gray.luma_factors(), (1, 1));
+    }
+
+    #[test]
+    fn test_component_info_defaults() {
+        let comp = ComponentInfo::default();
+        assert_eq!(comp.component_id, 1);
+        assert_eq!(comp.h_samp_factor, 1);
+        assert_eq!(comp.v_samp_factor, 1);
+    }
+
+    #[test]
+    fn test_component_info_fields() {
+        let comp = ComponentInfo {
+            component_id: 2,
+            component_index: 1,
+            h_samp_factor: 2,
+            v_samp_factor: 1,
+            quant_tbl_no: 0,
+            dc_tbl_no: 1,
+            ac_tbl_no: 1,
+        };
+        assert_eq!(comp.component_id, 2);
+        assert_eq!(comp.h_samp_factor, 2);
+        assert_eq!(comp.v_samp_factor, 1);
+        assert_eq!(comp.quant_tbl_no, 0);
+    }
+
+    #[test]
+    fn test_scan_info_dc_scan_single_component() {
+        let dc = ScanInfo::dc_scan(1);
+        assert_eq!(dc.comps_in_scan, 1);
+        assert!(dc.is_dc_scan());
+    }
+
+    #[test]
+    fn test_scan_info_component_index() {
+        let dc = ScanInfo::dc_scan(3);
+        assert_eq!(dc.component_index[0], 0);
+        assert_eq!(dc.component_index[1], 1);
+        assert_eq!(dc.component_index[2], 2);
+    }
+
+    #[test]
+    fn test_quant_table_new() {
+        let values = [16u16; DCTSIZE2];
+        let table = QuantTable::new(values);
+        assert_eq!(table.values, values);
+    }
+
+    #[test]
+    fn test_quant_table_scaled_minimum_one() {
+        // Test that scaled values are at least 1
+        let base = [1u16; DCTSIZE2];
+        let scaled = QuantTable::scaled(&base, 1, false);
+        // With scale factor 1 (effectively very small), values should still be at least 1
+        for &v in &scaled.values {
+            assert!(v >= 1);
+        }
+    }
 }

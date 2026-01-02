@@ -161,15 +161,42 @@ jobs:
       - name: Install cargo-llvm-cov
         uses: taiki-e/install-action@cargo-llvm-cov
 
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-coverage-cargo-${{ hashFiles('**/Cargo.lock', '**/Cargo.toml') }}
+          restore-keys: |
+            ${{ runner.os }}-coverage-cargo-
+
       - name: Generate coverage report
-        # Only run coverage on main crate - sys-local requires local mozjpeg source
-        run: cargo llvm-cov -p mozjpeg-rs --lib --lcov --output-path lcov.info
+        # Run coverage on main crate with lib + integration tests
+        # Exclude ffi_comparison (requires local mozjpeg) and slow benchmark tests
+        run: |
+          cargo llvm-cov -p mozjpeg-rs \
+            --lib \
+            --test codec_comparison \
+            --test encode_tests \
+            --test encoder_validation \
+            --test ffi_validation \
+            --test parity_tests \
+            --test known_issues \
+            --test pixel_diff_analysis \
+            --test edge_padding \
+            --test edge_cropping \
+            --test block_comparison \
+            --test scan_verification \
+            --lcov --output-path lcov.info
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v5
         with:
           files: lcov.info
           fail_ci_if_error: false
+          token: ${{ secrets.CODECOV_TOKEN }}
 
   # Publish dry-run (only on PRs, to catch packaging issues early)
   publish-check:

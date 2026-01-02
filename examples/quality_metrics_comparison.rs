@@ -42,7 +42,7 @@ fn main() {
             let (rgb_data, width, height) = load_png_rgb(path);
 
             // Encode with Rust
-            let rust_jpeg = Encoder::new()
+            let rust_jpeg = Encoder::new(false)
                 .quality(quality)
                 .progressive(false)
                 .optimize_huffman(true)

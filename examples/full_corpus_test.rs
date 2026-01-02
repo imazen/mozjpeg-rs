@@ -20,7 +20,7 @@ fn load_png(path: &Path) -> Option<(Vec<u8>, u32, u32)> {
 }
 
 fn encode_rust(rgb: &[u8], width: u32, height: u32, quality: u8) -> Vec<u8> {
-    Encoder::new()
+    Encoder::new(false)
         .quality(quality)
         .progressive(true)
         .optimize_huffman(true)

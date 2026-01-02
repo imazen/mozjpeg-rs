@@ -15,7 +15,7 @@
 //! use mozjpeg_rs::Encoder;
 //!
 //! // Full-featured batch encoding
-//! let jpeg = Encoder::new()
+//! let jpeg = Encoder::new(false)
 //!     .quality(85)
 //!     .progressive(true)
 //!     .encode_rgb(&pixels, width, height)?;
@@ -131,17 +131,64 @@ pub struct Encoder {
 
 impl Default for Encoder {
     fn default() -> Self {
-        Self::baseline_optimized()
+        Self::new(false)
     }
 }
 
 impl Encoder {
-    /// Alias for [`baseline_optimized()`](Self::baseline_optimized).
+    /// Create an encoder with optimal settings for the chosen mode.
     ///
-    /// Creates an encoder with the most optimized baseline (non-progressive) settings.
-    #[inline]
-    pub fn new() -> Self {
-        Self::baseline_optimized()
+    /// # Arguments
+    ///
+    /// * `progressive` - Encoding mode:
+    ///   - `false`: **Baseline** (sequential) JPEG - faster decoding, wider compatibility
+    ///   - `true`: **Progressive** JPEG - smaller files (~20%), progressive rendering
+    ///
+    /// Both modes enable all mozjpeg optimizations (trellis, Huffman, deringing).
+    /// Progressive mode additionally enables `optimize_scans` to match C mozjpeg.
+    ///
+    /// # Settings by Mode
+    ///
+    /// | Setting | `new(false)` | `new(true)` |
+    /// |---------|--------------|-------------|
+    /// | progressive | false | **true** |
+    /// | optimize_scans | false | **true** |
+    /// | trellis | enabled | enabled |
+    /// | optimize_huffman | true | true |
+    /// | overshoot_deringing | true | true |
+    /// | quality | 75 | 75 |
+    /// | subsampling | 4:2:0 | 4:2:0 |
+    ///
+    /// # C mozjpeg Compatibility
+    ///
+    /// - `new(true)` matches C mozjpeg's `jpeg_set_defaults()` (JCP_MAX_COMPRESSION)
+    /// - `new(false)` uses baseline mode with all optimizations
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use mozjpeg_rs::Encoder;
+    ///
+    /// let pixels: Vec<u8> = vec![128; 256 * 256 * 3];
+    ///
+    /// // Baseline - fast decode, good compatibility
+    /// let baseline = Encoder::new(false)
+    ///     .quality(85)
+    ///     .encode_rgb(&pixels, 256, 256)
+    ///     .unwrap();
+    ///
+    /// // Progressive - smaller files, matches C mozjpeg
+    /// let progressive = Encoder::new(true)
+    ///     .quality(85)
+    ///     .encode_rgb(&pixels, 256, 256)
+    ///     .unwrap();
+    /// ```
+    pub fn new(progressive: bool) -> Self {
+        if progressive {
+            Self::max_compression()
+        } else {
+            Self::baseline_optimized()
+        }
     }
 
     /// Create an encoder with the most optimized baseline (non-progressive) settings.
@@ -235,7 +282,7 @@ impl Encoder {
     /// # File Size Comparison
     ///
     /// Typical results at Q75 (256×256 image):
-    /// - `Encoder::new()`: ~650 bytes (baseline)
+    /// - `Encoder::new(false)`: ~650 bytes (baseline)
     /// - `Encoder::max_compression()`: ~520 bytes (**~20% smaller**)
     ///
     /// # Example
@@ -412,7 +459,7 @@ impl Encoder {
     /// use mozjpeg_rs::Encoder;
     ///
     /// // Convert a dithered GIF to JPEG with smoothing
-    /// let encoder = Encoder::new()
+    /// let encoder = Encoder::new(false)
     ///     .quality(85)
     ///     .smoothing(30);
     /// ```
@@ -453,7 +500,7 @@ impl Encoder {
     /// ```
     /// use mozjpeg_rs::{Encoder, PixelDensity};
     ///
-    /// let encoder = Encoder::new()
+    /// let encoder = Encoder::new(false)
     ///     .pixel_density(PixelDensity::dpi(300, 300)); // 300 DPI
     /// ```
     pub fn pixel_density(mut self, density: PixelDensity) -> Self {
@@ -530,8 +577,8 @@ impl Encoder {
     /// use mozjpeg_rs::Encoder;
     ///
     /// // These are equivalent:
-    /// let enc1 = Encoder::new().baseline(true);
-    /// let enc2 = Encoder::new().progressive(false);
+    /// let enc1 = Encoder::new(false).baseline(true);
+    /// let enc2 = Encoder::new(false).progressive(false);
     /// ```
     #[inline]
     pub fn baseline(self, enable: bool) -> Self {
@@ -2652,7 +2699,7 @@ impl Encoder {
     /// Note that streaming mode does NOT support trellis quantization, progressive
     /// mode, or Huffman optimization (these require buffering the entire image).
     ///
-    /// For full-featured encoding with all mozjpeg optimizations, use [`Encoder::new()`]
+    /// For full-featured encoding with all mozjpeg optimizations, use [`Encoder::new(false)`]
     /// with [`encode_rgb()`](Encoder::encode_rgb) or [`encode_gray()`](Encoder::encode_gray).
     ///
     /// # Example
@@ -2682,7 +2729,7 @@ mod tests {
 
     #[test]
     fn test_encoder_defaults() {
-        let enc = Encoder::new();
+        let enc = Encoder::new(false);
         assert_eq!(enc.quality, 75);
         assert!(!enc.progressive);
         assert_eq!(enc.subsampling, Subsampling::S420);
@@ -2692,7 +2739,7 @@ mod tests {
 
     #[test]
     fn test_encoder_builder_fields() {
-        let enc = Encoder::new()
+        let enc = Encoder::new(false)
             .quality(90)
             .progressive(true)
             .subsampling(Subsampling::S444);
@@ -2704,10 +2751,10 @@ mod tests {
 
     #[test]
     fn test_quality_clamping() {
-        let enc = Encoder::new().quality(0);
+        let enc = Encoder::new(false).quality(0);
         assert_eq!(enc.quality, 1);
 
-        let enc = Encoder::new().quality(150);
+        let enc = Encoder::new(false).quality(150);
         assert_eq!(enc.quality, 100);
     }
 

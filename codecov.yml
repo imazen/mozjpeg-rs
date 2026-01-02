@@ -1,0 +1,85 @@
+# Codecov configuration
+# https://docs.codecov.com/docs/codecov-yaml
+
+coverage:
+  # Overall project coverage thresholds
+  status:
+    project:
+      default:
+        # Require 85% overall coverage (we're at ~90%)
+        target: 85%
+        # Allow 2% drop from base
+        threshold: 2%
+        # Only check main crate sources
+        paths:
+          - "src/"
+    patch:
+      default:
+        # New code should have at least 75% coverage
+        target: 75%
+        # Allow 5% below target for patches
+        threshold: 5%
+
+  # Precision of coverage percentages
+  precision: 2
+  round: down
+  range: "70...100"
+
+# Ignore test files and examples from coverage
+ignore:
+  - "tests/**/*"
+  - "examples/**/*"
+  - "benches/**/*"
+  - "crates/**/*"
+
+# Comment configuration for PRs
+comment:
+  layout: "header, diff, flags, components"
+  behavior: default
+  require_changes: true
+  require_base: false
+  require_head: true
+
+# Flag management
+flags:
+  unittests:
+    paths:
+      - "src/"
+    carryforward: true
+
+# Component breakdown
+component_management:
+  default_rules:
+    statuses:
+      - type: project
+        target: 75%
+  individual_components:
+    - component_id: encoder
+      name: Encoder Pipeline
+      paths:
+        - "src/encode.rs"
+        - "src/encode/**"
+        - "src/marker.rs"
+    - component_id: dct
+      name: DCT & Color
+      paths:
+        - "src/dct.rs"
+        - "src/color.rs"
+        - "src/simd/**"
+    - component_id: entropy
+      name: Entropy Coding
+      paths:
+        - "src/entropy.rs"
+        - "src/huffman.rs"
+        - "src/bitstream.rs"
+    - component_id: trellis
+      name: Trellis Quantization
+      paths:
+        - "src/trellis.rs"
+        - "src/quant.rs"
+    - component_id: progressive
+      name: Progressive Mode
+      paths:
+        - "src/progressive.rs"
+        - "src/scan_optimize.rs"
+        - "src/scan_trial.rs"

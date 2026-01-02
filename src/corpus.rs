@@ -188,6 +188,12 @@ mod tests {
     }
 
     #[test]
+    fn test_bundled_test_image_nonexistent() {
+        let image = bundled_test_image("nonexistent_image_12345.png");
+        assert!(image.is_none(), "Nonexistent image should return None");
+    }
+
+    #[test]
     fn test_project_root() {
         let root = project_root();
         assert!(root.is_some(), "Should find project root");
@@ -197,5 +203,119 @@ mod tests {
             root.join("Cargo.toml").is_file(),
             "Project root should contain Cargo.toml"
         );
+    }
+
+    #[test]
+    fn test_corpus_dir_returns_valid_or_none() {
+        // This test works whether or not corpus exists
+        let result = corpus_dir();
+        if let Some(dir) = result {
+            assert!(
+                dir.is_dir(),
+                "If corpus_dir returns Some, it should be a directory"
+            );
+        }
+        // If None, that's also valid - corpus might not be set up
+    }
+
+    #[test]
+    fn test_kodak_dir_returns_valid_or_none() {
+        let result = kodak_dir();
+        if let Some(dir) = result {
+            assert!(
+                dir.is_dir(),
+                "If kodak_dir returns Some, it should be a directory"
+            );
+            // Should have PNG files if it exists
+            let files = png_files_in_dir(&dir);
+            assert!(!files.is_empty(), "Kodak dir should have PNG files");
+        }
+    }
+
+    #[test]
+    fn test_clic_validation_dir_returns_valid_or_none() {
+        let result = clic_validation_dir();
+        if let Some(dir) = result {
+            assert!(
+                dir.is_dir(),
+                "If clic_validation_dir returns Some, it should be a directory"
+            );
+        }
+    }
+
+    #[test]
+    fn test_all_corpus_dirs_returns_valid() {
+        let dirs = all_corpus_dirs();
+        for dir in &dirs {
+            assert!(dir.is_dir(), "All corpus dirs should be directories");
+        }
+    }
+
+    #[test]
+    fn test_png_files_in_dir_bundled() {
+        let dir = bundled_test_images_dir().expect("Bundled images should exist");
+        let files = png_files_in_dir(&dir);
+        assert!(
+            !files.is_empty(),
+            "Bundled images dir should have PNG files"
+        );
+
+        // Files should be sorted
+        let mut sorted_files = files.clone();
+        sorted_files.sort();
+        assert_eq!(files, sorted_files, "Files should be sorted");
+
+        // All files should have .png extension
+        for file in &files {
+            assert_eq!(
+                file.extension().and_then(|e| e.to_str()),
+                Some("png"),
+                "All files should have .png extension"
+            );
+        }
+    }
+
+    #[test]
+    fn test_png_files_in_dir_empty() {
+        // Test with a directory that exists but has no PNGs
+        let temp_dir = std::env::temp_dir();
+        let files = png_files_in_dir(&temp_dir);
+        // Should return empty vec or find some PNGs (either is fine)
+        // Main thing is it shouldn't crash
+        let _ = files;
+    }
+
+    #[test]
+    fn test_png_files_in_dir_nonexistent() {
+        // Test with a nonexistent directory
+        let nonexistent = PathBuf::from("/nonexistent/path/that/does/not/exist");
+        let files = png_files_in_dir(&nonexistent);
+        assert!(files.is_empty(), "Nonexistent dir should return empty vec");
+    }
+
+    #[cfg(feature = "png")]
+    #[test]
+    fn test_load_png_as_rgb() {
+        // Test loading a bundled PNG
+        let path = bundled_test_image("1.png").expect("Bundled 1.png should exist");
+        let result = load_png_as_rgb(&path);
+        assert!(result.is_some(), "Should successfully load bundled PNG");
+
+        let (rgb, width, height) = result.unwrap();
+        assert!(width > 0, "Width should be positive");
+        assert!(height > 0, "Height should be positive");
+        assert_eq!(
+            rgb.len(),
+            (width * height * 3) as usize,
+            "RGB data should have correct size"
+        );
+    }
+
+    #[cfg(feature = "png")]
+    #[test]
+    fn test_load_png_as_rgb_nonexistent() {
+        let path = PathBuf::from("/nonexistent/image.png");
+        let result = load_png_as_rgb(&path);
+        assert!(result.is_none(), "Nonexistent file should return None");
     }
 }

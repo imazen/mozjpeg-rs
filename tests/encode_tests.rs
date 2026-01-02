@@ -22,7 +22,7 @@ fn test_decode_with_jpeg_decoder() {
         }
     }
 
-    let encoder = Encoder::new().quality(90).subsampling(Subsampling::S444);
+    let encoder = Encoder::new(false).quality(90).subsampling(Subsampling::S444);
     let jpeg_data = encoder.encode_rgb(&rgb_data, width, height).unwrap();
 
     let mut decoder = jpeg_decoder::Decoder::new(std::io::Cursor::new(&jpeg_data));
@@ -46,7 +46,7 @@ fn test_encode_small_image() {
         rgb_data[i * 3 + 2] = 0; // B
     }
 
-    let encoder = Encoder::new().quality(75);
+    let encoder = Encoder::new(false).quality(75);
     let result = encoder.encode_rgb(&rgb_data, width, height);
 
     assert!(result.is_ok());
@@ -74,7 +74,7 @@ fn test_encode_gradient() {
         }
     }
 
-    let encoder = Encoder::new().quality(90).subsampling(Subsampling::S444);
+    let encoder = Encoder::new(false).quality(90).subsampling(Subsampling::S444);
     let result = encoder.encode_rgb(&rgb_data, width, height);
 
     assert!(result.is_ok());
@@ -93,7 +93,7 @@ fn test_encode_grayscale() {
         }
     }
 
-    let encoder = Encoder::new().quality(85);
+    let encoder = Encoder::new(false).quality(85);
     let result = encoder.encode_gray(&gray_data, width, height);
 
     assert!(result.is_ok());
@@ -125,7 +125,7 @@ fn test_encode_with_exif() {
         0x00, 0x00, 0x00, 0x08, // Offset to IFD
     ];
 
-    let encoder = Encoder::new().quality(75).exif_data(exif_data.clone());
+    let encoder = Encoder::new(false).quality(75).exif_data(exif_data.clone());
     let jpeg_data = encoder.encode_rgb(&rgb_data, width, height).unwrap();
 
     let mut found_app1 = false;
@@ -161,7 +161,7 @@ fn test_encode_with_restart_markers() {
         }
     }
 
-    let encoder = Encoder::new()
+    let encoder = Encoder::new(false)
         .quality(75)
         .subsampling(Subsampling::S444)
         .optimize_huffman(false)
@@ -207,7 +207,7 @@ fn test_encode_with_restart_markers() {
 #[test]
 fn test_encode_invalid_size() {
     let rgb_data = vec![0u8; 100];
-    let encoder = Encoder::new();
+    let encoder = Encoder::new(false);
     let result = encoder.encode_rgb(&rgb_data, 16, 16);
 
     assert!(result.is_err());
@@ -217,7 +217,7 @@ fn test_encode_invalid_size() {
 fn test_encode_zero_dimensions() {
     use mozjpeg_rs::Error;
 
-    let encoder = Encoder::new();
+    let encoder = Encoder::new(false);
 
     let result = encoder.encode_rgb(&[], 0, 16);
     assert!(matches!(
@@ -249,7 +249,7 @@ fn test_encode_zero_dimensions() {
 
 #[test]
 fn test_encode_overflow_dimensions() {
-    let encoder = Encoder::new();
+    let encoder = Encoder::new(false);
     let result = encoder.encode_rgb(&[], u32::MAX, u32::MAX);
     assert!(result.is_err());
 }
@@ -270,7 +270,7 @@ fn test_progressive_encode_decode() {
         }
     }
 
-    let encoder = Encoder::new()
+    let encoder = Encoder::new(false)
         .quality(85)
         .progressive(true)
         .subsampling(Subsampling::S420);
@@ -317,13 +317,13 @@ fn test_progressive_vs_baseline_size() {
         }
     }
 
-    let baseline = Encoder::new()
+    let baseline = Encoder::new(false)
         .quality(75)
         .progressive(false)
         .subsampling(Subsampling::S420);
     let baseline_data = baseline.encode_rgb(&rgb_data, width, height).unwrap();
 
-    let progressive = Encoder::new()
+    let progressive = Encoder::new(false)
         .quality(75)
         .progressive(true)
         .subsampling(Subsampling::S420);
@@ -355,13 +355,13 @@ fn test_trellis_quantization_enabled() {
         }
     }
 
-    let no_trellis = Encoder::new()
+    let no_trellis = Encoder::new(false)
         .quality(75)
         .subsampling(Subsampling::S420)
         .trellis(TrellisConfig::disabled());
     let no_trellis_data = no_trellis.encode_rgb(&rgb_data, width, height).unwrap();
 
-    let with_trellis = Encoder::new()
+    let with_trellis = Encoder::new(false)
         .quality(75)
         .subsampling(Subsampling::S420)
         .trellis(TrellisConfig::default());
@@ -395,19 +395,19 @@ fn test_trellis_presets() {
 
     let quality = 97;
 
-    let default = Encoder::new()
+    let default = Encoder::new(false)
         .quality(quality)
         .subsampling(Subsampling::S420)
         .trellis(TrellisConfig::default());
     let default_data = default.encode_rgb(&rgb_data, width, height).unwrap();
 
-    let favor_size = Encoder::new()
+    let favor_size = Encoder::new(false)
         .quality(quality)
         .subsampling(Subsampling::S420)
         .trellis(TrellisConfig::favor_size());
     let favor_size_data = favor_size.encode_rgb(&rgb_data, width, height).unwrap();
 
-    let favor_quality = Encoder::new()
+    let favor_quality = Encoder::new(false)
         .quality(quality)
         .subsampling(Subsampling::S420)
         .trellis(TrellisConfig::favor_quality());
@@ -446,12 +446,12 @@ fn test_trellis_rd_factor() {
         }
     }
 
-    let factor_1 = Encoder::new()
+    let factor_1 = Encoder::new(false)
         .quality(85)
         .trellis(TrellisConfig::default().rd_factor(1.0));
     let factor_1_data = factor_1.encode_rgb(&rgb_data, width, height).unwrap();
 
-    let factor_2 = Encoder::new()
+    let factor_2 = Encoder::new(false)
         .quality(85)
         .trellis(TrellisConfig::default().rd_factor(2.0));
     let factor_2_data = factor_2.encode_rgb(&rgb_data, width, height).unwrap();
@@ -480,13 +480,13 @@ fn test_huffman_optimization() {
         }
     }
 
-    let no_opt = Encoder::new()
+    let no_opt = Encoder::new(false)
         .quality(75)
         .subsampling(Subsampling::S420)
         .optimize_huffman(false);
     let no_opt_data = no_opt.encode_rgb(&rgb_data, width, height).unwrap();
 
-    let with_opt = Encoder::new()
+    let with_opt = Encoder::new(false)
         .quality(75)
         .subsampling(Subsampling::S420)
         .optimize_huffman(true);
@@ -526,7 +526,7 @@ fn test_color_encoding_accuracy() {
             rgb_data[i * 3 + 2] = *b;
         }
 
-        let encoder = Encoder::new().quality(95).subsampling(Subsampling::S444);
+        let encoder = Encoder::new(false).quality(95).subsampling(Subsampling::S444);
         let jpeg = encoder.encode_rgb(&rgb_data, width, height).unwrap();
 
         let mut decoder = jpeg_decoder::Decoder::new(std::io::Cursor::new(&jpeg));
@@ -584,14 +584,14 @@ fn test_optimize_scans() {
         }
     }
 
-    let no_opt = Encoder::new()
+    let no_opt = Encoder::new(false)
         .quality(75)
         .progressive(true)
         .optimize_scans(false)
         .subsampling(Subsampling::S420);
     let no_opt_data = no_opt.encode_rgb(&rgb_data, width, height).unwrap();
 
-    let with_opt = Encoder::new()
+    let with_opt = Encoder::new(false)
         .quality(75)
         .progressive(true)
         .optimize_scans(true)
@@ -628,7 +628,7 @@ fn test_progressive_non_mcu_aligned_regression() {
             }
         }
 
-        let baseline = Encoder::new()
+        let baseline = Encoder::new(false)
             .quality(95)
             .subsampling(Subsampling::S420)
             .progressive(false)
@@ -637,7 +637,7 @@ fn test_progressive_non_mcu_aligned_regression() {
             .encode_rgb(&rgb, size, size)
             .unwrap();
 
-        let progressive = Encoder::new()
+        let progressive = Encoder::new(false)
             .quality(95)
             .subsampling(Subsampling::S420)
             .progressive(true)
@@ -700,14 +700,14 @@ fn test_progressive_422_non_mcu_aligned_regression() {
         }
     }
 
-    let baseline = Encoder::new()
+    let baseline = Encoder::new(false)
         .quality(95)
         .subsampling(Subsampling::S422)
         .progressive(false)
         .encode_rgb(&rgb, size, size)
         .unwrap();
 
-    let progressive = Encoder::new()
+    let progressive = Encoder::new(false)
         .quality(95)
         .subsampling(Subsampling::S422)
         .progressive(true)
@@ -763,7 +763,7 @@ fn test_streaming_encoder_rgb() {
         }
     }
 
-    let streaming = StreamingEncoder::new().quality(85);
+    let streaming = StreamingEncoder::new(false).quality(85);
     let streaming_data = streaming.encode_rgb(&rgb_data, width, height).unwrap();
 
     assert_eq!(streaming_data[0], 0xFF);
@@ -797,7 +797,7 @@ fn test_streaming_encoder_scanlines() {
     }
 
     let mut output = Vec::new();
-    let mut stream = StreamingEncoder::new()
+    let mut stream = StreamingEncoder::new(false)
         .quality(85)
         .subsampling(Subsampling::S420)
         .start_rgb(width, height, &mut output)
@@ -837,7 +837,7 @@ fn test_streaming_encoder_gray() {
         }
     }
 
-    let streaming = StreamingEncoder::new().quality(85);
+    let streaming = StreamingEncoder::new(false).quality(85);
     let streaming_data = streaming.encode_gray(&gray_data, width, height).unwrap();
 
     assert_eq!(streaming_data[0], 0xFF);
@@ -919,7 +919,7 @@ fn test_eob_optimization_produces_valid_jpeg() {
 
     // Encode with EOB optimization enabled
     let trellis_with_eob = TrellisConfig::default().eob_optimization(true);
-    let with_eob = Encoder::new()
+    let with_eob = Encoder::new(false)
         .quality(75)
         .progressive(true)
         .trellis(trellis_with_eob)
@@ -928,7 +928,7 @@ fn test_eob_optimization_produces_valid_jpeg() {
 
     // Encode with EOB optimization disabled
     let trellis_without_eob = TrellisConfig::default().eob_optimization(false);
-    let without_eob = Encoder::new()
+    let without_eob = Encoder::new(false)
         .quality(75)
         .progressive(true)
         .trellis(trellis_without_eob)
@@ -998,7 +998,7 @@ fn test_eob_optimization_grayscale() {
 
     // Encode with EOB optimization
     let trellis_with_eob = TrellisConfig::default().eob_optimization(true);
-    let with_eob = Encoder::new()
+    let with_eob = Encoder::new(false)
         .quality(75)
         .progressive(true)
         .trellis(trellis_with_eob)
@@ -1062,7 +1062,7 @@ fn test_encode_decode_permutations() {
                                 TrellisConfig::disabled()
                             };
 
-                            let encoder = Encoder::new()
+                            let encoder = Encoder::new(false)
                                 .quality(quality)
                                 .progressive(progressive)
                                 .subsampling(subsampling)
@@ -1154,7 +1154,7 @@ fn test_grayscale_encode_decode_permutations() {
                             TrellisConfig::disabled()
                         };
 
-                        let encoder = Encoder::new()
+                        let encoder = Encoder::new(false)
                             .quality(quality)
                             .progressive(progressive)
                             .optimize_huffman(optimize_huffman)
