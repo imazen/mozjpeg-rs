@@ -131,12 +131,24 @@ pub struct Encoder {
 
 impl Default for Encoder {
     fn default() -> Self {
-        Self::new()
+        Self::baseline_optimized()
     }
 }
 
 impl Encoder {
-    /// Create a new encoder with balanced defaults for quality and compatibility.
+    /// Alias for [`baseline_optimized()`](Self::baseline_optimized).
+    ///
+    /// Creates an encoder with the most optimized baseline (non-progressive) settings.
+    #[inline]
+    pub fn new() -> Self {
+        Self::baseline_optimized()
+    }
+
+    /// Create an encoder with the most optimized baseline (non-progressive) settings.
+    ///
+    /// This is the recommended starting point for most use cases. It produces
+    /// sequential (non-progressive) JPEGs with all mozjpeg optimizations enabled:
+    /// trellis quantization, Huffman optimization, and overshoot deringing.
     ///
     /// # Default Settings
     ///
@@ -144,30 +156,30 @@ impl Encoder {
     /// |---------|-------|-------|
     /// | quality | 75 | Good balance of size/quality |
     /// | progressive | **false** | Sequential baseline JPEG |
-    /// | optimize_scans | **false** | No scan optimization |
+    /// | optimize_scans | **false** | N/A for baseline mode |
     /// | subsampling | 4:2:0 | Standard chroma subsampling |
-    /// | trellis | enabled | AC + DC trellis quantization |
-    /// | optimize_huffman | true | 2-pass for optimal Huffman tables |
-    /// | overshoot_deringing | true | Reduces ringing on hard edges |
+    /// | trellis | **enabled** | AC + DC trellis quantization |
+    /// | optimize_huffman | **true** | 2-pass for optimal Huffman tables |
+    /// | overshoot_deringing | **true** | Reduces ringing on hard edges |
     /// | quant_tables | ImageMagick | Same as C mozjpeg default |
     /// | force_baseline | false | Allows 16-bit DQT at very low Q |
     ///
     /// # Comparison with C mozjpeg
     ///
-    /// **Important:** This differs from the `mozjpeg` crate's defaults!
+    /// **Important:** This differs from C mozjpeg's `jpeg_set_defaults()`!
     ///
-    /// The C mozjpeg library (`jpeg_set_defaults()`) uses the `JCP_MAX_COMPRESSION`
-    /// profile, which enables progressive mode and optimize_scans by default.
-    /// This produces ~20% smaller files but with slower encoding.
+    /// C mozjpeg uses `JCP_MAX_COMPRESSION` profile by default, which enables
+    /// progressive mode and optimize_scans. This produces ~20% smaller files
+    /// but with slower encoding and progressive rendering.
     ///
-    /// | Setting | `Encoder::new()` | C mozjpeg / `mozjpeg` crate |
-    /// |---------|------------------|------------------------------|
+    /// | Setting | `baseline_optimized()` | C mozjpeg default |
+    /// |---------|------------------------|-------------------|
     /// | progressive | **false** | true |
     /// | optimize_scans | **false** | true |
     /// | trellis | true | true |
     /// | deringing | true | true |
     ///
-    /// To match C mozjpeg's default behavior, use [`Encoder::max_compression()`].
+    /// To match C mozjpeg's default behavior, use [`max_compression()`](Self::max_compression).
     ///
     /// # Example
     ///
@@ -175,12 +187,12 @@ impl Encoder {
     /// use mozjpeg_rs::Encoder;
     ///
     /// let pixels: Vec<u8> = vec![128; 256 * 256 * 3];
-    /// let jpeg = Encoder::new()
+    /// let jpeg = Encoder::baseline_optimized()
     ///     .quality(85)
     ///     .encode_rgb(&pixels, 256, 256)
     ///     .unwrap();
     /// ```
-    pub fn new() -> Self {
+    pub fn baseline_optimized() -> Self {
         Self {
             quality: 75,
             progressive: false,
