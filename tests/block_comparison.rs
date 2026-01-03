@@ -24,7 +24,7 @@ fn test_baseline_vs_progressive_small() {
     }
 
     // Encode both ways with 4:4:4 (simpler structure)
-    let baseline = mozjpeg_rs::Encoder::new()
+    let baseline = mozjpeg_rs::Encoder::baseline_optimized()
         .quality(85)
         .subsampling(mozjpeg_rs::Subsampling::S444)
         .encode_rgb(&rgb_data, width, height)
@@ -154,14 +154,14 @@ fn test_baseline_vs_progressive_420() {
         }
     }
 
-    let baseline = mozjpeg_rs::Encoder::new()
+    let baseline = mozjpeg_rs::Encoder::baseline_optimized()
         .quality(85)
         .subsampling(mozjpeg_rs::Subsampling::S420)
         .progressive(false)
         .encode_rgb(&rgb_data, width, height)
         .expect("Baseline failed");
 
-    let progressive = mozjpeg_rs::Encoder::new()
+    let progressive = mozjpeg_rs::Encoder::baseline_optimized()
         .quality(85)
         .subsampling(mozjpeg_rs::Subsampling::S420)
         .progressive(true)

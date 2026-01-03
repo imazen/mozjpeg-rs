@@ -32,7 +32,7 @@ fn load_png(path: &Path) -> Option<(Vec<u8>, u32, u32)> {
 // ============= Rust encoders =============
 
 fn encode_rust_baseline(rgb: &[u8], width: u32, height: u32, quality: u8) -> Vec<u8> {
-    Encoder::new(false)
+    Encoder::baseline_optimized()
         .quality(quality)
         .progressive(false)
         .optimize_huffman(true)
@@ -44,7 +44,7 @@ fn encode_rust_baseline(rgb: &[u8], width: u32, height: u32, quality: u8) -> Vec
 }
 
 fn encode_rust_progressive(rgb: &[u8], width: u32, height: u32, quality: u8) -> Vec<u8> {
-    Encoder::new(false)
+    Encoder::baseline_optimized()
         .quality(quality)
         .progressive(true)
         .optimize_huffman(true)

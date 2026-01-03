@@ -20,7 +20,7 @@ fn main() {
 
     // Baseline (no trellis)
     println!("=== Baseline (no trellis, huffman opt) ===");
-    let encoder = Encoder::new(false)
+    let encoder = Encoder::baseline_optimized()
         .quality(85)
         .subsampling(Subsampling::S420)
         .optimize_huffman(true)
@@ -43,7 +43,7 @@ fn main() {
     // With trellis
     println!();
     println!("=== Trellis quantization (AC + DC) ===");
-    let encoder = Encoder::new(false)
+    let encoder = Encoder::baseline_optimized()
         .quality(85)
         .subsampling(Subsampling::S420)
         .optimize_huffman(true)
@@ -66,7 +66,7 @@ fn main() {
     // Progressive + trellis
     println!();
     println!("=== Progressive + trellis ===");
-    let encoder = Encoder::new(false)
+    let encoder = Encoder::baseline_optimized()
         .quality(85)
         .subsampling(Subsampling::S420)
         .progressive(true)

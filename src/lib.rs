@@ -14,24 +14,24 @@
 //! The [`Encoder`] struct is the main entry point for encoding images:
 //!
 //! ```no_run
-//! use mozjpeg_rs::Encoder;
+//! use mozjpeg_rs::{Encoder, Preset};
 //!
 //! # fn main() -> Result<(), mozjpeg_rs::Error> {
 //! // RGB pixel data (3 bytes per pixel, row-major order)
 //! let rgb_pixels: Vec<u8> = vec![0; 640 * 480 * 3];
 //!
-//! // Default encoding (trellis + Huffman optimization)
-//! let jpeg_data = Encoder::new(false)
-//!     .quality(85)
-//!     .encode_rgb(&rgb_pixels, 640, 480)?;
-//!
-//! // Maximum compression (progressive + trellis + scan optimization)
-//! let jpeg_data = Encoder::max_compression()
+//! // Default: progressive with all optimizations (recommended)
+//! let jpeg_data = Encoder::new(Preset::default())
 //!     .quality(85)
 //!     .encode_rgb(&rgb_pixels, 640, 480)?;
 //!
 //! // Fastest encoding (no optimizations)
-//! let jpeg_data = Encoder::fastest()
+//! let jpeg_data = Encoder::new(Preset::BaselineFastest)
+//!     .quality(85)
+//!     .encode_rgb(&rgb_pixels, 640, 480)?;
+//!
+//! // Maximum compression (matches C mozjpeg)
+//! let jpeg_data = Encoder::new(Preset::ProgressiveSmallest)
 //!     .quality(85)
 //!     .encode_rgb(&rgb_pixels, 640, 480)?;
 //! # Ok(())
@@ -40,27 +40,30 @@
 //!
 //! ## Encoder Presets
 //!
-//! | Preset | Progressive | Trellis | Huffman Opt | Use Case |
-//! |--------|------------|---------|-------------|----------|
-//! | [`Encoder::new(false)`] | No | Yes | Yes | Default, good balance |
-//! | [`Encoder::max_compression()`] | Yes | Yes | Yes | Smallest files |
-//! | [`Encoder::fastest()`] | No | No | No | Maximum speed |
+//! | Preset | Time | Size | Use Case |
+//! |--------|------|------|----------|
+//! | [`Preset::BaselineFastest`] | ~2ms | baseline | Real-time, thumbnails |
+//! | [`Preset::BaselineBalanced`] | ~7ms | -13% | Sequential playback |
+//! | [`Preset::ProgressiveBalanced`] | ~9ms | -13% | Web images (default) |
+//! | [`Preset::ProgressiveSmallest`] | ~21ms | -14% | Storage, archival |
+//!
+//! *Benchmarks: 512×512 Q75 image*
 //!
 //! ## Advanced Configuration
 //!
 //! ```no_run
-//! use mozjpeg_rs::{Encoder, Subsampling, TrellisConfig, QuantTableIdx};
+//! use mozjpeg_rs::{Encoder, Preset, Subsampling, TrellisConfig, QuantTableIdx};
 //!
 //! # fn main() -> Result<(), mozjpeg_rs::Error> {
 //! # let rgb_pixels: Vec<u8> = vec![0; 100 * 100 * 3];
-//! let jpeg_data = Encoder::new(false)
+//! let jpeg_data = Encoder::new(Preset::BaselineBalanced)
 //!     .quality(75)
-//!     .progressive(true)
-//!     .subsampling(Subsampling::S420)      // 4:2:0 chroma subsampling
-//!     .quant_tables(QuantTableIdx::Flat)   // Flat quantization tables
-//!     .trellis(TrellisConfig::default())   // Enable trellis quantization
-//!     .optimize_huffman(true)              // 2-pass Huffman optimization
-//!     .overshoot_deringing(true)           // Reduce ringing at edges
+//!     .progressive(true)                    // Override to progressive
+//!     .subsampling(Subsampling::S420)       // 4:2:0 chroma subsampling
+//!     .quant_tables(QuantTableIdx::Flat)    // Flat quantization tables
+//!     .trellis(TrellisConfig::default())    // Enable trellis quantization
+//!     .optimize_huffman(true)               // 2-pass Huffman optimization
+//!     .overshoot_deringing(true)            // Reduce ringing at edges
 //!     .encode_rgb(&rgb_pixels, 100, 100)?;
 //! # Ok(())
 //! # }
@@ -69,12 +72,12 @@
 //! ## Grayscale Encoding
 //!
 //! ```no_run
-//! use mozjpeg_rs::Encoder;
+//! use mozjpeg_rs::{Encoder, Preset};
 //!
 //! # fn main() -> Result<(), mozjpeg_rs::Error> {
 //! let gray_pixels: Vec<u8> = vec![128; 100 * 100]; // 1 byte per pixel
 //!
-//! let jpeg_data = Encoder::new(false)
+//! let jpeg_data = Encoder::new(Preset::default())
 //!     .quality(85)
 //!     .encode_gray(&gray_pixels, 100, 100)?;
 //! # Ok(())
@@ -84,14 +87,14 @@
 //! ## Writing to a File or Stream
 //!
 //! ```no_run
-//! use mozjpeg_rs::Encoder;
+//! use mozjpeg_rs::{Encoder, Preset};
 //! use std::fs::File;
 //!
 //! # fn main() -> Result<(), Box<dyn std::error::Error>> {
 //! # let rgb_pixels: Vec<u8> = vec![0; 100 * 100 * 3];
 //! let mut file = File::create("output.jpg")?;
 //!
-//! Encoder::new(false)
+//! Encoder::new(Preset::default())
 //!     .quality(85)
 //!     .encode_rgb_to_writer(&rgb_pixels, 100, 100, &mut file)?;
 //! # Ok(())
@@ -101,13 +104,13 @@
 //! ## Metadata
 //!
 //! ```no_run
-//! use mozjpeg_rs::{Encoder, PixelDensity};
+//! use mozjpeg_rs::{Encoder, Preset, PixelDensity};
 //!
 //! # fn main() -> Result<(), mozjpeg_rs::Error> {
 //! # let rgb_pixels: Vec<u8> = vec![0; 100 * 100 * 3];
 //! # let exif_bytes: Vec<u8> = vec![];
 //! # let icc_profile: Vec<u8> = vec![];
-//! let jpeg_data = Encoder::new(false)
+//! let jpeg_data = Encoder::new(Preset::default())
 //!     .quality(85)
 //!     .pixel_density(PixelDensity::dpi(300, 300))  // 300 DPI
 //!     .exif_data(exif_bytes)                        // EXIF metadata
@@ -217,6 +220,10 @@ pub mod types;
 mod encode;
 mod error;
 
+// Optional mozjpeg-sys configuration layer
+#[cfg(feature = "mozjpeg-sys-config")]
+pub mod compat;
+
 // ============================================================================
 // Test support modules - hidden from public API
 // ============================================================================
@@ -241,19 +248,22 @@ pub mod corpus;
 ///
 /// # Presets
 ///
-/// - [`Encoder::new(false)`] - Default settings with trellis quantization and Huffman optimization
-/// - [`Encoder::max_compression()`] - Progressive mode with all optimizations for smallest files
-/// - [`Encoder::fastest()`] - No optimizations, maximum encoding speed
+/// Use [`Encoder::new(preset)`](Encoder::new) with a [`Preset`] to choose your settings:
+///
+/// - [`Preset::ProgressiveBalanced`] - Progressive with all optimizations (default)
+/// - [`Preset::BaselineBalanced`] - Baseline with all optimizations
+/// - [`Preset::BaselineFastest`] - No optimizations, maximum speed
+/// - [`Preset::ProgressiveSmallest`] - Maximum compression (matches C mozjpeg)
 ///
 /// # Example
 ///
 /// ```no_run
-/// use mozjpeg_rs::Encoder;
+/// use mozjpeg_rs::{Encoder, Preset};
 ///
 /// # fn main() -> Result<(), mozjpeg_rs::Error> {
 /// let pixels: Vec<u8> = vec![0; 640 * 480 * 3];
 ///
-/// let jpeg = Encoder::new(false)
+/// let jpeg = Encoder::new(Preset::default())
 ///     .quality(85)
 ///     .encode_rgb(&pixels, 640, 480)?;
 /// # Ok(())
@@ -269,10 +279,10 @@ pub use encode::{Encode, Encoder, EncodingStream, StreamingEncoder};
 /// # Example
 ///
 /// ```no_run
-/// use mozjpeg_rs::{Encoder, Error};
+/// use mozjpeg_rs::{Encoder, Error, Preset};
 ///
 /// # fn example() {
-/// let result = Encoder::new(false).encode_rgb(&[], 0, 0);
+/// let result = Encoder::new(Preset::default()).encode_rgb(&[], 0, 0);
 /// match result {
 ///     Ok(data) => println!("Encoded {} bytes", data.len()),
 ///     Err(Error::InvalidDimensions { width, height }) => {
@@ -305,23 +315,51 @@ pub use error::Result;
 /// # Example
 ///
 /// ```no_run
-/// use mozjpeg_rs::{Encoder, Subsampling};
+/// use mozjpeg_rs::{Encoder, Preset, Subsampling};
 ///
 /// # fn main() -> Result<(), mozjpeg_rs::Error> {
 /// # let pixels: Vec<u8> = vec![0; 100 * 100 * 3];
 /// // High quality - no color subsampling
-/// let jpeg = Encoder::new(false)
+/// let jpeg = Encoder::new(Preset::default())
 ///     .subsampling(Subsampling::S444)
 ///     .encode_rgb(&pixels, 100, 100)?;
 ///
 /// // Smaller files - standard 4:2:0 subsampling
-/// let jpeg = Encoder::new(false)
+/// let jpeg = Encoder::new(Preset::default())
 ///     .subsampling(Subsampling::S420)
 ///     .encode_rgb(&pixels, 100, 100)?;
 /// # Ok(())
 /// # }
 /// ```
 pub use types::Subsampling;
+
+/// Encoder preset controlling compression mode and optimization level.
+///
+/// # Example
+///
+/// ```no_run
+/// use mozjpeg_rs::{Encoder, Preset};
+///
+/// # fn main() -> Result<(), mozjpeg_rs::Error> {
+/// # let pixels: Vec<u8> = vec![0; 100 * 100 * 3];
+/// // Default: progressive with good balance
+/// let jpeg = Encoder::new(Preset::default())
+///     .quality(85)
+///     .encode_rgb(&pixels, 100, 100)?;
+///
+/// // Fastest encoding
+/// let jpeg = Encoder::new(Preset::BaselineFastest)
+///     .quality(80)
+///     .encode_rgb(&pixels, 100, 100)?;
+///
+/// // Maximum compression (matches C mozjpeg)
+/// let jpeg = Encoder::new(Preset::ProgressiveSmallest)
+///     .quality(85)
+///     .encode_rgb(&pixels, 100, 100)?;
+/// # Ok(())
+/// # }
+/// ```
+pub use types::Preset;
 
 /// Pixel density for JFIF metadata.
 ///
@@ -331,17 +369,17 @@ pub use types::Subsampling;
 /// # Example
 ///
 /// ```no_run
-/// use mozjpeg_rs::{Encoder, PixelDensity};
+/// use mozjpeg_rs::{Encoder, Preset, PixelDensity};
 ///
 /// # fn main() -> Result<(), mozjpeg_rs::Error> {
 /// # let pixels: Vec<u8> = vec![0; 100 * 100 * 3];
 /// // 300 DPI for print
-/// let jpeg = Encoder::new(false)
+/// let jpeg = Encoder::new(Preset::default())
 ///     .pixel_density(PixelDensity::dpi(300, 300))
 ///     .encode_rgb(&pixels, 100, 100)?;
 ///
 /// // 2:1 pixel aspect ratio
-/// let jpeg = Encoder::new(false)
+/// let jpeg = Encoder::new(Preset::default())
 ///     .pixel_density(PixelDensity::aspect_ratio(2, 1))
 ///     .encode_rgb(&pixels, 100, 100)?;
 /// # Ok(())
@@ -363,17 +401,17 @@ pub use types::DensityUnit;
 /// # Example
 ///
 /// ```no_run
-/// use mozjpeg_rs::{Encoder, TrellisConfig};
+/// use mozjpeg_rs::{Encoder, Preset, TrellisConfig};
 ///
 /// # fn main() -> Result<(), mozjpeg_rs::Error> {
 /// # let pixels: Vec<u8> = vec![0; 100 * 100 * 3];
-/// // Default trellis settings (enabled by default with Encoder::new(false))
-/// let jpeg = Encoder::new(false)
+/// // Default trellis settings (enabled by default with most presets)
+/// let jpeg = Encoder::new(Preset::default())
 ///     .trellis(TrellisConfig::default())
 ///     .encode_rgb(&pixels, 100, 100)?;
 ///
 /// // Disable trellis for faster encoding
-/// let jpeg = Encoder::new(false)
+/// let jpeg = Encoder::new(Preset::default())
 ///     .trellis(TrellisConfig::disabled())
 ///     .encode_rgb(&pixels, 100, 100)?;
 /// # Ok(())
@@ -401,11 +439,11 @@ pub use types::TrellisConfig;
 /// # Example
 ///
 /// ```no_run
-/// use mozjpeg_rs::{Encoder, QuantTableIdx};
+/// use mozjpeg_rs::{Encoder, Preset, QuantTableIdx};
 ///
 /// # fn main() -> Result<(), mozjpeg_rs::Error> {
 /// # let pixels: Vec<u8> = vec![0; 100 * 100 * 3];
-/// let jpeg = Encoder::new(false)
+/// let jpeg = Encoder::new(Preset::default())
 ///     .quant_tables(QuantTableIdx::Flat)
 ///     .encode_rgb(&pixels, 100, 100)?;
 /// # Ok(())
@@ -418,3 +456,18 @@ pub use consts::QuantTableIdx;
 /// Used when providing custom quantization tables via
 /// [`Encoder::custom_luma_qtable()`] or [`Encoder::custom_chroma_qtable()`].
 pub use consts::DCTSIZE2;
+
+// ============================================================================
+// mozjpeg-sys compatibility (optional feature)
+// ============================================================================
+
+/// Warnings from configuring a C mozjpeg encoder.
+///
+/// Some settings cannot be applied to `jpeg_compress_struct` directly
+/// and must be handled separately after `jpeg_start_compress`.
+#[cfg(feature = "mozjpeg-sys-config")]
+pub use compat::ConfigWarnings;
+
+/// Error configuring a C mozjpeg encoder.
+#[cfg(feature = "mozjpeg-sys-config")]
+pub use compat::ConfigError;

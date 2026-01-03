@@ -1,6 +1,6 @@
 [package]
 name = "mozjpeg-rs"
-version = "0.2.5"
+version = "0.3.0"
 edition = "2021"
 rust-version = "1.89.0"
 license = "BSD-3-Clause"
@@ -35,6 +35,8 @@ simd = ["simd-intrinsics"]
 png = ["dep:png"]
 # Enables FFI comparison tests against local mozjpeg C source
 __sys_local_available = []
+# Enables mozjpeg-sys configuration: configure a C mozjpeg encoder from our Encoder
+mozjpeg-sys-config = ["dep:mozjpeg-sys", "dep:libc"]
 
 [dependencies]
 bytemuck = "1.14"
@@ -43,6 +45,9 @@ multiversion = "0.8.0"
 png = { version = "0.17", optional = true }
 # Used by dct.rs and color.rs for portable SIMD
 wide = "1.1.1"
+# Optional: mozjpeg-sys configuration (configure C encoder from our settings)
+mozjpeg-sys = { version = "2.2", optional = true }
+libc = { version = "0.2", optional = true }
 
 [dev-dependencies]
 dssim = "3.2"
@@ -71,6 +76,15 @@ serde_json = "1.0.148"
 [[bench]]
 name = "encode"
 harness = false
+
+# Examples that require local mozjpeg C source (sys-local crate)
+[[example]]
+name = "trace_pipeline"
+required-features = ["__sys_local_available"]
+
+[[example]]
+name = "quant_ffi_compare"
+required-features = ["__sys_local_available"]
 
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ["cfg(feature, values(\"__sys_local_available\", \"ffi-test\"))"] }

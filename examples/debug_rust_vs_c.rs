@@ -38,7 +38,7 @@ fn main() {
     println!("Test image: {}x{} gradient pattern\n", width, height);
 
     // Encode with Rust - minimal settings
-    let rust_jpeg = Encoder::new(false)
+    let rust_jpeg = Encoder::baseline_optimized()
         .quality(85)
         .subsampling(Subsampling::S420)
         .progressive(false)

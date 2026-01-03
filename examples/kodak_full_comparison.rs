@@ -70,7 +70,7 @@ fn run_corpus(
         let (width, height) = get_png_dimensions(path);
 
         let rust_jpeg = if trellis {
-            Encoder::new(false)
+            Encoder::baseline_optimized()
                 .quality(quality)
                 .progressive(false)
                 .optimize_huffman(true)
@@ -78,7 +78,7 @@ fn run_corpus(
                 .encode_rgb(&rgb_data, width, height)
                 .unwrap()
         } else {
-            Encoder::new(false)
+            Encoder::baseline_optimized()
                 .quality(quality)
                 .progressive(false)
                 .optimize_huffman(true)

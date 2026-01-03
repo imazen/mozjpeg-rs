@@ -17,7 +17,7 @@ fn main() {
     }
 
     // Encode baseline (works)
-    let baseline = mozjpeg_rs::Encoder::new(false)
+    let baseline = mozjpeg_rs::Encoder::baseline_optimized()
         .quality(85)
         .subsampling(mozjpeg_rs::Subsampling::S444)
         .encode_rgb(&rgb_data, width, height)

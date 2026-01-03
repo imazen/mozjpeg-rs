@@ -1,5 +1,5 @@
 //! Exhaustive parity testing at 20 quality levels using mozjpeg crate
-use mozjpeg_rs::{Encoder, TrellisConfig, Subsampling};
+use mozjpeg_rs::{Encoder, Subsampling, TrellisConfig};
 
 fn create_gradient_image() -> (Vec<u8>, u32, u32) {
     let width = 512u32;
@@ -38,8 +38,19 @@ fn main() {
     println!("\nExhaustive Parity Test: 20 Quality Levels (mozjpeg crate)");
     println!("All three modes: Baseline, Progressive, Max Compression");
     println!();
-    println!("{:>3} {:>10} {:>10} {:>8} {:>10} {:>10} {:>8} {:>10} {:>10} {:>8}",
-             "Q", "Rust Base", "C Base", "Diff%", "Rust Prog", "C Prog", "Diff%", "Rust Max", "C Max", "Diff%");
+    println!(
+        "{:>3} {:>10} {:>10} {:>8} {:>10} {:>10} {:>8} {:>10} {:>10} {:>8}",
+        "Q",
+        "Rust Base",
+        "C Base",
+        "Diff%",
+        "Rust Prog",
+        "C Prog",
+        "Diff%",
+        "Rust Max",
+        "C Max",
+        "Diff%"
+    );
     println!("{}", "-".repeat(106));
 
     let mut total_rust_baseline = 0usize;
@@ -65,11 +76,19 @@ fn main() {
         let c_max = encode_c_mozjpeg(&rgb, width, height, *q, true, true);
         let diff_max = ((rust_max.len() as f64 / c_max.len() as f64) - 1.0) * 100.0;
 
-        println!("{:3} {:>10} {:>10} {:>+7.2}% {:>10} {:>10} {:>+7.2}% {:>10} {:>10} {:>+7.2}%",
-                 q,
-                 rust_baseline.len(), c_baseline.len(), diff_baseline,
-                 rust_prog.len(), c_prog.len(), diff_prog,
-                 rust_max.len(), c_max.len(), diff_max);
+        println!(
+            "{:3} {:>10} {:>10} {:>+7.2}% {:>10} {:>10} {:>+7.2}% {:>10} {:>10} {:>+7.2}%",
+            q,
+            rust_baseline.len(),
+            c_baseline.len(),
+            diff_baseline,
+            rust_prog.len(),
+            c_prog.len(),
+            diff_prog,
+            rust_max.len(),
+            c_max.len(),
+            diff_max
+        );
 
         total_rust_baseline += rust_baseline.len();
         total_c_baseline += c_baseline.len();
@@ -83,14 +102,30 @@ fn main() {
     let avg_baseline = ((total_rust_baseline as f64 / total_c_baseline as f64) - 1.0) * 100.0;
     let avg_prog = ((total_rust_prog as f64 / total_c_prog as f64) - 1.0) * 100.0;
     let avg_max = ((total_rust_max as f64 / total_c_max as f64) - 1.0) * 100.0;
-    println!("{:>3} {:>10} {:>10} {:>+7.2}% {:>10} {:>10} {:>+7.2}% {:>10} {:>10} {:>+7.2}%",
-             "SUM", total_rust_baseline, total_c_baseline, avg_baseline,
-             total_rust_prog, total_c_prog, avg_prog,
-             total_rust_max, total_c_max, avg_max);
+    println!(
+        "{:>3} {:>10} {:>10} {:>+7.2}% {:>10} {:>10} {:>+7.2}% {:>10} {:>10} {:>+7.2}%",
+        "SUM",
+        total_rust_baseline,
+        total_c_baseline,
+        avg_baseline,
+        total_rust_prog,
+        total_c_prog,
+        avg_prog,
+        total_rust_max,
+        total_c_max,
+        avg_max
+    );
 }
 
-fn encode_rust(rgb: &[u8], width: u32, height: u32, quality: u8, progressive: bool, optimize_scans: bool) -> Vec<u8> {
-    Encoder::new(false)
+fn encode_rust(
+    rgb: &[u8],
+    width: u32,
+    height: u32,
+    quality: u8,
+    progressive: bool,
+    optimize_scans: bool,
+) -> Vec<u8> {
+    Encoder::baseline_optimized()
         .quality(quality)
         .progressive(progressive)
         .subsampling(Subsampling::S420)
@@ -104,8 +139,15 @@ fn encode_rust(rgb: &[u8], width: u32, height: u32, quality: u8, progressive: bo
 
 /// Encode using the mozjpeg crate (high-level safe wrapper).
 /// C mozjpeg defaults: ImageMagick tables, trellis on, deringing on.
-fn encode_c_mozjpeg(rgb: &[u8], width: u32, height: u32, quality: u8, progressive: bool, optimize_scans: bool) -> Vec<u8> {
-    use mozjpeg::{Compress, ColorSpace};
+fn encode_c_mozjpeg(
+    rgb: &[u8],
+    width: u32,
+    height: u32,
+    quality: u8,
+    progressive: bool,
+    optimize_scans: bool,
+) -> Vec<u8> {
+    use mozjpeg::{ColorSpace, Compress};
 
     let mut comp = Compress::new(ColorSpace::JCS_RGB);
     comp.set_size(width as usize, height as usize);

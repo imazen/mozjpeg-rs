@@ -162,7 +162,7 @@ fn main() {
     }
 
     // Now try Rust with equivalent settings (but we can't do SA currently)
-    let rust_jpeg = Encoder::new(false)
+    let rust_jpeg = Encoder::baseline_optimized()
         .quality(85)
         .progressive(true)
         .optimize_huffman(true)

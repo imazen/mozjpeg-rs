@@ -130,7 +130,7 @@ pub fn encode_rust(rgb: &[u8], width: u32, height: u32, config: &TestEncoderConf
         TrellisConfig::disabled()
     };
 
-    Encoder::new(false)
+    Encoder::baseline_optimized()
         .quality(config.quality)
         .subsampling(config.subsampling)
         .progressive(config.progressive)

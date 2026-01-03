@@ -117,11 +117,16 @@ fn test_edge_cropping_non_aligned_dimensions() {
 
         // Encode with various settings
         let configs = [
-            ("baseline", Encoder::new().quality(85)),
-            ("progressive", Encoder::new().quality(85).progressive(true)),
+            ("baseline", Encoder::baseline_optimized().quality(85)),
+            (
+                "progressive",
+                Encoder::baseline_optimized().quality(85).progressive(true),
+            ),
             (
                 "trellis",
-                Encoder::new().quality(85).trellis(TrellisConfig::default()),
+                Encoder::baseline_optimized()
+                    .quality(85)
+                    .trellis(TrellisConfig::default()),
             ),
         ];
 
@@ -214,7 +219,7 @@ fn test_edge_pixel_preservation() {
     rgb[br + 2] = 0;
 
     // Encode at high quality to minimize compression loss
-    let encoder = Encoder::new().quality(95);
+    let encoder = Encoder::baseline_optimized().quality(95);
     let jpeg = encoder
         .encode_rgb(&rgb, width, height)
         .expect("Encoding failed");
@@ -298,7 +303,7 @@ fn test_all_encoder_permutations_work() {
                             TrellisConfig::disabled()
                         };
 
-                        let result = Encoder::new()
+                        let result = Encoder::baseline_optimized()
                             .quality(*quality)
                             .subsampling(*subsampling)
                             .progressive(*progressive)
@@ -405,7 +410,7 @@ mod corpus_tests {
             };
 
             // Rust encoder with 4:4:4
-            let rust_jpeg = Encoder::new()
+            let rust_jpeg = Encoder::baseline_optimized()
                 .quality(75)
                 .subsampling(Subsampling::S444)
                 .encode_rgb(&rgb_data, info.width, info.height)
@@ -502,13 +507,13 @@ mod corpus_tests {
 fn test_progressive_baseline_quality_parity() {
     let (rgb_data, width, height) = load_bundled_image();
 
-    let baseline = Encoder::new()
+    let baseline = Encoder::baseline_optimized()
         .quality(85)
         .progressive(false)
         .encode_rgb(&rgb_data, width, height)
         .expect("Baseline encoding failed");
 
-    let progressive = Encoder::new()
+    let progressive = Encoder::baseline_optimized()
         .quality(85)
         .progressive(true)
         .encode_rgb(&rgb_data, width, height)
@@ -565,7 +570,7 @@ fn test_progressive_baseline_quality_parity() {
 fn test_progressive_has_multiple_scans() {
     let (rgb_data, width, height) = load_bundled_image();
 
-    let progressive = Encoder::new()
+    let progressive = Encoder::baseline_optimized()
         .quality(85)
         .progressive(true)
         .encode_rgb(&rgb_data, width, height)

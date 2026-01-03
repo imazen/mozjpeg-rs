@@ -3,7 +3,7 @@
 //! These tests verify the public API of the encoder.
 
 use dssim::Dssim;
-use mozjpeg_rs::{Encode, Encoder, StreamingEncoder, Subsampling, TrellisConfig};
+use mozjpeg_rs::{Encode, Encoder, QuantTableIdx, StreamingEncoder, Subsampling, TrellisConfig};
 
 /// Verify JPEG output can be decoded by an external decoder
 #[test]
@@ -22,7 +22,9 @@ fn test_decode_with_jpeg_decoder() {
         }
     }
 
-    let encoder = Encoder::new(false).quality(90).subsampling(Subsampling::S444);
+    let encoder = Encoder::baseline_optimized()
+        .quality(90)
+        .subsampling(Subsampling::S444);
     let jpeg_data = encoder.encode_rgb(&rgb_data, width, height).unwrap();
 
     let mut decoder = jpeg_decoder::Decoder::new(std::io::Cursor::new(&jpeg_data));
@@ -46,7 +48,7 @@ fn test_encode_small_image() {
         rgb_data[i * 3 + 2] = 0; // B
     }
 
-    let encoder = Encoder::new(false).quality(75);
+    let encoder = Encoder::baseline_optimized().quality(75);
     let result = encoder.encode_rgb(&rgb_data, width, height);
 
     assert!(result.is_ok());
@@ -74,7 +76,9 @@ fn test_encode_gradient() {
         }
     }
 
-    let encoder = Encoder::new(false).quality(90).subsampling(Subsampling::S444);
+    let encoder = Encoder::baseline_optimized()
+        .quality(90)
+        .subsampling(Subsampling::S444);
     let result = encoder.encode_rgb(&rgb_data, width, height);
 
     assert!(result.is_ok());
@@ -93,7 +97,7 @@ fn test_encode_grayscale() {
         }
     }
 
-    let encoder = Encoder::new(false).quality(85);
+    let encoder = Encoder::baseline_optimized().quality(85);
     let result = encoder.encode_gray(&gray_data, width, height);
 
     assert!(result.is_ok());
@@ -125,7 +129,9 @@ fn test_encode_with_exif() {
         0x00, 0x00, 0x00, 0x08, // Offset to IFD
     ];
 
-    let encoder = Encoder::new(false).quality(75).exif_data(exif_data.clone());
+    let encoder = Encoder::baseline_optimized()
+        .quality(75)
+        .exif_data(exif_data.clone());
     let jpeg_data = encoder.encode_rgb(&rgb_data, width, height).unwrap();
 
     let mut found_app1 = false;
@@ -161,7 +167,7 @@ fn test_encode_with_restart_markers() {
         }
     }
 
-    let encoder = Encoder::new(false)
+    let encoder = Encoder::baseline_optimized()
         .quality(75)
         .subsampling(Subsampling::S444)
         .optimize_huffman(false)
@@ -207,7 +213,7 @@ fn test_encode_with_restart_markers() {
 #[test]
 fn test_encode_invalid_size() {
     let rgb_data = vec![0u8; 100];
-    let encoder = Encoder::new(false);
+    let encoder = Encoder::baseline_optimized();
     let result = encoder.encode_rgb(&rgb_data, 16, 16);
 
     assert!(result.is_err());
@@ -217,7 +223,7 @@ fn test_encode_invalid_size() {
 fn test_encode_zero_dimensions() {
     use mozjpeg_rs::Error;
 
-    let encoder = Encoder::new(false);
+    let encoder = Encoder::baseline_optimized();
 
     let result = encoder.encode_rgb(&[], 0, 16);
     assert!(matches!(
@@ -249,7 +255,7 @@ fn test_encode_zero_dimensions() {
 
 #[test]
 fn test_encode_overflow_dimensions() {
-    let encoder = Encoder::new(false);
+    let encoder = Encoder::baseline_optimized();
     let result = encoder.encode_rgb(&[], u32::MAX, u32::MAX);
     assert!(result.is_err());
 }
@@ -270,7 +276,7 @@ fn test_progressive_encode_decode() {
         }
     }
 
-    let encoder = Encoder::new(false)
+    let encoder = Encoder::baseline_optimized()
         .quality(85)
         .progressive(true)
         .subsampling(Subsampling::S420);
@@ -317,13 +323,13 @@ fn test_progressive_vs_baseline_size() {
         }
     }
 
-    let baseline = Encoder::new(false)
+    let baseline = Encoder::baseline_optimized()
         .quality(75)
         .progressive(false)
         .subsampling(Subsampling::S420);
     let baseline_data = baseline.encode_rgb(&rgb_data, width, height).unwrap();
 
-    let progressive = Encoder::new(false)
+    let progressive = Encoder::baseline_optimized()
         .quality(75)
         .progressive(true)
         .subsampling(Subsampling::S420);
@@ -355,13 +361,13 @@ fn test_trellis_quantization_enabled() {
         }
     }
 
-    let no_trellis = Encoder::new(false)
+    let no_trellis = Encoder::baseline_optimized()
         .quality(75)
         .subsampling(Subsampling::S420)
         .trellis(TrellisConfig::disabled());
     let no_trellis_data = no_trellis.encode_rgb(&rgb_data, width, height).unwrap();
 
-    let with_trellis = Encoder::new(false)
+    let with_trellis = Encoder::baseline_optimized()
         .quality(75)
         .subsampling(Subsampling::S420)
         .trellis(TrellisConfig::default());
@@ -395,19 +401,19 @@ fn test_trellis_presets() {
 
     let quality = 97;
 
-    let default = Encoder::new(false)
+    let default = Encoder::baseline_optimized()
         .quality(quality)
         .subsampling(Subsampling::S420)
         .trellis(TrellisConfig::default());
     let default_data = default.encode_rgb(&rgb_data, width, height).unwrap();
 
-    let favor_size = Encoder::new(false)
+    let favor_size = Encoder::baseline_optimized()
         .quality(quality)
         .subsampling(Subsampling::S420)
         .trellis(TrellisConfig::favor_size());
     let favor_size_data = favor_size.encode_rgb(&rgb_data, width, height).unwrap();
 
-    let favor_quality = Encoder::new(false)
+    let favor_quality = Encoder::baseline_optimized()
         .quality(quality)
         .subsampling(Subsampling::S420)
         .trellis(TrellisConfig::favor_quality());
@@ -446,12 +452,12 @@ fn test_trellis_rd_factor() {
         }
     }
 
-    let factor_1 = Encoder::new(false)
+    let factor_1 = Encoder::baseline_optimized()
         .quality(85)
         .trellis(TrellisConfig::default().rd_factor(1.0));
     let factor_1_data = factor_1.encode_rgb(&rgb_data, width, height).unwrap();
 
-    let factor_2 = Encoder::new(false)
+    let factor_2 = Encoder::baseline_optimized()
         .quality(85)
         .trellis(TrellisConfig::default().rd_factor(2.0));
     let factor_2_data = factor_2.encode_rgb(&rgb_data, width, height).unwrap();
@@ -480,13 +486,13 @@ fn test_huffman_optimization() {
         }
     }
 
-    let no_opt = Encoder::new(false)
+    let no_opt = Encoder::baseline_optimized()
         .quality(75)
         .subsampling(Subsampling::S420)
         .optimize_huffman(false);
     let no_opt_data = no_opt.encode_rgb(&rgb_data, width, height).unwrap();
 
-    let with_opt = Encoder::new(false)
+    let with_opt = Encoder::baseline_optimized()
         .quality(75)
         .subsampling(Subsampling::S420)
         .optimize_huffman(true);
@@ -526,7 +532,9 @@ fn test_color_encoding_accuracy() {
             rgb_data[i * 3 + 2] = *b;
         }
 
-        let encoder = Encoder::new(false).quality(95).subsampling(Subsampling::S444);
+        let encoder = Encoder::baseline_optimized()
+            .quality(95)
+            .subsampling(Subsampling::S444);
         let jpeg = encoder.encode_rgb(&rgb_data, width, height).unwrap();
 
         let mut decoder = jpeg_decoder::Decoder::new(std::io::Cursor::new(&jpeg));
@@ -584,14 +592,14 @@ fn test_optimize_scans() {
         }
     }
 
-    let no_opt = Encoder::new(false)
+    let no_opt = Encoder::baseline_optimized()
         .quality(75)
         .progressive(true)
         .optimize_scans(false)
         .subsampling(Subsampling::S420);
     let no_opt_data = no_opt.encode_rgb(&rgb_data, width, height).unwrap();
 
-    let with_opt = Encoder::new(false)
+    let with_opt = Encoder::baseline_optimized()
         .quality(75)
         .progressive(true)
         .optimize_scans(true)
@@ -628,7 +636,7 @@ fn test_progressive_non_mcu_aligned_regression() {
             }
         }
 
-        let baseline = Encoder::new(false)
+        let baseline = Encoder::baseline_optimized()
             .quality(95)
             .subsampling(Subsampling::S420)
             .progressive(false)
@@ -637,7 +645,7 @@ fn test_progressive_non_mcu_aligned_regression() {
             .encode_rgb(&rgb, size, size)
             .unwrap();
 
-        let progressive = Encoder::new(false)
+        let progressive = Encoder::baseline_optimized()
             .quality(95)
             .subsampling(Subsampling::S420)
             .progressive(true)
@@ -700,14 +708,14 @@ fn test_progressive_422_non_mcu_aligned_regression() {
         }
     }
 
-    let baseline = Encoder::new(false)
+    let baseline = Encoder::baseline_optimized()
         .quality(95)
         .subsampling(Subsampling::S422)
         .progressive(false)
         .encode_rgb(&rgb, size, size)
         .unwrap();
 
-    let progressive = Encoder::new(false)
+    let progressive = Encoder::baseline_optimized()
         .quality(95)
         .subsampling(Subsampling::S422)
         .progressive(true)
@@ -763,7 +771,7 @@ fn test_streaming_encoder_rgb() {
         }
     }
 
-    let streaming = StreamingEncoder::new(false).quality(85);
+    let streaming = StreamingEncoder::baseline_fastest().quality(85);
     let streaming_data = streaming.encode_rgb(&rgb_data, width, height).unwrap();
 
     assert_eq!(streaming_data[0], 0xFF);
@@ -797,7 +805,7 @@ fn test_streaming_encoder_scanlines() {
     }
 
     let mut output = Vec::new();
-    let mut stream = StreamingEncoder::new(false)
+    let mut stream = StreamingEncoder::baseline_fastest()
         .quality(85)
         .subsampling(Subsampling::S420)
         .start_rgb(width, height, &mut output)
@@ -837,7 +845,7 @@ fn test_streaming_encoder_gray() {
         }
     }
 
-    let streaming = StreamingEncoder::new(false).quality(85);
+    let streaming = StreamingEncoder::baseline_fastest().quality(85);
     let streaming_data = streaming.encode_gray(&gray_data, width, height).unwrap();
 
     assert_eq!(streaming_data[0], 0xFF);
@@ -919,7 +927,7 @@ fn test_eob_optimization_produces_valid_jpeg() {
 
     // Encode with EOB optimization enabled
     let trellis_with_eob = TrellisConfig::default().eob_optimization(true);
-    let with_eob = Encoder::new(false)
+    let with_eob = Encoder::baseline_optimized()
         .quality(75)
         .progressive(true)
         .trellis(trellis_with_eob)
@@ -928,7 +936,7 @@ fn test_eob_optimization_produces_valid_jpeg() {
 
     // Encode with EOB optimization disabled
     let trellis_without_eob = TrellisConfig::default().eob_optimization(false);
-    let without_eob = Encoder::new(false)
+    let without_eob = Encoder::baseline_optimized()
         .quality(75)
         .progressive(true)
         .trellis(trellis_without_eob)
@@ -998,7 +1006,7 @@ fn test_eob_optimization_grayscale() {
 
     // Encode with EOB optimization
     let trellis_with_eob = TrellisConfig::default().eob_optimization(true);
-    let with_eob = Encoder::new(false)
+    let with_eob = Encoder::baseline_optimized()
         .quality(75)
         .progressive(true)
         .trellis(trellis_with_eob)
@@ -1062,7 +1070,7 @@ fn test_encode_decode_permutations() {
                                 TrellisConfig::disabled()
                             };
 
-                            let encoder = Encoder::new(false)
+                            let encoder = Encoder::baseline_optimized()
                                 .quality(quality)
                                 .progressive(progressive)
                                 .subsampling(subsampling)
@@ -1154,7 +1162,7 @@ fn test_grayscale_encode_decode_permutations() {
                             TrellisConfig::disabled()
                         };
 
-                        let encoder = Encoder::new(false)
+                        let encoder = Encoder::baseline_optimized()
                             .quality(quality)
                             .progressive(progressive)
                             .optimize_huffman(optimize_huffman)
@@ -1197,4 +1205,111 @@ fn test_grayscale_encode_decode_permutations() {
         "Successfully tested {} grayscale encode+decode permutations",
         test_count
     );
+}
+
+/// Test smoothing filter for dithered image simulation.
+#[test]
+fn test_smoothing_filter() {
+    // Create a "dithered" image with alternating pixels
+    let width = 64u32;
+    let height = 64u32;
+    let mut rgb_data = vec![0u8; (width * height * 3) as usize];
+    for y in 0..height {
+        for x in 0..width {
+            let i = ((y * width + x) * 3) as usize;
+            let val = if (x + y) % 2 == 0 { 255 } else { 0 };
+            rgb_data[i] = val;
+            rgb_data[i + 1] = val;
+            rgb_data[i + 2] = val;
+        }
+    }
+
+    // Encode without smoothing
+    let no_smooth = Encoder::baseline_optimized()
+        .quality(75)
+        .smoothing(0)
+        .encode_rgb(&rgb_data, width, height)
+        .unwrap();
+
+    // Encode with smoothing
+    let with_smooth = Encoder::baseline_optimized()
+        .quality(75)
+        .smoothing(50)
+        .encode_rgb(&rgb_data, width, height)
+        .unwrap();
+
+    // Both should produce valid JPEGs
+    let mut decoder = jpeg_decoder::Decoder::new(&no_smooth[..]);
+    decoder.decode().expect("No-smoothing JPEG should decode");
+
+    let mut decoder = jpeg_decoder::Decoder::new(&with_smooth[..]);
+    decoder.decode().expect("Smoothed JPEG should decode");
+
+    // Smoothing on dithered images typically produces smaller files
+    // (less high-frequency content after smoothing)
+    println!(
+        "Dithered image: no_smooth={} bytes, with_smooth={} bytes",
+        no_smooth.len(),
+        with_smooth.len()
+    );
+}
+
+/// Test alternate quantization tables.
+#[test]
+fn test_alternate_quant_tables() {
+    let width = 64u32;
+    let height = 64u32;
+    let rgb_data = vec![128u8; (width * height * 3) as usize];
+
+    let tables = [
+        QuantTableIdx::JpegAnnexK,
+        QuantTableIdx::Flat,
+        QuantTableIdx::MssimTuned,
+        QuantTableIdx::ImageMagick, // default
+        QuantTableIdx::PsnrHvsM,
+        QuantTableIdx::Klein,
+        QuantTableIdx::Watson,
+        QuantTableIdx::Ahumada,
+        QuantTableIdx::Peterson,
+    ];
+
+    for table in &tables {
+        let jpeg = Encoder::baseline_optimized()
+            .quality(75)
+            .quant_tables(*table)
+            .encode_rgb(&rgb_data, width, height)
+            .unwrap();
+
+        let mut decoder = jpeg_decoder::Decoder::new(&jpeg[..]);
+        decoder
+            .decode()
+            .unwrap_or_else(|e| panic!("Failed to decode with {:?} table: {:?}", table, e));
+
+        println!("{:?}: {} bytes", table, jpeg.len());
+    }
+}
+
+/// Test custom quantization tables.
+#[test]
+fn test_custom_quant_tables() {
+    let width = 64u32;
+    let height = 64u32;
+    let rgb_data = vec![128u8; (width * height * 3) as usize];
+
+    // Custom flat table with value 16
+    let custom_table = [16u16; 64];
+
+    let jpeg = Encoder::baseline_optimized()
+        .quality(75)
+        .custom_luma_qtable(custom_table)
+        .custom_chroma_qtable(custom_table)
+        .encode_rgb(&rgb_data, width, height)
+        .unwrap();
+
+    let mut decoder = jpeg_decoder::Decoder::new(&jpeg[..]);
+    decoder
+        .decode()
+        .expect("Custom quant table JPEG should decode");
+
+    println!("Custom quant table: {} bytes", jpeg.len());
 }

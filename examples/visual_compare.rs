@@ -43,7 +43,7 @@ fn main() {
 
     for q in qualities {
         // Encode with Rust
-        let rust_data = Encoder::new(false)
+        let rust_data = Encoder::baseline_optimized()
             .quality(q)
             .progressive(true)
             .optimize_huffman(true)

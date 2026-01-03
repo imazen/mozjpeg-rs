@@ -38,7 +38,7 @@ fn test_444_subsampling_corpus() {
         };
 
         // Rust encoder with 4:4:4
-        let rust_jpeg = mozjpeg_rs::Encoder::new()
+        let rust_jpeg = mozjpeg_rs::Encoder::baseline_optimized()
             .quality(75)
             .subsampling(Subsampling::S444)
             .encode_rgb(&rgb_data, width, height)

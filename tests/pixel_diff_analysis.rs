@@ -33,7 +33,7 @@ fn test_encoder_produces_valid_output() {
         }
 
         // Encode with baseline (no optimizations)
-        let jpeg = Encoder::new()
+        let jpeg = Encoder::baseline_optimized()
             .quality(85)
             .subsampling(subsampling)
             .progressive(false)
@@ -88,7 +88,7 @@ fn test_progressive_encoder_valid() {
         rgb[i] = (i % 256) as u8;
     }
 
-    let jpeg = Encoder::new()
+    let jpeg = Encoder::baseline_optimized()
         .quality(85)
         .progressive(true)
         .encode_rgb(&rgb, width, height)

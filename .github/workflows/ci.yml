@@ -87,31 +87,42 @@ jobs:
       - name: Run FFI validation tests (crates.io mozjpeg-sys)
         run: cargo test --test ffi_validation
 
-  # Separate job for tests requiring local mozjpeg source
-  # This is disabled by default as it requires cloning the C mozjpeg repo
+      - name: Run preset parity tests (vs mozjpeg crate)
+        run: cargo test --test preset_parity
+
+      - name: Run mozjpeg-sys-config tests
+        run: cargo test --features mozjpeg-sys-config compat_tests
+
+  # Tests requiring local mozjpeg source with test exports
   test-ffi-local:
     name: Test FFI Comparison (Local mozjpeg)
     runs-on: ubuntu-latest
-    if: false  # Disabled - requires ../mozjpeg C source
 
     steps:
       - uses: actions/checkout@v4
 
-      - name: Clone mozjpeg C source
+      - name: Clone mozjpeg C source (with test exports)
         run: |
           cd ..
-          git clone --depth=1 https://github.com/nickcamel/mozjpeg.git mozjpeg
+          git clone --depth=1 https://github.com/imazen/mozjpeg.git mozjpeg
 
       - name: Install dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y cmake nasm
 
+      - name: Build mozjpeg C library
+        run: |
+          cd ../mozjpeg
+          mkdir -p build && cd build
+          cmake -DCMAKE_BUILD_TYPE=Release -DENABLE_SHARED=OFF -DENABLE_STATIC=ON ..
+          make -j$(nproc)
+
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
 
       - name: Run FFI comparison tests
-        run: cargo test --test ffi_comparison
+        run: cargo test --test ffi_comparison --features __sys_local_available
 
       - name: Run sys-local tests
         run: cargo test -p sys-local

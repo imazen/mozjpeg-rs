@@ -76,6 +76,128 @@ impl PixelDensity {
 }
 
 // =============================================================================
+// Encoder Presets
+// =============================================================================
+
+/// Encoder preset controlling compression mode and optimization level.
+///
+/// Choose based on your priorities:
+///
+/// | Preset | Time | Size | Use Case |
+/// |--------|------|------|----------|
+/// | `BaselineFastest` | ~2ms | baseline | Real-time encoding, thumbnails |
+/// | `BaselineBalanced` | ~7ms | -13% | Sequential playback, max compat |
+/// | `ProgressiveBalanced` | ~9ms | -13% | Web images (recommended default) |
+/// | `ProgressiveSmallest` | ~21ms | -14% | Storage, archival |
+///
+/// *Benchmarks: 512×512 Q75 image, times are approximate*
+///
+/// # Baseline vs Progressive
+///
+/// - **Baseline**: Decodes top-to-bottom, faster encode, wider compatibility
+/// - **Progressive**: Renders blurry-to-sharp, smaller files, slower encode
+///
+/// # Example
+///
+/// ```no_run
+/// use mozjpeg_rs::{Encoder, Preset};
+///
+/// let pixels: Vec<u8> = vec![128; 512 * 512 * 3];
+///
+/// // Default: good balance for web images
+/// let jpeg = Encoder::new(Preset::default())
+///     .quality(85)
+///     .encode_rgb(&pixels, 512, 512)
+///     .unwrap();
+///
+/// // Fastest for real-time applications
+/// let jpeg = Encoder::new(Preset::BaselineFastest)
+///     .quality(80)
+///     .encode_rgb(&pixels, 512, 512)
+///     .unwrap();
+/// ```
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Preset {
+    /// Fastest encoding with no optimizations.
+    ///
+    /// - **Progressive**: No
+    /// - **Trellis**: Disabled
+    /// - **Huffman opt**: No
+    /// - **Deringing**: No
+    ///
+    /// Files are ~10-20% larger than optimized modes, but encoding is 4-10x faster.
+    /// Use for real-time encoding, thumbnails, or when speed is critical.
+    BaselineFastest,
+
+    /// Baseline (sequential) JPEG with all optimizations.
+    ///
+    /// - **Progressive**: No
+    /// - **Trellis**: AC + DC
+    /// - **Huffman opt**: Yes
+    /// - **Deringing**: Yes
+    ///
+    /// Best for applications requiring sequential decode order (video players,
+    /// legacy systems) while still achieving good compression.
+    BaselineBalanced,
+
+    /// Progressive JPEG with all optimizations (recommended default).
+    ///
+    /// - **Progressive**: Yes (9-scan)
+    /// - **Trellis**: AC + DC
+    /// - **Huffman opt**: Yes
+    /// - **Deringing**: Yes
+    /// - **Optimize scans**: No
+    ///
+    /// Good balance of size, quality, and encoding speed. Progressive rendering
+    /// provides better perceived loading experience for web images.
+    ///
+    /// Note: Does NOT include `optimize_scans` (which adds ~100% encoding time
+    /// for only ~1% additional size reduction).
+    #[default]
+    ProgressiveBalanced,
+
+    /// Maximum compression (matches C mozjpeg defaults).
+    ///
+    /// - **Progressive**: Yes (9-scan)
+    /// - **Trellis**: AC + DC
+    /// - **Huffman opt**: Yes
+    /// - **Deringing**: Yes
+    /// - **Optimize scans**: Yes
+    ///
+    /// Tries multiple progressive scan configurations to find the smallest output.
+    /// This adds ~100% encoding time for only ~1% additional size reduction.
+    ///
+    /// Matches C mozjpeg's `JCP_MAX_COMPRESSION` profile and the `mozjpeg` crate's
+    /// default behavior. Use when file size is critical and encoding time is not.
+    ProgressiveSmallest,
+}
+
+impl Preset {
+    /// Returns true if this preset uses progressive encoding.
+    pub const fn is_progressive(self) -> bool {
+        matches!(
+            self,
+            Preset::ProgressiveBalanced | Preset::ProgressiveSmallest
+        )
+    }
+
+    /// Returns true if trellis quantization is enabled.
+    pub const fn has_trellis(self) -> bool {
+        !matches!(self, Preset::BaselineFastest)
+    }
+
+    /// Returns true if Huffman table optimization is enabled.
+    pub const fn has_huffman_opt(self) -> bool {
+        !matches!(self, Preset::BaselineFastest)
+    }
+
+    /// Returns true if optimize_scans is enabled.
+    pub const fn has_optimize_scans(self) -> bool {
+        matches!(self, Preset::ProgressiveSmallest)
+    }
+}
+
+// =============================================================================
 // Color Spaces
 // =============================================================================
 

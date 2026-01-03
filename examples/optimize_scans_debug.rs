@@ -20,7 +20,7 @@ fn main() {
     let quality = 85u8;
 
     // Rust with optimize_scans
-    let rust_jpeg = Encoder::new(false)
+    let rust_jpeg = Encoder::baseline_optimized()
         .quality(quality)
         .progressive(true)
         .trellis(TrellisConfig::default())

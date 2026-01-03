@@ -48,7 +48,7 @@ fn main() {
 
             if let Some((rgb, width, height)) = load_png(&path) {
                 // Simple progressive (optimize_scans=false)
-                let simple = Encoder::new(false)
+                let simple = Encoder::baseline_optimized()
                     .quality(quality)
                     .progressive(true)
                     .optimize_huffman(true)
@@ -59,7 +59,7 @@ fn main() {
                     .unwrap();
 
                 // With optimize_scans
-                let opt = Encoder::new(false)
+                let opt = Encoder::baseline_optimized()
                     .quality(quality)
                     .progressive(true)
                     .optimize_huffman(true)

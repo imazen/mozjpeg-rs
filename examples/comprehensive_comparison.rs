@@ -23,7 +23,7 @@ fn main() {
     println!("=== TRELLIS ON ===");
     println!("{:>4} {:>8} {:>8} {:>8}", "Q", "Rust", "C", "Diff");
     for quality in [50, 75, 85, 90, 95, 97] {
-        let rust = Encoder::new(false)
+        let rust = Encoder::baseline_optimized()
             .quality(quality)
             .progressive(false)
             .optimize_huffman(true)
@@ -47,7 +47,7 @@ fn main() {
     println!("=== TRELLIS OFF ===");
     println!("{:>4} {:>8} {:>8} {:>8}", "Q", "Rust", "C", "Diff");
     for quality in [50, 75, 85, 90, 95, 97] {
-        let rust = Encoder::new(false)
+        let rust = Encoder::baseline_optimized()
             .quality(quality)
             .progressive(false)
             .optimize_huffman(true)

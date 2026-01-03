@@ -154,7 +154,7 @@ fn process_image(path: &Path) -> Result<(usize, usize, f64, f64), Box<dyn std::e
     };
 
     // Encode with Rust mozjpeg
-    let encoder = mozjpeg_rs::Encoder::new(false).quality(75);
+    let encoder = mozjpeg_rs::Encoder::baseline_optimized().quality(75);
     let rust_jpeg = encoder.encode_rgb(&rgb_data, width, height)?;
     let rust_size = rust_jpeg.len();
 

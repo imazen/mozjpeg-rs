@@ -20,7 +20,7 @@ fn main() {
     let quality = 85u8;
 
     // Test 1: Rust with deringing ON (default), C without explicit setting
-    let rust_with_deringing = Encoder::new(false)
+    let rust_with_deringing = Encoder::baseline_optimized()
         .quality(quality)
         .progressive(false)
         .optimize_huffman(true)
@@ -30,7 +30,7 @@ fn main() {
         .unwrap();
 
     // Test 2: Rust with deringing OFF
-    let rust_without_deringing = Encoder::new(false)
+    let rust_without_deringing = Encoder::baseline_optimized()
         .quality(quality)
         .progressive(false)
         .optimize_huffman(true)

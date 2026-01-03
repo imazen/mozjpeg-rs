@@ -84,7 +84,7 @@ fn load_png(path: &Path) -> Option<(Vec<u8>, u32, u32)> {
 
 /// Encode with Rust mozjpeg-oxide
 fn encode_rust(rgb: &[u8], width: u32, height: u32, quality: u8, optimize_scans: bool) -> Vec<u8> {
-    Encoder::new()
+    Encoder::baseline_optimized()
         .quality(quality)
         .progressive(true)
         .optimize_huffman(true)

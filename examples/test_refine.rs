@@ -13,7 +13,7 @@ fn main() {
     }
 
     // Test with progressive + refinement
-    let jpeg = Encoder::new(false)
+    let jpeg = Encoder::baseline_optimized()
         .quality(90)
         .progressive(true)
         .optimize_huffman(false) // Use standard tables

@@ -14,7 +14,7 @@ fn main() {
     let quality = 85u8;
 
     // Progressive WITHOUT optimize_scans
-    let rust_prog = Encoder::new(false)
+    let rust_prog = Encoder::baseline_optimized()
         .quality(quality)
         .progressive(true)
         .trellis(TrellisConfig::default())
@@ -24,7 +24,7 @@ fn main() {
         .unwrap();
 
     // Progressive WITH optimize_scans
-    let rust_opt = Encoder::new(false)
+    let rust_opt = Encoder::baseline_optimized()
         .quality(quality)
         .progressive(true)
         .trellis(TrellisConfig::default())

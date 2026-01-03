@@ -94,7 +94,7 @@ fn main() {
         };
 
         // Encode with Rust
-        let rust_encoder = Encoder::new(false)
+        let rust_encoder = Encoder::baseline_optimized()
             .quality(quality)
             .subsampling(Subsampling::S420);
         let rust_jpeg = rust_encoder.encode_rgb(&rgb_data, width, height).unwrap();

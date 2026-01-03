@@ -324,7 +324,7 @@ fn encode_rust(
     // - Optimized Huffman tables
     // - Overshoot deringing
     // Note: optimize_scans is disabled for both to ensure fair comparison
-    Encoder::new(false)
+    Encoder::baseline_optimized()
         .quality(quality)
         .progressive(true)
         .optimize_huffman(true)

@@ -30,7 +30,7 @@ fn test_trellis_progressive_comparison() {
         .expect("Rust progressive encoding failed");
 
     // Rust baseline with trellis enabled (default)
-    let rust_baseline = mozjpeg_rs::Encoder::new()
+    let rust_baseline = mozjpeg_rs::Encoder::baseline_optimized()
         .quality(75)
         .encode_rgb(&rgb_data, width, height)
         .expect("Rust baseline encoding failed");
@@ -157,7 +157,7 @@ fn test_small_image_encoding() {
         .encode_rgb(&rgb, width, height)
         .expect("Progressive failed");
 
-    let baseline = mozjpeg_rs::Encoder::new()
+    let baseline = mozjpeg_rs::Encoder::baseline_optimized()
         .quality(85)
         .encode_rgb(&rgb, width, height)
         .expect("Baseline failed");

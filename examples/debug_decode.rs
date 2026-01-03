@@ -52,7 +52,7 @@ fn main() {
             None => continue,
         };
 
-        let prog = Encoder::new(false)
+        let prog = Encoder::baseline_optimized()
             .quality(85)
             .progressive(true)
             .optimize_huffman(true)
@@ -83,7 +83,7 @@ fn main() {
 
         println!("\nTesting {} at different quality levels:", name);
         for q in [50, 60, 70, 75, 80, 85, 90, 95] {
-            let prog = Encoder::new(false)
+            let prog = Encoder::baseline_optimized()
                 .quality(q)
                 .progressive(true)
                 .optimize_huffman(true)
@@ -101,7 +101,7 @@ fn main() {
 
         // Test without trellis
         println!("\nTesting {} without trellis:", name);
-        let prog = Encoder::new(false)
+        let prog = Encoder::baseline_optimized()
             .quality(85)
             .progressive(true)
             .optimize_huffman(true)
@@ -118,7 +118,7 @@ fn main() {
 
         // Test with different subsampling
         println!("\nTesting {} with 4:4:4 subsampling:", name);
-        let prog = Encoder::new(false)
+        let prog = Encoder::baseline_optimized()
             .quality(85)
             .progressive(true)
             .optimize_huffman(true)

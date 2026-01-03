@@ -82,7 +82,7 @@ fn main() {
                             TrellisConfig::disabled()
                         };
 
-                        let jpeg_data = Encoder::new(false)
+                        let jpeg_data = Encoder::baseline_optimized()
                             .quality(*quality)
                             .subsampling(*subsampling)
                             .progressive(*progressive)

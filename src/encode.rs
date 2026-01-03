@@ -12,12 +12,11 @@
 //! # Examples
 //!
 //! ```ignore
-//! use mozjpeg_rs::Encoder;
+//! use mozjpeg_rs::{Encoder, Preset};
 //!
 //! // Full-featured batch encoding
-//! let jpeg = Encoder::new(false)
+//! let jpeg = Encoder::new(Preset::default())
 //!     .quality(85)
-//!     .progressive(true)
 //!     .encode_rgb(&pixels, width, height)?;
 //!
 //! // Streaming encoding (memory-efficient for large images)
@@ -47,7 +46,7 @@ use crate::scan_optimize::{generate_search_scans, ScanSearchConfig, ScanSelector
 use crate::scan_trial::ScanTrialEncoder;
 use crate::simd::SimdOps;
 use crate::trellis::trellis_quantize_block;
-use crate::types::{PixelDensity, Subsampling, TrellisConfig};
+use crate::types::{PixelDensity, Preset, Subsampling, TrellisConfig};
 
 mod helpers;
 mod streaming;
@@ -131,63 +130,63 @@ pub struct Encoder {
 
 impl Default for Encoder {
     fn default() -> Self {
-        Self::new(false)
+        Self::new(Preset::default())
     }
 }
 
 impl Encoder {
-    /// Create an encoder with optimal settings for the chosen mode.
+    /// Create an encoder with the specified preset.
     ///
     /// # Arguments
     ///
-    /// * `progressive` - Encoding mode:
-    ///   - `false`: **Baseline** (sequential) JPEG - faster decoding, wider compatibility
-    ///   - `true`: **Progressive** JPEG - smaller files (~20%), progressive rendering
+    /// * `preset` - Encoding preset (see [`Preset`] for details):
+    ///   - [`BaselineFastest`](Preset::BaselineFastest): No optimizations, fastest encoding
+    ///   - [`BaselineBalanced`](Preset::BaselineBalanced): Baseline with all optimizations
+    ///   - [`ProgressiveBalanced`](Preset::ProgressiveBalanced): Progressive with optimizations (default)
+    ///   - [`ProgressiveSmallest`](Preset::ProgressiveSmallest): Maximum compression
     ///
-    /// Both modes enable all mozjpeg optimizations (trellis, Huffman, deringing).
-    /// Progressive mode additionally enables `optimize_scans` to match C mozjpeg.
+    /// # Preset Comparison
     ///
-    /// # Settings by Mode
+    /// | Preset | Time | Size | Best For |
+    /// |--------|------|------|----------|
+    /// | `BaselineFastest` | ~2ms | baseline | Real-time, thumbnails |
+    /// | `BaselineBalanced` | ~7ms | -13% | Sequential playback |
+    /// | `ProgressiveBalanced` | ~9ms | -13% | Web images (default) |
+    /// | `ProgressiveSmallest` | ~21ms | -14% | Storage, archival |
     ///
-    /// | Setting | `new(false)` | `new(true)` |
-    /// |---------|--------------|-------------|
-    /// | progressive | false | **true** |
-    /// | optimize_scans | false | **true** |
-    /// | trellis | enabled | enabled |
-    /// | optimize_huffman | true | true |
-    /// | overshoot_deringing | true | true |
-    /// | quality | 75 | 75 |
-    /// | subsampling | 4:2:0 | 4:2:0 |
-    ///
-    /// # C mozjpeg Compatibility
-    ///
-    /// - `new(true)` matches C mozjpeg's `jpeg_set_defaults()` (JCP_MAX_COMPRESSION)
-    /// - `new(false)` uses baseline mode with all optimizations
+    /// *Benchmarks: 512×512 Q75 image*
     ///
     /// # Example
     ///
     /// ```no_run
-    /// use mozjpeg_rs::Encoder;
+    /// use mozjpeg_rs::{Encoder, Preset};
     ///
     /// let pixels: Vec<u8> = vec![128; 256 * 256 * 3];
     ///
-    /// // Baseline - fast decode, good compatibility
-    /// let baseline = Encoder::new(false)
+    /// // Default: progressive with good balance
+    /// let jpeg = Encoder::new(Preset::default())
     ///     .quality(85)
     ///     .encode_rgb(&pixels, 256, 256)
     ///     .unwrap();
     ///
-    /// // Progressive - smaller files, matches C mozjpeg
-    /// let progressive = Encoder::new(true)
+    /// // Fastest for real-time applications
+    /// let jpeg = Encoder::new(Preset::BaselineFastest)
+    ///     .quality(80)
+    ///     .encode_rgb(&pixels, 256, 256)
+    ///     .unwrap();
+    ///
+    /// // Maximum compression (matches C mozjpeg)
+    /// let jpeg = Encoder::new(Preset::ProgressiveSmallest)
     ///     .quality(85)
     ///     .encode_rgb(&pixels, 256, 256)
     ///     .unwrap();
     /// ```
-    pub fn new(progressive: bool) -> Self {
-        if progressive {
-            Self::max_compression()
-        } else {
-            Self::baseline_optimized()
+    pub fn new(preset: Preset) -> Self {
+        match preset {
+            Preset::BaselineFastest => Self::fastest(),
+            Preset::BaselineBalanced => Self::baseline_optimized(),
+            Preset::ProgressiveBalanced => Self::progressive_balanced(),
+            Preset::ProgressiveSmallest => Self::max_compression(),
         }
     }
 
@@ -282,7 +281,7 @@ impl Encoder {
     /// # File Size Comparison
     ///
     /// Typical results at Q75 (256×256 image):
-    /// - `Encoder::new(false)`: ~650 bytes (baseline)
+    /// - `Encoder::baseline_optimized()`: ~650 bytes (baseline)
     /// - `Encoder::max_compression()`: ~520 bytes (**~20% smaller**)
     ///
     /// # Example
@@ -310,6 +309,65 @@ impl Encoder {
             optimize_huffman: true,
             overshoot_deringing: true,
             optimize_scans: true,
+            restart_interval: 0,
+            pixel_density: PixelDensity::default(),
+            exif_data: None,
+            icc_profile: None,
+            custom_markers: Vec::new(),
+            simd: SimdOps::detect(),
+            smoothing: 0,
+        }
+    }
+
+    /// Create encoder with progressive mode and all optimizations except optimize_scans.
+    ///
+    /// This is the **recommended default** for most use cases. It provides:
+    /// - Progressive rendering (blurry-to-sharp loading)
+    /// - All mozjpeg optimizations (trellis, Huffman, deringing)
+    /// - Good balance between file size and encoding speed
+    ///
+    /// # Settings
+    ///
+    /// | Setting | Value | Notes |
+    /// |---------|-------|-------|
+    /// | progressive | **true** | Multi-scan progressive JPEG |
+    /// | optimize_scans | **false** | Uses fixed 9-scan config |
+    /// | trellis | enabled | AC + DC trellis quantization |
+    /// | optimize_huffman | true | 2-pass for optimal tables |
+    /// | overshoot_deringing | true | Reduces ringing on hard edges |
+    ///
+    /// # vs `max_compression()`
+    ///
+    /// This preset omits `optimize_scans` which:
+    /// - Saves ~100% encoding time (9ms vs 21ms at 512×512)
+    /// - Loses only ~1% file size reduction
+    ///
+    /// Use `max_compression()` only when file size is critical.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use mozjpeg_rs::Encoder;
+    ///
+    /// let pixels: Vec<u8> = vec![128; 256 * 256 * 3];
+    /// let jpeg = Encoder::progressive_balanced()
+    ///     .quality(85)
+    ///     .encode_rgb(&pixels, 256, 256)
+    ///     .unwrap();
+    /// ```
+    pub fn progressive_balanced() -> Self {
+        Self {
+            quality: 75,
+            progressive: true,
+            subsampling: Subsampling::S420,
+            quant_table_idx: QuantTableIdx::ImageMagick,
+            custom_luma_qtable: None,
+            custom_chroma_qtable: None,
+            trellis: TrellisConfig::default(),
+            force_baseline: false,
+            optimize_huffman: true,
+            overshoot_deringing: true,
+            optimize_scans: false, // Key difference from max_compression()
             restart_interval: 0,
             pixel_density: PixelDensity::default(),
             exif_data: None,
@@ -459,7 +517,7 @@ impl Encoder {
     /// use mozjpeg_rs::Encoder;
     ///
     /// // Convert a dithered GIF to JPEG with smoothing
-    /// let encoder = Encoder::new(false)
+    /// let encoder = Encoder::baseline_optimized()
     ///     .quality(85)
     ///     .smoothing(30);
     /// ```
@@ -500,7 +558,7 @@ impl Encoder {
     /// ```
     /// use mozjpeg_rs::{Encoder, PixelDensity};
     ///
-    /// let encoder = Encoder::new(false)
+    /// let encoder = Encoder::baseline_optimized()
     ///     .pixel_density(PixelDensity::dpi(300, 300)); // 300 DPI
     /// ```
     pub fn pixel_density(mut self, density: PixelDensity) -> Self {
@@ -577,8 +635,8 @@ impl Encoder {
     /// use mozjpeg_rs::Encoder;
     ///
     /// // These are equivalent:
-    /// let enc1 = Encoder::new(false).baseline(true);
-    /// let enc2 = Encoder::new(false).progressive(false);
+    /// let enc1 = Encoder::baseline_optimized().baseline(true);
+    /// let enc2 = Encoder::baseline_optimized().progressive(false);
     /// ```
     #[inline]
     pub fn baseline(self, enable: bool) -> Self {
@@ -2699,7 +2757,7 @@ impl Encoder {
     /// Note that streaming mode does NOT support trellis quantization, progressive
     /// mode, or Huffman optimization (these require buffering the entire image).
     ///
-    /// For full-featured encoding with all mozjpeg optimizations, use [`Encoder::new(false)`]
+    /// For full-featured encoding with all mozjpeg optimizations, use [`Encoder::new(Preset)`]
     /// with [`encode_rgb()`](Encoder::encode_rgb) or [`encode_gray()`](Encoder::encode_gray).
     ///
     /// # Example
@@ -2717,7 +2775,362 @@ impl Encoder {
     /// stream.finish()?;
     /// ```
     pub fn streaming() -> StreamingEncoder {
-        StreamingEncoder::new()
+        StreamingEncoder::baseline_fastest()
+    }
+}
+
+// ============================================================================
+// mozjpeg-sys Configuration (optional feature)
+// ============================================================================
+
+#[cfg(feature = "mozjpeg-sys-config")]
+impl Encoder {
+    /// Configure a C mozjpeg `jpeg_compress_struct` with settings matching this encoder.
+    ///
+    /// This applies all encoder settings to the C struct, allowing you to use
+    /// the C mozjpeg API with identical configuration to our Rust encoder.
+    ///
+    /// # Safety
+    ///
+    /// - `cinfo` must be a valid, initialized `jpeg_compress_struct`
+    /// - `jpeg_CreateCompress` must have been called on `cinfo`
+    /// - `jpeg_set_defaults` will be called by this method
+    ///
+    /// # Arguments
+    ///
+    /// - `cinfo`: Mutable reference to an initialized `jpeg_compress_struct`
+    /// - `width`: Image width in pixels
+    /// - `height`: Image height in pixels
+    ///
+    /// # Returns
+    ///
+    /// - `Ok(ConfigWarnings)`: Configuration succeeded, warnings indicate settings
+    ///   that must be applied after `jpeg_start_compress`
+    /// - `Err(ConfigError)`: Configuration failed due to unsupported settings
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use mozjpeg_rs::{Encoder, Preset};
+    /// use mozjpeg_sys::*;
+    ///
+    /// unsafe {
+    ///     let mut cinfo: jpeg_compress_struct = std::mem::zeroed();
+    ///     let mut jerr: jpeg_error_mgr = std::mem::zeroed();
+    ///     cinfo.common.err = jpeg_std_error(&mut jerr);
+    ///     jpeg_CreateCompress(&mut cinfo, JPEG_LIB_VERSION as i32,
+    ///         std::mem::size_of::<jpeg_compress_struct>());
+    ///
+    ///     let encoder = Encoder::new(Preset::BaselineBalanced).quality(75);
+    ///     let warnings = encoder.configure_sys(&mut cinfo, 640, 480).unwrap();
+    ///
+    ///     if warnings.has_icc_profile {
+    ///         // Handle ICC profile separately after jpeg_start_compress
+    ///     }
+    /// }
+    /// ```
+    #[allow(unsafe_code)]
+    pub unsafe fn configure_sys(
+        &self,
+        cinfo: &mut mozjpeg_sys::jpeg_compress_struct,
+        width: u32,
+        height: u32,
+    ) -> std::result::Result<crate::compat::ConfigWarnings, crate::compat::ConfigError> {
+        use crate::compat::{ConfigError, ConfigWarnings};
+        use mozjpeg_sys::*;
+
+        let mut warnings = ConfigWarnings::default();
+
+        // Check for unsupported settings first
+        if self.custom_luma_qtable.is_some() || self.custom_chroma_qtable.is_some() {
+            return Err(ConfigError::CustomQuantTablesNotSupported);
+        }
+
+        // Set image dimensions and colorspace
+        cinfo.image_width = width;
+        cinfo.image_height = height;
+        cinfo.input_components = 3;
+        cinfo.in_color_space = J_COLOR_SPACE::JCS_RGB;
+
+        // Initialize defaults (this sets JCP_MAX_COMPRESSION profile)
+        jpeg_set_defaults(cinfo);
+
+        // Set quant table index BEFORE jpeg_set_quality
+        let table_idx = self.quant_table_idx as i32;
+        jpeg_c_set_int_param(cinfo, J_INT_PARAM::JINT_BASE_QUANT_TBL_IDX, table_idx);
+
+        // Set quality (must come after quant table index)
+        jpeg_set_quality(
+            cinfo,
+            self.quality as i32,
+            if self.force_baseline { 1 } else { 0 },
+        );
+
+        // Set subsampling factors
+        let (h_samp, v_samp) = match self.subsampling {
+            Subsampling::S444 => (1, 1),
+            Subsampling::S422 => (2, 1),
+            Subsampling::S420 => (2, 2),
+            Subsampling::S440 => (1, 2),
+            Subsampling::Gray => {
+                // Grayscale: single component
+                cinfo.input_components = 1;
+                cinfo.in_color_space = J_COLOR_SPACE::JCS_GRAYSCALE;
+                (1, 1)
+            }
+        };
+
+        if self.subsampling != Subsampling::Gray {
+            (*cinfo.comp_info.offset(0)).h_samp_factor = h_samp;
+            (*cinfo.comp_info.offset(0)).v_samp_factor = v_samp;
+            (*cinfo.comp_info.offset(1)).h_samp_factor = 1;
+            (*cinfo.comp_info.offset(1)).v_samp_factor = 1;
+            (*cinfo.comp_info.offset(2)).h_samp_factor = 1;
+            (*cinfo.comp_info.offset(2)).v_samp_factor = 1;
+        }
+
+        // Huffman optimization
+        cinfo.optimize_coding = if self.optimize_huffman { 1 } else { 0 };
+
+        // Trellis quantization
+        jpeg_c_set_bool_param(
+            cinfo,
+            J_BOOLEAN_PARAM::JBOOLEAN_TRELLIS_QUANT,
+            if self.trellis.enabled { 1 } else { 0 },
+        );
+        jpeg_c_set_bool_param(
+            cinfo,
+            J_BOOLEAN_PARAM::JBOOLEAN_TRELLIS_QUANT_DC,
+            if self.trellis.dc_enabled { 1 } else { 0 },
+        );
+
+        // Overshoot deringing
+        jpeg_c_set_bool_param(
+            cinfo,
+            J_BOOLEAN_PARAM::JBOOLEAN_OVERSHOOT_DERINGING,
+            if self.overshoot_deringing { 1 } else { 0 },
+        );
+
+        // Smoothing factor
+        cinfo.smoothing_factor = self.smoothing as i32;
+
+        // Restart interval
+        cinfo.restart_interval = self.restart_interval as u32;
+
+        // optimize_scans MUST be set BEFORE jpeg_simple_progression
+        jpeg_c_set_bool_param(
+            cinfo,
+            J_BOOLEAN_PARAM::JBOOLEAN_OPTIMIZE_SCANS,
+            if self.optimize_scans { 1 } else { 0 },
+        );
+
+        // Progressive mode (must come AFTER optimize_scans)
+        if self.progressive {
+            jpeg_simple_progression(cinfo);
+        } else {
+            // Ensure baseline mode
+            cinfo.num_scans = 0;
+            cinfo.scan_info = std::ptr::null();
+        }
+
+        // Check for settings that require post-start handling
+        if self.exif_data.is_some() {
+            warnings.has_exif = true;
+        }
+        if self.icc_profile.is_some() {
+            warnings.has_icc_profile = true;
+        }
+        if !self.custom_markers.is_empty() {
+            warnings.has_custom_markers = true;
+        }
+
+        Ok(warnings)
+    }
+
+    /// Get the EXIF data configured on this encoder, if any.
+    ///
+    /// Use this to write EXIF data as an APP1 marker after `jpeg_start_compress`.
+    #[cfg(feature = "mozjpeg-sys-config")]
+    pub fn sys_exif_data(&self) -> Option<&[u8]> {
+        self.exif_data.as_deref()
+    }
+
+    /// Get the ICC profile configured on this encoder, if any.
+    ///
+    /// Use this with `jpeg_write_icc_profile` after `jpeg_start_compress`.
+    #[cfg(feature = "mozjpeg-sys-config")]
+    pub fn sys_icc_profile(&self) -> Option<&[u8]> {
+        self.icc_profile.as_deref()
+    }
+
+    /// Get the custom markers configured on this encoder.
+    ///
+    /// Use these with `jpeg_write_marker` after `jpeg_start_compress`.
+    #[cfg(feature = "mozjpeg-sys-config")]
+    pub fn sys_custom_markers(&self) -> &[(u8, Vec<u8>)] {
+        &self.custom_markers
+    }
+}
+
+#[cfg(all(test, feature = "mozjpeg-sys-config"))]
+#[allow(unsafe_code)]
+mod compat_tests {
+    use super::*;
+    use crate::Preset;
+
+    fn create_test_image(width: u32, height: u32) -> Vec<u8> {
+        vec![128u8; (width * height * 3) as usize]
+    }
+
+    #[test]
+    fn test_configure_sys_baseline_balanced() {
+        use mozjpeg_sys::*;
+        use std::ptr;
+
+        let rgb = create_test_image(64, 64);
+        let encoder = Encoder::new(Preset::BaselineBalanced).quality(75);
+
+        // Encode with Rust
+        let rust_jpeg = encoder
+            .clone()
+            .encode_rgb(&rgb, 64, 64)
+            .expect("Rust encode failed");
+
+        // Encode with C using our configuration
+        let c_jpeg = unsafe {
+            let mut cinfo: jpeg_compress_struct = std::mem::zeroed();
+            let mut jerr: jpeg_error_mgr = std::mem::zeroed();
+
+            cinfo.common.err = jpeg_std_error(&mut jerr);
+            jpeg_CreateCompress(
+                &mut cinfo,
+                JPEG_LIB_VERSION as i32,
+                std::mem::size_of::<jpeg_compress_struct>(),
+            );
+
+            let mut outbuffer: *mut u8 = ptr::null_mut();
+            let mut outsize: libc::c_ulong = 0;
+            jpeg_mem_dest(&mut cinfo, &mut outbuffer, &mut outsize);
+
+            // Configure using our method
+            let warnings = encoder
+                .configure_sys(&mut cinfo, 64, 64)
+                .expect("configure_sys failed");
+            assert!(!warnings.has_warnings());
+
+            jpeg_start_compress(&mut cinfo, 1);
+
+            let row_stride = 64 * 3;
+            let mut row_pointer: [*const u8; 1] = [ptr::null()];
+
+            while cinfo.next_scanline < cinfo.image_height {
+                let offset = cinfo.next_scanline as usize * row_stride;
+                row_pointer[0] = rgb.as_ptr().add(offset);
+                jpeg_write_scanlines(&mut cinfo, row_pointer.as_ptr(), 1);
+            }
+
+            jpeg_finish_compress(&mut cinfo);
+            let result = std::slice::from_raw_parts(outbuffer, outsize as usize).to_vec();
+            libc::free(outbuffer as *mut libc::c_void);
+            jpeg_destroy_compress(&mut cinfo);
+
+            result
+        };
+
+        // Compare sizes - should be very close
+        let diff_pct =
+            ((rust_jpeg.len() as f64 - c_jpeg.len() as f64) / c_jpeg.len() as f64) * 100.0;
+
+        println!(
+            "BaselineBalanced: Rust={} C={} diff={:.2}%",
+            rust_jpeg.len(),
+            c_jpeg.len(),
+            diff_pct
+        );
+
+        // Should be within 2% for identical settings
+        assert!(
+            diff_pct.abs() < 2.0,
+            "Size difference {:.2}% exceeds 2% threshold",
+            diff_pct
+        );
+
+        // Both should decode successfully
+        let mut decoder = jpeg_decoder::Decoder::new(&rust_jpeg[..]);
+        decoder.decode().expect("Rust JPEG should decode");
+
+        let mut decoder = jpeg_decoder::Decoder::new(&c_jpeg[..]);
+        decoder.decode().expect("C JPEG should decode");
+    }
+
+    #[test]
+    fn test_configure_sys_progressive_balanced() {
+        use mozjpeg_sys::*;
+        use std::ptr;
+
+        let rgb = create_test_image(256, 256);
+        let encoder = Encoder::new(Preset::ProgressiveBalanced).quality(85);
+
+        // Encode with Rust
+        let rust_jpeg = encoder
+            .clone()
+            .encode_rgb(&rgb, 256, 256)
+            .expect("Rust encode failed");
+
+        // Encode with C using our configuration
+        let c_jpeg = unsafe {
+            let mut cinfo: jpeg_compress_struct = std::mem::zeroed();
+            let mut jerr: jpeg_error_mgr = std::mem::zeroed();
+
+            cinfo.common.err = jpeg_std_error(&mut jerr);
+            jpeg_CreateCompress(
+                &mut cinfo,
+                JPEG_LIB_VERSION as i32,
+                std::mem::size_of::<jpeg_compress_struct>(),
+            );
+
+            let mut outbuffer: *mut u8 = ptr::null_mut();
+            let mut outsize: libc::c_ulong = 0;
+            jpeg_mem_dest(&mut cinfo, &mut outbuffer, &mut outsize);
+
+            encoder
+                .configure_sys(&mut cinfo, 256, 256)
+                .expect("configure_sys failed");
+
+            jpeg_start_compress(&mut cinfo, 1);
+
+            let row_stride = 256 * 3;
+            let mut row_pointer: [*const u8; 1] = [ptr::null()];
+
+            while cinfo.next_scanline < cinfo.image_height {
+                let offset = cinfo.next_scanline as usize * row_stride;
+                row_pointer[0] = rgb.as_ptr().add(offset);
+                jpeg_write_scanlines(&mut cinfo, row_pointer.as_ptr(), 1);
+            }
+
+            jpeg_finish_compress(&mut cinfo);
+            let result = std::slice::from_raw_parts(outbuffer, outsize as usize).to_vec();
+            libc::free(outbuffer as *mut libc::c_void);
+            jpeg_destroy_compress(&mut cinfo);
+
+            result
+        };
+
+        let diff_pct =
+            ((rust_jpeg.len() as f64 - c_jpeg.len() as f64) / c_jpeg.len() as f64) * 100.0;
+
+        println!(
+            "ProgressiveBalanced: Rust={} C={} diff={:.2}%",
+            rust_jpeg.len(),
+            c_jpeg.len(),
+            diff_pct
+        );
+
+        assert!(
+            diff_pct.abs() < 2.0,
+            "Size difference {:.2}% exceeds 2% threshold",
+            diff_pct
+        );
     }
 }
 
@@ -2729,17 +3142,41 @@ mod tests {
 
     #[test]
     fn test_encoder_defaults() {
-        let enc = Encoder::new(false);
+        // Default preset is ProgressiveBalanced
+        let enc = Encoder::default();
         assert_eq!(enc.quality, 75);
-        assert!(!enc.progressive);
+        assert!(enc.progressive); // ProgressiveBalanced is progressive
         assert_eq!(enc.subsampling, Subsampling::S420);
         assert!(enc.trellis.enabled);
         assert!(enc.optimize_huffman);
+        assert!(!enc.optimize_scans); // ProgressiveBalanced does NOT include optimize_scans
+    }
+
+    #[test]
+    fn test_encoder_presets() {
+        let fastest = Encoder::new(Preset::BaselineFastest);
+        assert!(!fastest.progressive);
+        assert!(!fastest.trellis.enabled);
+        assert!(!fastest.optimize_huffman);
+
+        let baseline = Encoder::new(Preset::BaselineBalanced);
+        assert!(!baseline.progressive);
+        assert!(baseline.trellis.enabled);
+        assert!(baseline.optimize_huffman);
+
+        let prog_balanced = Encoder::new(Preset::ProgressiveBalanced);
+        assert!(prog_balanced.progressive);
+        assert!(prog_balanced.trellis.enabled);
+        assert!(!prog_balanced.optimize_scans);
+
+        let prog_smallest = Encoder::new(Preset::ProgressiveSmallest);
+        assert!(prog_smallest.progressive);
+        assert!(prog_smallest.optimize_scans);
     }
 
     #[test]
     fn test_encoder_builder_fields() {
-        let enc = Encoder::new(false)
+        let enc = Encoder::baseline_optimized()
             .quality(90)
             .progressive(true)
             .subsampling(Subsampling::S444);
@@ -2751,10 +3188,10 @@ mod tests {
 
     #[test]
     fn test_quality_clamping() {
-        let enc = Encoder::new(false).quality(0);
+        let enc = Encoder::baseline_optimized().quality(0);
         assert_eq!(enc.quality, 1);
 
-        let enc = Encoder::new(false).quality(150);
+        let enc = Encoder::baseline_optimized().quality(150);
         assert_eq!(enc.quality, 100);
     }
 

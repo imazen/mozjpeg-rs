@@ -75,18 +75,31 @@ pub struct StreamingEncoder {
 
 impl Default for StreamingEncoder {
     fn default() -> Self {
-        Self::new()
+        Self::baseline_fastest()
     }
 }
 
 impl StreamingEncoder {
-    /// Create a new streaming encoder with default settings.
+    /// Create a streaming encoder with fastest settings.
     ///
-    /// Unlike [`Encoder::new()`], this uses settings optimized for streaming:
+    /// This matches [`Preset::BaselineFastest`](crate::Preset::BaselineFastest) but for streaming.
+    ///
+    /// Streaming mode does NOT support any optimizations that require buffering
+    /// the entire image:
     /// - No trellis quantization (requires global context)
-    /// - No progressive mode (requires buffering entire image)
+    /// - No progressive mode (requires multiple passes)
     /// - No Huffman optimization (requires 2-pass)
-    pub fn new() -> Self {
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// use mozjpeg_rs::StreamingEncoder;
+    ///
+    /// let mut stream = StreamingEncoder::baseline_fastest()
+    ///     .quality(85)
+    ///     .start_rgb(1920, 1080, output_file)?;
+    /// ```
+    pub fn baseline_fastest() -> Self {
         Self {
             quality: 75,
             subsampling: Subsampling::S420,

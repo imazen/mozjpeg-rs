@@ -126,7 +126,7 @@ fn test_baseline_parity() {
     for &(quality, expected_size, max_size_diff, expected_dssim, max_dssim_diff) in
         BASELINE_EXPECTATIONS
     {
-        let encoder = Encoder::new()
+        let encoder = Encoder::baseline_optimized()
             .quality(quality)
             .progressive(false)
             .optimize_huffman(true)
@@ -183,7 +183,7 @@ fn test_progressive_parity() {
     for &(quality, expected_size, max_size_diff, expected_dssim, max_dssim_diff) in
         PROGRESSIVE_EXPECTATIONS
     {
-        let encoder = Encoder::new()
+        let encoder = Encoder::baseline_optimized()
             .quality(quality)
             .progressive(true)
             .optimize_huffman(true)
@@ -349,14 +349,14 @@ fn test_fastest_parity() {
 fn test_trellis_reduces_size() {
     let (rgb, width, height) = load_test_image();
 
-    let with_trellis = Encoder::new()
+    let with_trellis = Encoder::baseline_optimized()
         .quality(85)
         .trellis(TrellisConfig::default())
         .optimize_huffman(true)
         .encode_rgb(&rgb, width, height)
         .expect("Encoding with trellis failed");
 
-    let without_trellis = Encoder::new()
+    let without_trellis = Encoder::baseline_optimized()
         .quality(85)
         .trellis(TrellisConfig::disabled())
         .optimize_huffman(true)
@@ -385,14 +385,14 @@ fn test_trellis_reduces_size() {
 fn test_huffman_optimization_reduces_size() {
     let (rgb, width, height) = load_test_image();
 
-    let with_huffopt = Encoder::new()
+    let with_huffopt = Encoder::baseline_optimized()
         .quality(85)
         .trellis(TrellisConfig::disabled())
         .optimize_huffman(true)
         .encode_rgb(&rgb, width, height)
         .expect("Encoding with Huffman opt failed");
 
-    let without_huffopt = Encoder::new()
+    let without_huffopt = Encoder::baseline_optimized()
         .quality(85)
         .trellis(TrellisConfig::disabled())
         .optimize_huffman(false)
@@ -430,7 +430,7 @@ fn test_subsampling_modes() {
     let mut sizes = Vec::new();
 
     for (mode, name) in modes {
-        let jpeg = Encoder::new()
+        let jpeg = Encoder::baseline_optimized()
             .quality(85)
             .subsampling(mode)
             .encode_rgb(&rgb, width, height)
@@ -460,7 +460,7 @@ fn test_grayscale_encoding() {
         .map(|p| ((p[0] as u32 * 299 + p[1] as u32 * 587 + p[2] as u32 * 114) / 1000) as u8)
         .collect();
 
-    let jpeg = Encoder::new()
+    let jpeg = Encoder::baseline_optimized()
         .quality(85)
         .encode_gray(&gray, width, height)
         .expect("Grayscale encoding failed");
@@ -469,7 +469,7 @@ fn test_grayscale_encoding() {
     assert!(!jpeg.is_empty(), "Grayscale JPEG should not be empty");
 
     // Should be smaller than RGB version
-    let rgb_jpeg = Encoder::new()
+    let rgb_jpeg = Encoder::baseline_optimized()
         .quality(85)
         .subsampling(Subsampling::S444)
         .encode_rgb(&rgb, width, height)
@@ -498,7 +498,7 @@ fn test_quality_ordering() {
     let mut prev_size = 0;
 
     for quality in qualities {
-        let jpeg = Encoder::new()
+        let jpeg = Encoder::baseline_optimized()
             .quality(quality)
             .encode_rgb(&rgb, width, height)
             .expect("Encoding failed");

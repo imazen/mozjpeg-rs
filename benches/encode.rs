@@ -228,12 +228,12 @@ fn bench_image_sizes(c: &mut Criterion) {
             },
         );
 
-        // Default mode (trellis + huffman opt)
+        // Baseline optimized mode (trellis + huffman opt)
         group.bench_with_input(
-            BenchmarkId::new("default", &size_label),
+            BenchmarkId::new("baseline_opt", &size_label),
             &rgb,
             |b, rgb_data| {
-                let encoder = Encoder::new().quality(85);
+                let encoder = Encoder::baseline_optimized().quality(85);
                 b.iter(|| {
                     encoder
                         .encode_rgb(black_box(rgb_data), width, height)
@@ -277,7 +277,7 @@ fn bench_subsampling(c: &mut Criterion) {
 
     for (name, subsampling) in subsamplings {
         group.bench_with_input(BenchmarkId::from_parameter(name), &subsampling, |b, &ss| {
-            let encoder = Encoder::new().quality(85).subsampling(ss);
+            let encoder = Encoder::baseline_optimized().quality(85).subsampling(ss);
             b.iter(|| encoder.encode_rgb(black_box(&rgb), width, height).unwrap())
         });
     }
@@ -346,12 +346,93 @@ fn bench_dct(c: &mut Criterion) {
     group.finish();
 }
 
+/// Benchmark the cost of individual optimization flags.
+///
+/// This measures the INCREMENTAL cost of each flag by building up
+/// from fastest() step by step.
+fn bench_optimization_flags(c: &mut Criterion) {
+    use mozjpeg_rs::TrellisConfig;
+
+    let width = 512u32;
+    let height = 512u32;
+    let rgb = create_test_image(width as usize, height as usize);
+
+    let mut group = c.benchmark_group("optimization_flags");
+    group.throughput(Throughput::Elements((width * height) as u64));
+
+    // Step 0: fastest() - no optimizations
+    group.bench_function("0_fastest", |b| {
+        let encoder = Encoder::fastest()
+            .quality(75)
+            .subsampling(Subsampling::S420);
+        b.iter(|| encoder.encode_rgb(black_box(&rgb), width, height).unwrap())
+    });
+
+    // Step 1: +huffman (incremental)
+    group.bench_function("1_+huffman", |b| {
+        let encoder = Encoder::fastest()
+            .quality(75)
+            .subsampling(Subsampling::S420)
+            .optimize_huffman(true);
+        b.iter(|| encoder.encode_rgb(black_box(&rgb), width, height).unwrap())
+    });
+
+    // Step 2: +huffman +deringing
+    group.bench_function("2_+deringing", |b| {
+        let encoder = Encoder::fastest()
+            .quality(75)
+            .subsampling(Subsampling::S420)
+            .optimize_huffman(true)
+            .overshoot_deringing(true);
+        b.iter(|| encoder.encode_rgb(black_box(&rgb), width, height).unwrap())
+    });
+
+    // Step 3: +huffman +deringing +trellis_ac
+    group.bench_function("3_+trellis_ac", |b| {
+        let encoder = Encoder::fastest()
+            .quality(75)
+            .subsampling(Subsampling::S420)
+            .optimize_huffman(true)
+            .overshoot_deringing(true)
+            .trellis(TrellisConfig::default().dc_trellis(false));
+        b.iter(|| encoder.encode_rgb(black_box(&rgb), width, height).unwrap())
+    });
+
+    // Step 4: +huffman +deringing +trellis_ac_dc = new(false)
+    group.bench_function("4_new(false)", |b| {
+        let encoder = Encoder::baseline_optimized()
+            .quality(75)
+            .subsampling(Subsampling::S420);
+        b.iter(|| encoder.encode_rgb(black_box(&rgb), width, height).unwrap())
+    });
+
+    // Step 5: new(false) + progressive
+    group.bench_function("5_+progressive", |b| {
+        let encoder = Encoder::baseline_optimized()
+            .quality(75)
+            .subsampling(Subsampling::S420)
+            .progressive(true);
+        b.iter(|| encoder.encode_rgb(black_box(&rgb), width, height).unwrap())
+    });
+
+    // Step 6: new(false) + progressive + optimize_scans = new(true)
+    group.bench_function("6_new(true)", |b| {
+        let encoder = Encoder::max_compression()
+            .quality(75)
+            .subsampling(Subsampling::S420);
+        b.iter(|| encoder.encode_rgb(black_box(&rgb), width, height).unwrap())
+    });
+
+    group.finish();
+}
+
 criterion_group!(
     benches,
     bench_encoder_configs,
     bench_rust_vs_c,
     bench_image_sizes,
     bench_subsampling,
-    bench_dct
+    bench_dct,
+    bench_optimization_flags
 );
 criterion_main!(benches);

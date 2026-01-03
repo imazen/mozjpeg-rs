@@ -16,7 +16,7 @@ fn main() {
     }
 
     // Encode with Rust - baseline, WITH Huffman optimization
-    let rust_jpeg = Encoder::new(false)
+    let rust_jpeg = Encoder::baseline_optimized()
         .quality(85)
         .subsampling(Subsampling::S444)
         .progressive(false)

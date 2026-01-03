@@ -184,7 +184,7 @@ fn test_rust_vs_c_mozjpeg_encoder() {
 
     for quality in [50, 75, 85] {
         // Encode with Rust implementation
-        let rust_encoder = Encoder::new()
+        let rust_encoder = Encoder::baseline_optimized()
             .quality(quality)
             .subsampling(Subsampling::S420);
         let rust_jpeg = rust_encoder.encode_rgb(&rgb_data, width, height).unwrap();

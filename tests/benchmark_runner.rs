@@ -135,7 +135,7 @@ fn calculate_dssim(
 /// Encode with Rust mozjpeg-oxide using specified mode
 fn encode_rust(rgb: &[u8], width: u32, height: u32, quality: u8, mode: EncoderMode) -> Vec<u8> {
     match mode {
-        EncoderMode::Baseline => Encoder::new()
+        EncoderMode::Baseline => Encoder::baseline_optimized()
             .quality(quality)
             .subsampling(Subsampling::S420)
             .progressive(false)
@@ -145,7 +145,7 @@ fn encode_rust(rgb: &[u8], width: u32, height: u32, quality: u8, mode: EncoderMo
             .encode_rgb(rgb, width, height)
             .expect("Rust encoding failed"),
 
-        EncoderMode::Progressive => Encoder::new()
+        EncoderMode::Progressive => Encoder::baseline_optimized()
             .quality(quality)
             .subsampling(Subsampling::S420)
             .progressive(true)

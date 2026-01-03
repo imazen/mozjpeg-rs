@@ -21,7 +21,7 @@ fn main() {
     let quality = 85u8;
 
     // Encode without trellis
-    let rust_jpeg = Encoder::new(false)
+    let rust_jpeg = Encoder::baseline_optimized()
         .quality(quality)
         .progressive(false)
         .optimize_huffman(true)

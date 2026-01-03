@@ -687,7 +687,7 @@ fn test_single_mcu_progressive() {
     let quality = 75;
     let image = create_photo_like_image(width, height);
 
-    let rust_base = mozjpeg_rs::Encoder::new()
+    let rust_base = mozjpeg_rs::Encoder::baseline_optimized()
         .quality(quality)
         .subsampling(mozjpeg_rs::Subsampling::S420)
         .progressive(false)
@@ -695,7 +695,7 @@ fn test_single_mcu_progressive() {
         .encode_rgb(&image, width, height)
         .expect("Rust baseline failed");
 
-    let rust_prog = mozjpeg_rs::Encoder::new()
+    let rust_prog = mozjpeg_rs::Encoder::baseline_optimized()
         .quality(quality)
         .subsampling(mozjpeg_rs::Subsampling::S420)
         .progressive(true)
@@ -745,7 +745,7 @@ fn test_progressive_444_subsampling() {
     let quality = 75;
     let image = create_photo_like_image(width, height);
 
-    let rust_base = mozjpeg_rs::Encoder::new()
+    let rust_base = mozjpeg_rs::Encoder::baseline_optimized()
         .quality(quality)
         .subsampling(mozjpeg_rs::Subsampling::S444)
         .progressive(false)
@@ -753,7 +753,7 @@ fn test_progressive_444_subsampling() {
         .encode_rgb(&image, width, height)
         .expect("Rust baseline failed");
 
-    let rust_prog = mozjpeg_rs::Encoder::new()
+    let rust_prog = mozjpeg_rs::Encoder::baseline_optimized()
         .quality(quality)
         .subsampling(mozjpeg_rs::Subsampling::S444)
         .progressive(true)
@@ -804,7 +804,7 @@ fn test_progressive_mcu_bug() {
     // First test: solid color image (should have minimal AC coefficients)
     println!("--- Test 1: Solid color image ---");
     let solid_image: Vec<u8> = vec![128; 32 * 16 * 3]; // Gray
-    let solid_prog = mozjpeg_rs::Encoder::new()
+    let solid_prog = mozjpeg_rs::Encoder::baseline_optimized()
         .quality(75)
         .subsampling(mozjpeg_rs::Subsampling::S420)
         .progressive(true)
@@ -812,7 +812,7 @@ fn test_progressive_mcu_bug() {
         .encode_rgb(&solid_image, 32, 16)
         .expect("Rust progressive failed");
 
-    let solid_base = mozjpeg_rs::Encoder::new()
+    let solid_base = mozjpeg_rs::Encoder::baseline_optimized()
         .quality(75)
         .subsampling(mozjpeg_rs::Subsampling::S420)
         .progressive(false)
@@ -842,7 +842,7 @@ fn test_progressive_mcu_bug() {
     let image = create_photo_like_image(width, height);
 
     // Rust progressive (no trellis to isolate the issue)
-    let rust_prog = mozjpeg_rs::Encoder::new()
+    let rust_prog = mozjpeg_rs::Encoder::baseline_optimized()
         .quality(quality)
         .subsampling(mozjpeg_rs::Subsampling::S420)
         .progressive(true)
@@ -855,7 +855,7 @@ fn test_progressive_mcu_bug() {
     let c_prog = c_encode(&image, width, height, quality, true);
 
     // Rust baseline (should be correct)
-    let rust_base = mozjpeg_rs::Encoder::new()
+    let rust_base = mozjpeg_rs::Encoder::baseline_optimized()
         .quality(quality)
         .subsampling(mozjpeg_rs::Subsampling::S420)
         .progressive(false)
@@ -1064,7 +1064,7 @@ fn test_progressive_mcu_bug() {
     ] {
         let test_img = create_photo_like_image(w, h);
 
-        let r = mozjpeg_rs::Encoder::new()
+        let r = mozjpeg_rs::Encoder::baseline_optimized()
             .quality(75)
             .subsampling(mozjpeg_rs::Subsampling::S420)
             .progressive(true)
@@ -1124,7 +1124,7 @@ fn test_subsampling_modes() {
     );
 
     for (subsampling, name) in modes {
-        let rust_encoded = mozjpeg_rs::Encoder::new()
+        let rust_encoded = mozjpeg_rs::Encoder::baseline_optimized()
             .quality(quality)
             .subsampling(subsampling)
             .progressive(false) // Use baseline which works
