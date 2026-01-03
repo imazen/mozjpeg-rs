@@ -22,6 +22,13 @@ If tests fail, find and fix the bug. Never:
 
 ### Resolved Issues
 
+**AC refinement correction bits tracking (FIXED Jan 2025):**
+- Root cause: `count_ac_refine()` didn't track correction bits accumulation, causing DHT
+  to miss intermediate EOB symbols when encoder flushed early due to buffer overflow
+- Fix: Added `correction_bits_count` field to `ProgressiveSymbolCounter` and matching
+  flush threshold (937 bytes) to count_ac_refine()
+- Result: ProgressiveBalanced Q90+ now decodes correctly with all decoders (GitHub #2)
+
 **AC refinement encoding (FIXED Dec 2024):**
 - Root cause: ZRL loop only ran for newly-nonzero coefficients, not previously-coded ones
 - Fix: Restructured encode_ac_refine() to match C mozjpeg's loop structure exactly
@@ -166,7 +173,11 @@ let jpeg_data = encoder.encode_rgb(&pixels, width, height)?;
   cross-block EOBRUN optimization. Disabled by default due to aggressive coefficient zeroing
   in some cases. Enable with `TrellisConfig::default().eob_optimization(true)` if needed.
 
-### Recent Fixes (Dec 2024)
+### Recent Fixes
+- **AC refinement correction bits tracking** (Jan 2025): Fixed bug where `count_ac_refine()`
+  didn't track correction bits accumulation, causing DHT to miss intermediate EOB symbols.
+  The encoder flushes EOBRUN when correction bits exceed 937 bytes, but the counter wasn't
+  tracking this threshold. This caused ProgressiveBalanced Q90+ to fail with strict decoders.
 - **AC refinement ZRL encoding** (Dec 2024): Fixed bug where ZRL (zero-run-length) symbols
   weren't emitted for previously-coded coefficients, causing decoder errors on 8/24 images.
   Now uses 9-scan JCP_MAX_COMPRESSION script with full successive approximation.
@@ -287,29 +298,6 @@ Previously reported "max diff ~11" was due to comparing different encoding modes
 - Trellis quantization produces identical coefficient decisions
 - DC clamping to 1023 now matches C behavior
 - File size gap at high quality due to progressive scan structure (see above)
-
-#### ProgressiveBalanced Decoder Compatibility at Q90+ - KNOWN ISSUE
-
-**Symptom:** Pure Rust decoders (jpeg-decoder, zune-jpeg) fail to decode
-`ProgressiveBalanced` output at Q90+ quality with "failed to decode huffman code".
-C mozjpeg (mozjpeg-sys) decodes the same files successfully.
-
-**Configuration affected:**
-- Preset: `ProgressiveBalanced` (uses JCP_MAX_COMPRESSION 9-scan script)
-- Quality: ≥90
-- All subsampling modes
-
-**Root Cause:** The JCP_MAX_COMPRESSION scan script uses AC successive approximation
-refinement scans (Ah > 0). At high quality (Q90+), the quantization values are very
-low, resulting in more non-zero coefficients that need refinement. Our AC refinement
-encoding produces bitstreams that C mozjpeg tolerates but pure Rust decoders reject.
-
-**Workaround:** Use `ProgressiveSmallest` instead, which uses the scan optimizer
-that picks Al=0 at high quality (no refinement scans needed). Or use `.optimize_scans(true)`
-to enable the scan optimizer on any progressive preset.
-
-**Status:** The decoder roundtrip test validates all 96 configurations, with these
-6 (ProgressiveBalanced × 3 subsampling × Q90/Q95) tested against mozjpeg-sys only.
 
 ## Workflow Rules
 
