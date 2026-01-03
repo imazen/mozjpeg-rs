@@ -93,6 +93,9 @@ jobs:
       - name: Run mozjpeg-sys-config tests
         run: cargo test --features mozjpeg-sys-config compat_tests
 
+      - name: Run decoder round-trip validation
+        run: cargo run --release --example decoder_roundtrip
+
   # Tests requiring local mozjpeg source with test exports
   test-ffi-local:
     name: Test FFI Comparison (Local mozjpeg)

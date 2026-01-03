@@ -288,6 +288,29 @@ Previously reported "max diff ~11" was due to comparing different encoding modes
 - DC clamping to 1023 now matches C behavior
 - File size gap at high quality due to progressive scan structure (see above)
 
+#### ProgressiveBalanced Decoder Compatibility at Q90+ - KNOWN ISSUE
+
+**Symptom:** Pure Rust decoders (jpeg-decoder, zune-jpeg) fail to decode
+`ProgressiveBalanced` output at Q90+ quality with "failed to decode huffman code".
+C mozjpeg (mozjpeg-sys) decodes the same files successfully.
+
+**Configuration affected:**
+- Preset: `ProgressiveBalanced` (uses JCP_MAX_COMPRESSION 9-scan script)
+- Quality: ≥90
+- All subsampling modes
+
+**Root Cause:** The JCP_MAX_COMPRESSION scan script uses AC successive approximation
+refinement scans (Ah > 0). At high quality (Q90+), the quantization values are very
+low, resulting in more non-zero coefficients that need refinement. Our AC refinement
+encoding produces bitstreams that C mozjpeg tolerates but pure Rust decoders reject.
+
+**Workaround:** Use `ProgressiveSmallest` instead, which uses the scan optimizer
+that picks Al=0 at high quality (no refinement scans needed). Or use `.optimize_scans(true)`
+to enable the scan optimizer on any progressive preset.
+
+**Status:** The decoder roundtrip test validates all 96 configurations, with these
+6 (ProgressiveBalanced × 3 subsampling × Q90/Q95) tested against mozjpeg-sys only.
+
 ## Workflow Rules
 
 ### Commit Strategy

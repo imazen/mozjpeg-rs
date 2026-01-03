@@ -60,6 +60,7 @@ png = "0.17"
 proptest = "1.4"
 criterion = "0.5"
 jpeg-decoder = "0.3"
+zune-jpeg = "0.4"
 libc = "0.2"
 # Use existing mozjpeg-sys from crates.io for basic FFI validation
 mozjpeg-sys = "2.2"
