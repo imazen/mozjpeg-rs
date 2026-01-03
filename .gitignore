@@ -15,3 +15,4 @@ benchmark_results.csv
 # OS
 .DS_Store
 Thumbs.db
+tests/benchmark_tracking/results/*.json
