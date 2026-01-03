@@ -109,7 +109,7 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y cmake nasm
+          sudo apt-get install -y cmake nasm libpng-dev
 
       - name: Build mozjpeg C library
         run: |
