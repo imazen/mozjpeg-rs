@@ -5,9 +5,18 @@
 //! - AC coefficient encoding with run-length coding
 //! - EOB (End of Block) and ZRL (Zero Run Length) symbols
 //!
+//! ## Optimizations
+//!
+//! - **SIMD non-zero mask**: Uses i16x8 comparison to build a 64-bit bitmask
+//!   of non-zero coefficients, enabling fast iteration with `trailing_zeros()`
+//! - **Combined bit writes**: Huffman code and value bits written together
+//! - **Early EOB**: Fast path when all AC coefficients are zero
+//!
 //! Reference: ITU-T T.81 Section F.1.2
 
 use std::io::Write;
+
+use wide::{i16x8, CmpEq};
 
 use crate::bitstream::BitWriter;
 use crate::consts::{DCTSIZE2, JPEG_NATURAL_ORDER};
@@ -46,6 +55,40 @@ pub fn jpeg_nbits(value: i16) -> u8 {
 pub fn jpeg_nbits_nonzero(value: u16) -> u8 {
     16 - value.leading_zeros() as u8
 }
+
+/// Build a 64-bit mask of non-zero coefficients using SIMD.
+///
+/// Each bit i is set if coeffs[i] != 0. Uses i16x8 comparison
+/// to process 8 coefficients at a time.
+#[inline]
+fn build_nonzero_mask(coeffs: &[i16; DCTSIZE2]) -> u64 {
+    let zero = i16x8::ZERO;
+    let mut nonzero_mask: u64 = 0;
+
+    // Process 8 coefficients at a time (8 chunks of 8 = 64 total)
+    for chunk in 0..8 {
+        let start = chunk * 8;
+        let v = i16x8::new([
+            coeffs[start],
+            coeffs[start + 1],
+            coeffs[start + 2],
+            coeffs[start + 3],
+            coeffs[start + 4],
+            coeffs[start + 5],
+            coeffs[start + 6],
+            coeffs[start + 7],
+        ]);
+        // simd_eq returns all 1s (-1) for equal, 0 for not equal
+        let is_zero = v.simd_eq(zero);
+        // to_bitmask extracts the sign bit of each lane
+        let zero_bits = is_zero.to_bitmask() as u8;
+        let nonzero_bits = !zero_bits;
+        nonzero_mask |= (nonzero_bits as u64) << start;
+    }
+
+    nonzero_mask
+}
+
 
 /// Entropy encoder state for a single scan.
 pub struct EntropyEncoder<'a, W: Write> {
@@ -149,29 +192,40 @@ impl<'a, W: Write> EntropyEncoder<'a, W> {
             (nbits, diff as u16)
         };
 
-        // Emit Huffman code for the category (number of bits)
+        // Emit Huffman code and value bits in one operation
         let (code, size) = dc_table.get_code(nbits);
-        if size > 0 {
-            self.writer.put_bits(code, size)?;
-        }
-
-        // Emit the actual value bits
         if nbits > 0 {
-            self.writer.put_bits(value as u32, nbits)?;
+            self.writer.put_bits_combined(code, size, value as u32, nbits)?;
+        } else if size > 0 {
+            self.writer.put_bits(code, size)?;
         }
 
         Ok(())
     }
 
-    /// Encode AC coefficients using run-length coding.
+    /// Encode AC coefficients using run-length coding with optimizations.
     ///
-    /// AC coefficients are encoded in zigzag order as (run, size) pairs
-    /// where run is the number of preceding zeros and size is the magnitude bits.
+    /// Optimizations:
+    /// - SIMD bitmask for fast all-zero detection (early EOB)
+    /// - Combined Huffman code + value bit writes
     fn encode_ac(
         &mut self,
         block: &[i16; DCTSIZE2],
         ac_table: &DerivedTable,
     ) -> std::io::Result<()> {
+        // Build 64-bit mask of non-zero coefficients using SIMD
+        let nonzero_mask = build_nonzero_mask(block);
+
+        // Clear DC bit (bit 0), keep only AC bits (1-63)
+        let ac_mask = nonzero_mask & !1u64;
+
+        // Fast path: all AC coefficients are zero
+        if ac_mask == 0 {
+            let (code, size) = ac_table.get_code(EOB);
+            self.writer.put_bits(code, size)?;
+            return Ok(());
+        }
+
         let mut run = 0u8; // Run length of zeros
 
         // Process coefficients 1-63 in zigzag order
@@ -198,15 +252,10 @@ impl<'a, W: Write> EntropyEncoder<'a, W> {
                     (nbits, coef as u16)
                 };
 
-                // Symbol = (run << 4) | nbits
+                // Symbol = (run << 4) | nbits - emit code and value together
                 let symbol = (run << 4) | nbits;
                 let (code, size) = ac_table.get_code(symbol);
-                self.writer.put_bits(code, size)?;
-
-                // Emit the value bits
-                if nbits > 0 {
-                    self.writer.put_bits(value as u32, nbits)?;
-                }
+                self.writer.put_bits_combined(code, size, value as u32, nbits)?;
 
                 run = 0;
             }

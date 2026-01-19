@@ -94,6 +94,10 @@ harness = false
 name = "color"
 harness = false
 
+[[bench]]
+name = "entropy"
+harness = false
+
 # Examples that require instrumented C mozjpeg (sys-local crate)
 [[example]]
 name = "trace_pipeline"

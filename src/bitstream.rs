@@ -77,6 +77,53 @@ impl<W: Write> BitWriter<W> {
         Ok(())
     }
 
+    /// Write Huffman code and extra value bits in a single operation.
+    ///
+    /// This optimizes the common entropy coding pattern where a Huffman code
+    /// is immediately followed by additional value bits. Combining them reduces
+    /// function call overhead and allows the compiler to optimize better.
+    ///
+    /// # Arguments
+    /// * `code` - Huffman code bits (right-aligned)
+    /// * `code_size` - Number of bits in the Huffman code (1-16)
+    /// * `value` - Extra value bits (right-aligned)
+    /// * `value_size` - Number of extra bits (0-16)
+    #[inline]
+    pub fn put_bits_combined(
+        &mut self,
+        code: u32,
+        code_size: u8,
+        value: u32,
+        value_size: u8,
+    ) -> std::io::Result<()> {
+        debug_assert!(code_size <= 16, "Code size must be <= 16 bits");
+        debug_assert!(value_size <= 16, "Value size must be <= 16 bits");
+
+        // Combine code and value: code in high bits, value in low bits
+        let total_size = (code_size + value_size) as i32;
+        let combined = ((code as u64) << value_size) | (value as u64);
+
+        self.free_bits -= total_size;
+
+        if self.free_bits < 0 {
+            // Buffer is full, need to flush
+            let overflow_bits = (-self.free_bits) as u32;
+
+            // Put upper bits into current buffer before flush
+            self.put_buffer = (self.put_buffer << (total_size + self.free_bits))
+                | (combined >> overflow_bits);
+            self.flush_buffer()?;
+
+            // Reset buffer with only the overflow (lower) bits
+            self.free_bits += BIT_BUF_SIZE as i32;
+            self.put_buffer = combined & ((1u64 << overflow_bits) - 1);
+        } else {
+            self.put_buffer = (self.put_buffer << total_size) | combined;
+        }
+
+        Ok(())
+    }
+
     /// Flush the bit buffer to output.
     ///
     /// Writes all complete bytes from the buffer, handling 0xFF stuffing.

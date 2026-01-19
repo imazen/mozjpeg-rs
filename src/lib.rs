@@ -167,6 +167,11 @@ pub mod deringing;
 #[allow(dead_code)]
 pub mod entropy;
 
+/// Fast entropy encoding - jpegli-rs style (internal).
+#[doc(hidden)]
+#[allow(dead_code)]
+pub mod fast_entropy;
+
 /// Huffman table utilities (internal).
 #[doc(hidden)]
 #[allow(dead_code)]
