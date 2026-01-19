@@ -1251,54 +1251,54 @@ pub mod avx2 {
     const F_3_072_MINUS_2_562: i16 = (FIX_3_072711026 - FIX_2_562915447) as i16; // 4177
     const F_1_501_MINUS_0_899: i16 = (FIX_1_501321110 - FIX_0_899976223) as i16; // 4926
 
-    /// Mozjpeg-style AVX2 DCT using 16-bit packed data and vpmaddwd.
+    /// AVX2 forward DCT - direct translation of libjpeg-turbo's jfdctint-avx2.asm.
     ///
-    /// This implementation mirrors mozjpeg's jfdctint-avx2.asm for maximum performance.
-    /// Key differences from the 32-bit version:
-    /// - Works with i16 packed data (2 rows per YMM register)
-    /// - Uses vpmaddwd for multiply-accumulate (2 muls + 1 add in one instruction)
-    /// - Uses 16-bit unpack instructions for transpose (faster than 32-bit)
+    /// Each assembly instruction is translated to the corresponding Rust intrinsic.
+    /// This provides identical output to the reference C/asm implementation.
     #[target_feature(enable = "avx2")]
     pub unsafe fn forward_dct_8x8_avx2_i16(
         samples: &[i16; DCTSIZE2],
         coeffs: &mut [i16; DCTSIZE2],
     ) {
-        // Load data as packed 16-bit pairs: (row0|row4), (row1|row5), (row2|row6), (row3|row7)
-        // Each ymm holds 16 i16 values: 8 from one row, 8 from another
-        let ymm4 = _mm256_loadu_si256(samples.as_ptr().add(0) as *const __m256i); // rows 0-1
-        let ymm5 = _mm256_loadu_si256(samples.as_ptr().add(16) as *const __m256i); // rows 2-3
-        let ymm6 = _mm256_loadu_si256(samples.as_ptr().add(32) as *const __m256i); // rows 4-5
-        let ymm7 = _mm256_loadu_si256(samples.as_ptr().add(48) as *const __m256i); // rows 6-7
+        // ---- Pass 1: process rows ----
+
+        // Load: ymm4=(rows 0-1), ymm5=(rows 2-3), ymm6=(rows 4-5), ymm7=(rows 6-7)
+        let ymm4 = _mm256_loadu_si256(samples.as_ptr().add(0) as *const __m256i);
+        let ymm5 = _mm256_loadu_si256(samples.as_ptr().add(16) as *const __m256i);
+        let ymm6 = _mm256_loadu_si256(samples.as_ptr().add(32) as *const __m256i);
+        let ymm7 = _mm256_loadu_si256(samples.as_ptr().add(48) as *const __m256i);
 
         // Reorganize to (row0|row4), (row1|row5), (row2|row6), (row3|row7)
-        let mut ymm0 = _mm256_permute2x128_si256(ymm4, ymm6, 0x20); // row0|row4
-        let mut ymm1 = _mm256_permute2x128_si256(ymm4, ymm6, 0x31); // row1|row5
-        let mut ymm2 = _mm256_permute2x128_si256(ymm5, ymm7, 0x20); // row2|row6
-        let mut ymm3 = _mm256_permute2x128_si256(ymm5, ymm7, 0x31); // row3|row7
+        let ymm0 = _mm256_permute2x128_si256(ymm4, ymm6, 0x20);
+        let ymm1 = _mm256_permute2x128_si256(ymm4, ymm6, 0x31);
+        let ymm2 = _mm256_permute2x128_si256(ymm5, ymm7, 0x20);
+        let ymm3 = _mm256_permute2x128_si256(ymm5, ymm7, 0x31);
 
-        // Transpose 8x8x16-bit matrix (phase 1: interleave 16-bit elements)
-        transpose_8x8_i16(&mut ymm0, &mut ymm1, &mut ymm2, &mut ymm3);
+        // Transpose 8x8
+        let (ymm0, ymm1, ymm2, ymm3) = dotranspose(ymm0, ymm1, ymm2, ymm3);
 
-        // Pass 1: 1D DCT on rows
-        dct_1d_i16(&mut ymm0, &mut ymm1, &mut ymm2, &mut ymm3, true);
+        // DCT pass 1
+        let (ymm0, ymm1, ymm2, ymm3) = dodct(ymm0, ymm1, ymm2, ymm3, true);
+        // After pass 1: ymm0=data0_4, ymm1=data3_1, ymm2=data2_6, ymm3=data7_5
+
+        // ---- Pass 2: process columns ----
 
         // Reorganize for column pass
-        let mut ymm4 = _mm256_permute2x128_si256(ymm1, ymm3, 0x20); // data3|data7
-        let ymm1_new = _mm256_permute2x128_si256(ymm1, ymm3, 0x31); // data1|data5
-        ymm1 = ymm1_new;
+        let ymm4 = _mm256_permute2x128_si256(ymm1, ymm3, 0x20); // data3_7
+        let ymm1 = _mm256_permute2x128_si256(ymm1, ymm3, 0x31); // data1_5
 
-        // Transpose for column pass
-        transpose_8x8_i16(&mut ymm0, &mut ymm1, &mut ymm2, &mut ymm4);
+        // Transpose
+        let (ymm0, ymm1, ymm2, ymm4) = dotranspose(ymm0, ymm1, ymm2, ymm4);
 
-        // Pass 2: 1D DCT on columns
-        let mut ymm3 = ymm4;
-        dct_1d_i16(&mut ymm0, &mut ymm1, &mut ymm2, &mut ymm3, false);
+        // DCT pass 2
+        let (ymm0, ymm1, ymm2, ymm4) = dodct(ymm0, ymm1, ymm2, ymm4, false);
+        // After pass 2: ymm0=data0_4, ymm1=data3_1, ymm2=data2_6, ymm4=data7_5
 
-        // Reorganize output
-        let out01 = _mm256_permute2x128_si256(ymm0, ymm1, 0x30); // data0|data1
-        let out23 = _mm256_permute2x128_si256(ymm2, ymm1, 0x20); // data2|data3
-        let out45 = _mm256_permute2x128_si256(ymm0, ymm3, 0x31); // data4|data5
-        let out67 = _mm256_permute2x128_si256(ymm2, ymm3, 0x21); // data6|data7
+        // Reorganize output to sequential rows
+        let out01 = _mm256_permute2x128_si256(ymm0, ymm1, 0x30); // data0_1
+        let out23 = _mm256_permute2x128_si256(ymm2, ymm1, 0x20); // data2_3
+        let out45 = _mm256_permute2x128_si256(ymm0, ymm4, 0x31); // data4_5
+        let out67 = _mm256_permute2x128_si256(ymm2, ymm4, 0x21); // data6_7
 
         // Store results
         _mm256_storeu_si256(coeffs.as_mut_ptr().add(0) as *mut __m256i, out01);
@@ -1307,267 +1307,203 @@ pub mod avx2 {
         _mm256_storeu_si256(coeffs.as_mut_ptr().add(48) as *mut __m256i, out67);
     }
 
-    /// 8x8x16-bit matrix transpose using AVX2.
-    /// Input: ymm0-3 each contain two rows (row_i | row_i+4)
-    /// Output: transposed matrix in same format
+    /// 8x8x16-bit matrix transpose - exact translation of libjpeg-turbo's dotranspose macro
     #[inline(always)]
-    unsafe fn transpose_8x8_i16(
-        ymm0: &mut __m256i,
-        ymm1: &mut __m256i,
-        ymm2: &mut __m256i,
-        ymm3: &mut __m256i,
-    ) {
-        // Phase 1: Interleave 16-bit elements
-        let t0 = _mm256_unpacklo_epi16(*ymm0, *ymm1);
-        let t1 = _mm256_unpackhi_epi16(*ymm0, *ymm1);
-        let t2 = _mm256_unpacklo_epi16(*ymm2, *ymm3);
-        let t3 = _mm256_unpackhi_epi16(*ymm2, *ymm3);
+    unsafe fn dotranspose(
+        ymm0: __m256i,
+        ymm1: __m256i,
+        ymm2: __m256i,
+        ymm3: __m256i,
+    ) -> (__m256i, __m256i, __m256i, __m256i) {
+        // Phase 1: vpunpcklwd/vpunpckhwd
+        let ymm4 = _mm256_unpacklo_epi16(ymm0, ymm1);
+        let ymm5 = _mm256_unpackhi_epi16(ymm0, ymm1);
+        let ymm6 = _mm256_unpacklo_epi16(ymm2, ymm3);
+        let ymm7 = _mm256_unpackhi_epi16(ymm2, ymm3);
 
-        // Phase 2: Interleave 32-bit elements
-        let u0 = _mm256_unpacklo_epi32(t0, t2);
-        let u1 = _mm256_unpackhi_epi32(t0, t2);
-        let u2 = _mm256_unpacklo_epi32(t1, t3);
-        let u3 = _mm256_unpackhi_epi32(t1, t3);
+        // Phase 2: vpunpckldq/vpunpckhdq
+        let ymm0 = _mm256_unpacklo_epi32(ymm4, ymm6);
+        let ymm1 = _mm256_unpackhi_epi32(ymm4, ymm6);
+        let ymm2 = _mm256_unpacklo_epi32(ymm5, ymm7);
+        let ymm3 = _mm256_unpackhi_epi32(ymm5, ymm7);
 
-        // Phase 3: Permute 64-bit lanes
-        *ymm0 = _mm256_permute4x64_epi64(u0, 0x8D); // 10 00 11 01
-        *ymm1 = _mm256_permute4x64_epi64(u1, 0x8D);
-        *ymm2 = _mm256_permute4x64_epi64(u2, 0xD8); // 11 01 10 00
-        *ymm3 = _mm256_permute4x64_epi64(u3, 0xD8);
+        // Phase 3: vpermq
+        let ymm0 = _mm256_permute4x64_epi64(ymm0, 0x8D);
+        let ymm1 = _mm256_permute4x64_epi64(ymm1, 0x8D);
+        let ymm2 = _mm256_permute4x64_epi64(ymm2, 0xD8);
+        let ymm3 = _mm256_permute4x64_epi64(ymm3, 0xD8);
+
+        (ymm0, ymm1, ymm2, ymm3)
     }
 
-    /// 1D DCT on 16-bit packed data using vpmaddwd.
-    /// ymm0-3 contain data pairs; pass1=true for row pass, false for column pass.
+    /// 1D DCT pass - exact translation of libjpeg-turbo's dodct macro
     #[inline(always)]
-    unsafe fn dct_1d_i16(
-        ymm0: &mut __m256i,
-        ymm1: &mut __m256i,
-        ymm2: &mut __m256i,
-        ymm3: &mut __m256i,
+    unsafe fn dodct(
+        ymm0: __m256i,
+        ymm1: __m256i,
+        ymm2: __m256i,
+        ymm3: __m256i,
         pass1: bool,
-    ) {
-        // data layout: ymm0=(data1_0|data6_7), ymm1=(data3_2|data4_5), etc.
-        // We need tmp values: tmp0 = data0+data7, tmp7 = data0-data7, etc.
-
-        let t5 = _mm256_sub_epi16(*ymm0, *ymm3); // tmp6_7
-        let t6 = _mm256_add_epi16(*ymm0, *ymm3); // tmp1_0
-        let t7 = _mm256_add_epi16(*ymm1, *ymm2); // tmp3_2
-        let t8 = _mm256_sub_epi16(*ymm1, *ymm2); // tmp4_5
+    ) -> (__m256i, __m256i, __m256i, __m256i) {
+        // Step 1: Compute butterfly differences/sums
+        let ymm4 = _mm256_sub_epi16(ymm0, ymm3); // tmp6_7
+        let ymm5 = _mm256_add_epi16(ymm0, ymm3); // tmp1_0
+        let ymm6 = _mm256_add_epi16(ymm1, ymm2); // tmp3_2
+        let ymm7 = _mm256_sub_epi16(ymm1, ymm2); // tmp4_5
 
         // ---- Even part ----
 
-        // Swap halves of t6 to get tmp0_1
-        let t6_swap = _mm256_permute2x128_si256(t6, t6, 0x01);
-        let tmp10_11 = _mm256_add_epi16(t6_swap, t7); // tmp10_11
-        let tmp13_12 = _mm256_sub_epi16(t6_swap, t7); // tmp13_12
+        // Swap halves to get tmp0_1
+        let ymm5 = _mm256_permute2x128_si256(ymm5, ymm5, 0x01);
+        let ymm0 = _mm256_add_epi16(ymm5, ymm6); // tmp10_11
+        let ymm5 = _mm256_sub_epi16(ymm5, ymm6); // tmp13_12
 
-        // Swap halves of tmp10_11 to get tmp11_10
-        let tmp11_10 = _mm256_permute2x128_si256(tmp10_11, tmp10_11, 0x01);
+        let ymm6 = _mm256_permute2x128_si256(ymm0, ymm0, 0x01); // tmp11_10
 
-        // Apply sign flip for (tmp10+tmp11, tmp10-tmp11)
-        let sign_mask = _mm256_set_epi16(
+        // PW_1_NEG1: high lane = 1, low lane = -1
+        let pw_1_neg1 = _mm256_set_epi16(
             -1, -1, -1, -1, -1, -1, -1, -1, 1, 1, 1, 1, 1, 1, 1, 1,
         );
-        let tmp10_neg11 = _mm256_sign_epi16(tmp10_11, sign_mask);
-        let sum_diff = _mm256_add_epi16(tmp11_10, tmp10_neg11); // (tmp10+tmp11, tmp10-tmp11)
+        let ymm0 = _mm256_sign_epi16(ymm0, pw_1_neg1); // tmp10_neg11
+        let ymm6 = _mm256_add_epi16(ymm6, ymm0); // (tmp10+tmp11)_(tmp10-tmp11)
 
-        // data0_4
         let out0_4 = if pass1 {
-            _mm256_slli_epi16(sum_diff, PASS1_BITS as i32)
+            _mm256_slli_epi16(ymm6, PASS1_BITS as i32)
         } else {
-            // Descale by PASS1_BITS with rounding
-            let round = _mm256_set1_epi16(1 << (PASS1_BITS - 1));
-            _mm256_srai_epi16(_mm256_add_epi16(sum_diff, round), PASS1_BITS as i32)
+            let pw_descale = _mm256_set1_epi16(1 << (PASS1_BITS - 1));
+            _mm256_srai_epi16(_mm256_add_epi16(ymm6, pw_descale), PASS1_BITS as i32)
         };
 
-        // data2_6: uses vpmaddwd with tmp12, tmp13 interleaved
-        // data2 = tmp13 * (FIX_0_541 + FIX_0_765) + tmp12 * FIX_0_541
-        // data6 = tmp13 * FIX_0_541 + tmp12 * (FIX_0_541 - FIX_1_847)
+        // data2_6 calculation
+        let ymm6 = _mm256_permute2x128_si256(ymm5, ymm5, 0x01); // tmp12_13
+        let ymm1 = _mm256_unpacklo_epi16(ymm5, ymm6);
+        let ymm5 = _mm256_unpackhi_epi16(ymm5, ymm6);
 
-        let tmp12_13 = _mm256_permute2x128_si256(tmp13_12, tmp13_12, 0x01);
-
-        // Interleave tmp13 and tmp12 for vpmaddwd
-        let interleaved_lo = _mm256_unpacklo_epi16(tmp13_12, tmp12_13);
-        let interleaved_hi = _mm256_unpackhi_epi16(tmp13_12, tmp12_13);
-
-        // Constant vectors for data2_6 calculation
-        let const_data2_6 = _mm256_set_epi16(
-            F_0_541_MINUS_1_847,
-            F_0_541,
-            F_0_541_MINUS_1_847,
-            F_0_541,
-            F_0_541_MINUS_1_847,
-            F_0_541,
-            F_0_541_MINUS_1_847,
-            F_0_541,
-            F_0_541_PLUS_0_765,
-            F_0_541,
-            F_0_541_PLUS_0_765,
-            F_0_541,
-            F_0_541_PLUS_0_765,
-            F_0_541,
-            F_0_541_PLUS_0_765,
-            F_0_541,
+        // PW_F130_F054_MF130_F054 - libjpeg-turbo constant layout
+        // NASM: times 4 dw A, B creates [A,B,A,B,...] - A at even indices
+        // _mm256_set_epi16 is in reverse order, so we need [B,A,B,A,...] to get [A,B,A,B,...] in memory
+        let pw_f130_f054 = _mm256_set_epi16(
+            F_0_541, F_0_541_MINUS_1_847, F_0_541, F_0_541_MINUS_1_847,
+            F_0_541, F_0_541_MINUS_1_847, F_0_541, F_0_541_MINUS_1_847,
+            F_0_541, F_0_541_PLUS_0_765, F_0_541, F_0_541_PLUS_0_765,
+            F_0_541, F_0_541_PLUS_0_765, F_0_541, F_0_541_PLUS_0_765,
         );
 
-        let data2_6_lo = _mm256_madd_epi16(interleaved_lo, const_data2_6);
-        let data2_6_hi = _mm256_madd_epi16(interleaved_hi, const_data2_6);
+        let ymm1 = _mm256_madd_epi16(ymm1, pw_f130_f054);
+        let ymm5 = _mm256_madd_epi16(ymm5, pw_f130_f054);
 
-        // Descale and pack back to i16
-        // Use compile-time constants for shift amounts
-        let (data2_6_lo, data2_6_hi, round32) = if pass1 {
-            const N: i32 = CONST_BITS - PASS1_BITS; // 11
-            let round = _mm256_set1_epi32(1 << (N - 1));
+        let (ymm1, ymm5, pd_descale) = if pass1 {
+            let pd = _mm256_set1_epi32(1 << (CONST_BITS - PASS1_BITS - 1));
+            const N: i32 = CONST_BITS - PASS1_BITS;
             (
-                _mm256_srai_epi32::<N>(_mm256_add_epi32(data2_6_lo, round)),
-                _mm256_srai_epi32::<N>(_mm256_add_epi32(data2_6_hi, round)),
-                round,
+                _mm256_srai_epi32::<N>(_mm256_add_epi32(ymm1, pd)),
+                _mm256_srai_epi32::<N>(_mm256_add_epi32(ymm5, pd)),
+                pd,
             )
         } else {
-            const N: i32 = CONST_BITS + PASS1_BITS; // 15
-            let round = _mm256_set1_epi32(1 << (N - 1));
+            let pd = _mm256_set1_epi32(1 << (CONST_BITS + PASS1_BITS - 1));
+            const N: i32 = CONST_BITS + PASS1_BITS;
             (
-                _mm256_srai_epi32::<N>(_mm256_add_epi32(data2_6_lo, round)),
-                _mm256_srai_epi32::<N>(_mm256_add_epi32(data2_6_hi, round)),
-                round,
+                _mm256_srai_epi32::<N>(_mm256_add_epi32(ymm1, pd)),
+                _mm256_srai_epi32::<N>(_mm256_add_epi32(ymm5, pd)),
+                pd,
             )
         };
-        let out2_6 = _mm256_packs_epi32(data2_6_lo, data2_6_hi);
+
+        let out2_6 = _mm256_packs_epi32(ymm1, ymm5);
 
         // ---- Odd part ----
 
-        let z3_4 = _mm256_add_epi16(t8, t5); // z3_4 = tmp4_5 + tmp6_7
+        let ymm6 = _mm256_add_epi16(ymm7, ymm4); // z3_4
 
-        // Swap halves for z4_3
-        let z4_3 = _mm256_permute2x128_si256(z3_4, z3_4, 0x01);
+        // z3/z4 calculation
+        let ymm1 = _mm256_permute2x128_si256(ymm6, ymm6, 0x01); // z4_3
+        let ymm5 = _mm256_unpacklo_epi16(ymm6, ymm1);
+        let ymm6 = _mm256_unpackhi_epi16(ymm6, ymm1);
 
-        // Interleave z3, z4 for vpmaddwd
-        let z_interleaved_lo = _mm256_unpacklo_epi16(z3_4, z4_3);
-        let z_interleaved_hi = _mm256_unpackhi_epi16(z3_4, z4_3);
-
-        // z3 = z3 * (F_1_175 - F_1_961) + z4 * F_1_175
-        // z4 = z3 * F_1_175 + z4 * (F_1_175 - F_0_390)
-        let const_z34 = _mm256_set_epi16(
-            F_1_175_MINUS_0_390,
-            F_1_175,
-            F_1_175_MINUS_0_390,
-            F_1_175,
-            F_1_175_MINUS_0_390,
-            F_1_175,
-            F_1_175_MINUS_0_390,
-            F_1_175,
-            F_1_175_MINUS_1_961,
-            F_1_175,
-            F_1_175_MINUS_1_961,
-            F_1_175,
-            F_1_175_MINUS_1_961,
-            F_1_175,
-            F_1_175_MINUS_1_961,
-            F_1_175,
+        // PW_MF078_F117_F078_F117 - pairs are [A,B] in memory
+        let pw_mf078_f117 = _mm256_set_epi16(
+            F_1_175, F_1_175_MINUS_0_390, F_1_175, F_1_175_MINUS_0_390,
+            F_1_175, F_1_175_MINUS_0_390, F_1_175, F_1_175_MINUS_0_390,
+            F_1_175, F_1_175_MINUS_1_961, F_1_175, F_1_175_MINUS_1_961,
+            F_1_175, F_1_175_MINUS_1_961, F_1_175, F_1_175_MINUS_1_961,
         );
 
-        let z3_z4_lo = _mm256_madd_epi16(z_interleaved_lo, const_z34);
-        let z3_z4_hi = _mm256_madd_epi16(z_interleaved_hi, const_z34);
+        let ymm5 = _mm256_madd_epi16(ymm5, pw_mf078_f117);
+        let ymm6 = _mm256_madd_epi16(ymm6, pw_mf078_f117);
 
         // tmp4/tmp5 calculation
-        // tmp4 = tmp4 * (F_0_298 - F_0_899) + tmp7 * -F_0_899
-        // tmp5 = tmp5 * (F_2_053 - F_2_562) + tmp6 * -F_2_562
-        let tmp7_6 = _mm256_permute2x128_si256(t5, t5, 0x01);
-        let tmp45_interleaved_lo = _mm256_unpacklo_epi16(t8, tmp7_6);
-        let tmp45_interleaved_hi = _mm256_unpackhi_epi16(t8, tmp7_6);
+        let ymm3 = _mm256_permute2x128_si256(ymm4, ymm4, 0x01); // tmp7_6
+        let ymm1 = _mm256_unpacklo_epi16(ymm7, ymm3);
+        let ymm3 = _mm256_unpackhi_epi16(ymm7, ymm3);
 
-        let const_tmp45 = _mm256_set_epi16(
-            F_NEG_2_562,
-            F_2_053_MINUS_2_562,
-            F_NEG_2_562,
-            F_2_053_MINUS_2_562,
-            F_NEG_2_562,
-            F_2_053_MINUS_2_562,
-            F_NEG_2_562,
-            F_2_053_MINUS_2_562,
-            F_NEG_0_899,
-            F_0_298_MINUS_0_899,
-            F_NEG_0_899,
-            F_0_298_MINUS_0_899,
-            F_NEG_0_899,
-            F_0_298_MINUS_0_899,
-            F_NEG_0_899,
-            F_0_298_MINUS_0_899,
+        // PW_MF060_MF089_MF050_MF256 - pairs are [A,B] in memory
+        let pw_mf060_mf089 = _mm256_set_epi16(
+            F_NEG_2_562, F_2_053_MINUS_2_562, F_NEG_2_562, F_2_053_MINUS_2_562,
+            F_NEG_2_562, F_2_053_MINUS_2_562, F_NEG_2_562, F_2_053_MINUS_2_562,
+            F_NEG_0_899, F_0_298_MINUS_0_899, F_NEG_0_899, F_0_298_MINUS_0_899,
+            F_NEG_0_899, F_0_298_MINUS_0_899, F_NEG_0_899, F_0_298_MINUS_0_899,
         );
 
-        let tmp4_5_lo = _mm256_madd_epi16(tmp45_interleaved_lo, const_tmp45);
-        let tmp4_5_hi = _mm256_madd_epi16(tmp45_interleaved_hi, const_tmp45);
+        let ymm1 = _mm256_madd_epi16(ymm1, pw_mf060_mf089);
+        let ymm3 = _mm256_madd_epi16(ymm3, pw_mf060_mf089);
 
-        // data7_5 = tmp4_5 + z3_z4
-        let data7_5_lo = _mm256_add_epi32(tmp4_5_lo, z3_z4_lo);
-        let data7_5_hi = _mm256_add_epi32(tmp4_5_hi, z3_z4_hi);
+        let ymm1 = _mm256_add_epi32(ymm1, ymm5); // data7_5L
+        let ymm3 = _mm256_add_epi32(ymm3, ymm6); // data7_5H
 
-        let out7_5 = if pass1 {
+        let (ymm1d, ymm3d) = if pass1 {
             const N: i32 = CONST_BITS - PASS1_BITS;
-            _mm256_packs_epi32(
-                _mm256_srai_epi32::<N>(_mm256_add_epi32(data7_5_lo, round32)),
-                _mm256_srai_epi32::<N>(_mm256_add_epi32(data7_5_hi, round32)),
+            (
+                _mm256_srai_epi32::<N>(_mm256_add_epi32(ymm1, pd_descale)),
+                _mm256_srai_epi32::<N>(_mm256_add_epi32(ymm3, pd_descale)),
             )
         } else {
             const N: i32 = CONST_BITS + PASS1_BITS;
-            _mm256_packs_epi32(
-                _mm256_srai_epi32::<N>(_mm256_add_epi32(data7_5_lo, round32)),
-                _mm256_srai_epi32::<N>(_mm256_add_epi32(data7_5_hi, round32)),
+            (
+                _mm256_srai_epi32::<N>(_mm256_add_epi32(ymm1, pd_descale)),
+                _mm256_srai_epi32::<N>(_mm256_add_epi32(ymm3, pd_descale)),
             )
         };
+
+        let out7_5 = _mm256_packs_epi32(ymm1d, ymm3d);
 
         // tmp6/tmp7 calculation
-        // tmp6 = tmp6 * (F_3_072 - F_2_562) + tmp5 * -F_2_562
-        // tmp7 = tmp7 * (F_1_501 - F_0_899) + tmp4 * -F_0_899
-        let tmp5_4 = _mm256_permute2x128_si256(t8, t8, 0x01);
-        let tmp67_interleaved_lo = _mm256_unpacklo_epi16(t5, tmp5_4);
-        let tmp67_interleaved_hi = _mm256_unpackhi_epi16(t5, tmp5_4);
+        let ymm1 = _mm256_permute2x128_si256(ymm7, ymm7, 0x01); // tmp5_4
+        let ymm7 = _mm256_unpacklo_epi16(ymm4, ymm1);
+        let ymm4 = _mm256_unpackhi_epi16(ymm4, ymm1);
 
-        let const_tmp67 = _mm256_set_epi16(
-            F_NEG_0_899,
-            F_1_501_MINUS_0_899,
-            F_NEG_0_899,
-            F_1_501_MINUS_0_899,
-            F_NEG_0_899,
-            F_1_501_MINUS_0_899,
-            F_NEG_0_899,
-            F_1_501_MINUS_0_899,
-            F_NEG_2_562,
-            F_3_072_MINUS_2_562,
-            F_NEG_2_562,
-            F_3_072_MINUS_2_562,
-            F_NEG_2_562,
-            F_3_072_MINUS_2_562,
-            F_NEG_2_562,
-            F_3_072_MINUS_2_562,
+        // PW_F050_MF256_F060_MF089
+        let pw_f050_mf256 = _mm256_set_epi16(
+            F_NEG_0_899, F_1_501_MINUS_0_899, F_NEG_0_899, F_1_501_MINUS_0_899,
+            F_NEG_0_899, F_1_501_MINUS_0_899, F_NEG_0_899, F_1_501_MINUS_0_899,
+            F_NEG_2_562, F_3_072_MINUS_2_562, F_NEG_2_562, F_3_072_MINUS_2_562,
+            F_NEG_2_562, F_3_072_MINUS_2_562, F_NEG_2_562, F_3_072_MINUS_2_562,
         );
 
-        let tmp6_7_lo = _mm256_madd_epi16(tmp67_interleaved_lo, const_tmp67);
-        let tmp6_7_hi = _mm256_madd_epi16(tmp67_interleaved_hi, const_tmp67);
+        let ymm7 = _mm256_madd_epi16(ymm7, pw_f050_mf256);
+        let ymm4 = _mm256_madd_epi16(ymm4, pw_f050_mf256);
 
-        // data3_1 = tmp6_7 + z3_z4
-        let data3_1_lo = _mm256_add_epi32(tmp6_7_lo, z3_z4_lo);
-        let data3_1_hi = _mm256_add_epi32(tmp6_7_hi, z3_z4_hi);
+        let ymm7 = _mm256_add_epi32(ymm7, ymm5); // data3_1L
+        let ymm4 = _mm256_add_epi32(ymm4, ymm6); // data3_1H
 
-        let out3_1 = if pass1 {
+        let (ymm7, ymm4) = if pass1 {
             const N: i32 = CONST_BITS - PASS1_BITS;
-            _mm256_packs_epi32(
-                _mm256_srai_epi32::<N>(_mm256_add_epi32(data3_1_lo, round32)),
-                _mm256_srai_epi32::<N>(_mm256_add_epi32(data3_1_hi, round32)),
+            (
+                _mm256_srai_epi32::<N>(_mm256_add_epi32(ymm7, pd_descale)),
+                _mm256_srai_epi32::<N>(_mm256_add_epi32(ymm4, pd_descale)),
             )
         } else {
             const N: i32 = CONST_BITS + PASS1_BITS;
-            _mm256_packs_epi32(
-                _mm256_srai_epi32::<N>(_mm256_add_epi32(data3_1_lo, round32)),
-                _mm256_srai_epi32::<N>(_mm256_add_epi32(data3_1_hi, round32)),
+            (
+                _mm256_srai_epi32::<N>(_mm256_add_epi32(ymm7, pd_descale)),
+                _mm256_srai_epi32::<N>(_mm256_add_epi32(ymm4, pd_descale)),
             )
         };
 
-        // Output assignment
-        *ymm0 = out0_4;
-        *ymm1 = out3_1;
-        *ymm2 = out2_6;
-        *ymm3 = out7_5;
+        let out3_1 = _mm256_packs_epi32(ymm7, ymm4);
+
+        // Output: data0_4, data3_1, data2_6, data7_5
+        (out0_4, out3_1, out2_6, out7_5)
     }
 }
 
