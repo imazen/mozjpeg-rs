@@ -1,6 +1,6 @@
 [package]
 name = "mozjpeg-rs"
-version = "0.5.0"
+version = "0.5.1"
 edition = "2021"
 rust-version = "1.89.0"
 license = "BSD-3-Clause"
