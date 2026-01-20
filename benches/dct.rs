@@ -82,9 +82,16 @@ fn bench_dct_combined(c: &mut Criterion) {
     });
 }
 
-#[cfg(all(target_arch = "x86_64", target_feature = "avx2"))]
+#[cfg(target_arch = "x86_64")]
 fn bench_dct_avx2_intrinsics(c: &mut Criterion) {
+    use archmage::SimdToken;
+    use archmage::tokens::x86::Avx2Token;
     use mozjpeg_rs::dct::avx2::forward_dct_8x8_avx2;
+
+    let Some(token) = Avx2Token::try_new() else {
+        eprintln!("AVX2 not available, skipping benchmark");
+        return;
+    };
 
     let samples = generate_shifted_data();
 
@@ -94,17 +101,22 @@ fn bench_dct_avx2_intrinsics(c: &mut Criterion) {
     group.bench_function("avx2_intrinsics", |b| {
         b.iter(|| {
             let mut coeffs = [0i16; 64];
-            unsafe {
-                forward_dct_8x8_avx2(black_box(&samples), black_box(&mut coeffs));
-            }
+            forward_dct_8x8_avx2(token, black_box(&samples), black_box(&mut coeffs));
             coeffs
         })
     });
 }
 
-#[cfg(all(target_arch = "x86_64", target_feature = "avx2"))]
+#[cfg(target_arch = "x86_64")]
 fn bench_dct_avx2_i16(c: &mut Criterion) {
+    use archmage::SimdToken;
+    use archmage::tokens::x86::Avx2Token;
     use mozjpeg_rs::dct::avx2::forward_dct_8x8_avx2_i16;
+
+    let Some(token) = Avx2Token::try_new() else {
+        eprintln!("AVX2 not available, skipping benchmark");
+        return;
+    };
 
     let samples = generate_shifted_data();
 
@@ -114,9 +126,7 @@ fn bench_dct_avx2_i16(c: &mut Criterion) {
     group.bench_function("avx2_i16_vpmaddwd", |b| {
         b.iter(|| {
             let mut coeffs = [0i16; 64];
-            unsafe {
-                forward_dct_8x8_avx2_i16(black_box(&samples), black_box(&mut coeffs));
-            }
+            forward_dct_8x8_avx2_i16(token, black_box(&samples), black_box(&mut coeffs));
             coeffs
         })
     });
@@ -149,37 +159,37 @@ fn bench_dct_batch_1000(c: &mut Criterion) {
         })
     });
 
-    #[cfg(all(target_arch = "x86_64", target_feature = "avx2"))]
+    #[cfg(target_arch = "x86_64")]
     {
+        use archmage::SimdToken;
+        use archmage::tokens::x86::Avx2Token;
         use mozjpeg_rs::dct::avx2::{forward_dct_8x8_avx2, forward_dct_8x8_avx2_i16};
 
-        group.bench_function("avx2_intrinsics", |b| {
-            b.iter(|| {
-                let mut coeffs = [0i16; 64];
-                for _ in 0..1000 {
-                    unsafe {
-                        forward_dct_8x8_avx2(black_box(&samples), black_box(&mut coeffs));
+        if let Some(token) = Avx2Token::try_new() {
+            group.bench_function("avx2_intrinsics", |b| {
+                b.iter(|| {
+                    let mut coeffs = [0i16; 64];
+                    for _ in 0..1000 {
+                        forward_dct_8x8_avx2(token, black_box(&samples), black_box(&mut coeffs));
                     }
-                }
-                coeffs
-            })
-        });
+                    coeffs
+                })
+            });
 
-        group.bench_function("avx2_i16_vpmaddwd", |b| {
-            b.iter(|| {
-                let mut coeffs = [0i16; 64];
-                for _ in 0..1000 {
-                    unsafe {
-                        forward_dct_8x8_avx2_i16(black_box(&samples), black_box(&mut coeffs));
+            group.bench_function("avx2_i16_vpmaddwd", |b| {
+                b.iter(|| {
+                    let mut coeffs = [0i16; 64];
+                    for _ in 0..1000 {
+                        forward_dct_8x8_avx2_i16(token, black_box(&samples), black_box(&mut coeffs));
                     }
-                }
-                coeffs
-            })
-        });
+                    coeffs
+                })
+            });
+        }
     }
 }
 
-#[cfg(all(target_arch = "x86_64", target_feature = "avx2"))]
+#[cfg(target_arch = "x86_64")]
 criterion_group!(
     benches,
     bench_dct_scalar,
@@ -191,7 +201,7 @@ criterion_group!(
     bench_dct_batch_1000,
 );
 
-#[cfg(not(all(target_arch = "x86_64", target_feature = "avx2")))]
+#[cfg(not(target_arch = "x86_64"))]
 criterion_group!(
     benches,
     bench_dct_scalar,
