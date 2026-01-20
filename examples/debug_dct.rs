@@ -1,6 +1,9 @@
 //! Debug DCT by tracing intermediate values
 
-use std::arch::x86_64::*;
+#[cfg(all(target_arch = "x86_64", target_feature = "avx2"))]
+use archmage::tokens::x86::Avx2Token;
+#[cfg(all(target_arch = "x86_64", target_feature = "avx2"))]
+use archmage::SimdToken;
 
 const DCTSIZE: usize = 8;
 const DCTSIZE2: usize = 64;
@@ -204,7 +207,15 @@ fn scalar_dct(samples: &[i16; DCTSIZE2], coeffs: &mut [i16; DCTSIZE2]) {
     }
 }
 
+#[cfg(all(target_arch = "x86_64", target_feature = "avx2"))]
 #[target_feature(enable = "avx2")]
 unsafe fn avx2_i16_dct_debug(samples: &[i16; DCTSIZE2], coeffs: &mut [i16; DCTSIZE2]) {
-    mozjpeg_rs::dct::avx2::forward_dct_8x8_avx2_i16(samples, coeffs);
+    // SAFETY: We're inside a #[target_feature(enable = "avx2")] function
+    let token = Avx2Token::new_unchecked();
+    mozjpeg_rs::dct::avx2::forward_dct_8x8_avx2_i16(token, samples, coeffs);
+}
+
+#[cfg(not(all(target_arch = "x86_64", target_feature = "avx2")))]
+unsafe fn avx2_i16_dct_debug(_samples: &[i16; DCTSIZE2], _coeffs: &mut [i16; DCTSIZE2]) {
+    panic!("AVX2 not available");
 }
