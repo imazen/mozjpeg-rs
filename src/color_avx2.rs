@@ -16,13 +16,15 @@
 //! 3. vpmaddwd for coefficient multiply-accumulate
 //! 4. Direct storage to planar output buffers
 //!
-//! Note: Functions with `#[target_feature]` must be `unsafe` in Rust <1.92,
-//! but the memory operations use archmage's safe wrappers internally.
+//! Uses archmage `#[arcane]` macro to generate safe wrappers around
+//! `#[target_feature]` functions - the token parameter proves CPU support.
 
-// Allow unsafe for #[target_feature] functions - memory ops use safe archmage wrappers
+// Allow unsafe for helper functions called from #[arcane] wrappers
 #![allow(unsafe_code)]
 #![allow(clippy::too_many_lines)]
 
+#[cfg(target_arch = "x86_64")]
+use archmage::arcane;
 #[cfg(target_arch = "x86_64")]
 use archmage::mem::avx as mem_avx;
 #[cfg(target_arch = "x86_64")]
@@ -62,10 +64,10 @@ const fn pack_i16_pair(lo: i32, hi: i32) -> i32 {
 /// Convert RGB to YCbCr using AVX2 intrinsics.
 ///
 /// Processes 32 pixels per iteration for optimal performance.
-/// Uses archmage for safe SIMD memory operations.
+/// Uses archmage `#[arcane]` for safe SIMD - token proves AVX2 is available.
 #[cfg(target_arch = "x86_64")]
-#[target_feature(enable = "avx2")]
-unsafe fn convert_rgb_to_ycbcr_avx2_impl(
+#[arcane]
+fn convert_rgb_to_ycbcr_avx2_impl(
     token: Avx2Token,
     rgb: &[u8],
     y_out: &mut [u8],
@@ -396,22 +398,16 @@ unsafe fn convert_rgb_to_ycbcr_avx2_impl(
 /// Convert RGB to YCbCr using AVX2 intrinsics.
 ///
 /// Processes 32 pixels per iteration for optimal performance.
-///
-/// # Safety
-///
-/// Caller must ensure AVX2 is supported.
+/// Token proves AVX2 is available.
 #[cfg(target_arch = "x86_64")]
-#[target_feature(enable = "avx2")]
-pub unsafe fn convert_rgb_to_ycbcr_avx2(
+pub fn convert_rgb_to_ycbcr_avx2(
+    token: Avx2Token,
     rgb: &[u8],
     y_out: &mut [u8],
     cb_out: &mut [u8],
     cr_out: &mut [u8],
     num_pixels: usize,
 ) {
-    use archmage::SimdToken;
-    // SAFETY: Token is guaranteed valid since we're in a #[target_feature(enable = "avx2")] function
-    let token = Avx2Token::forge_token_dangerously();
     convert_rgb_to_ycbcr_avx2_impl(token, rgb, y_out, cb_out, cr_out, num_pixels);
 }
 
@@ -428,10 +424,7 @@ pub fn convert_rgb_to_ycbcr_dispatch(
 ) {
     use archmage::SimdToken;
     if let Some(token) = Avx2Token::try_new() {
-        // SAFETY: Token proves AVX2 is available
-        unsafe {
-            convert_rgb_to_ycbcr_avx2_impl(token, rgb, y_out, cb_out, cr_out, num_pixels);
-        }
+        convert_rgb_to_ycbcr_avx2_impl(token, rgb, y_out, cb_out, cr_out, num_pixels);
     } else {
         // Fallback to scalar
         for i in 0..num_pixels {
@@ -451,10 +444,10 @@ mod tests {
     #[test]
     fn test_avx2_matches_scalar() {
         use archmage::SimdToken;
-        if Avx2Token::try_new().is_none() {
+        let Some(token) = Avx2Token::try_new() else {
             eprintln!("AVX2 not available, skipping test");
             return;
-        }
+        };
 
         // Test with 64 pixels (2 iterations of 32)
         let num_pixels = 64;
@@ -469,9 +462,7 @@ mod tests {
         let mut cr_scalar = vec![0u8; num_pixels];
 
         // Run AVX2 version
-        unsafe {
-            convert_rgb_to_ycbcr_avx2(&rgb, &mut y_avx2, &mut cb_avx2, &mut cr_avx2, num_pixels);
-        }
+        convert_rgb_to_ycbcr_avx2(token, &rgb, &mut y_avx2, &mut cb_avx2, &mut cr_avx2, num_pixels);
 
         // Run scalar version
         for i in 0..num_pixels {
@@ -528,9 +519,8 @@ mod tests {
         let mut cb_scalar = vec![0u8; num_pixels];
         let mut cr_scalar = vec![0u8; num_pixels];
 
-        unsafe {
-            convert_rgb_to_ycbcr_avx2(&rgb, &mut y_avx2, &mut cb_avx2, &mut cr_avx2, num_pixels);
-        }
+        let token = Avx2Token::try_new().unwrap();
+        convert_rgb_to_ycbcr_avx2(token, &rgb, &mut y_avx2, &mut cb_avx2, &mut cr_avx2, num_pixels);
 
         for i in 0..num_pixels {
             let (y, cb, cr) =

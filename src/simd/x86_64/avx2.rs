@@ -9,13 +9,14 @@
 //!
 //! All functions require AVX2 support via archmage capability tokens.
 //!
-//! Note: Functions with `#[target_feature]` must be `unsafe` in Rust <1.92,
-//! but the memory operations use archmage's safe wrappers internally.
+//! Uses archmage `#[arcane]` macro to generate safe wrappers around
+//! `#[target_feature]` functions - the token parameter proves CPU support.
 
-// Allow unsafe for #[target_feature] functions - memory ops use safe archmage wrappers
+// Allow unsafe for helper functions called from #[arcane] wrappers
 #![allow(unsafe_code)]
 
 use crate::consts::DCTSIZE2;
+use archmage::arcane;
 use archmage::mem::sse2 as mem_sse2;
 use archmage::tokens::x86::Avx2Token;
 use core::arch::x86_64::*;
@@ -273,9 +274,9 @@ unsafe fn dct_1d_pass_avx2(data: &mut [__m256i; 8], pass1: bool) {
 
 /// AVX2-optimized forward DCT on 8x8 block using i32 arithmetic internally.
 ///
-/// Uses archmage token for safe SIMD memory operations.
-#[target_feature(enable = "avx2")]
-unsafe fn forward_dct_8x8_i32_avx2_impl(
+/// Uses archmage `#[arcane]` for safe SIMD - token proves AVX2 is available.
+#[arcane]
+fn forward_dct_8x8_i32_avx2_impl(
     token: Avx2Token,
     samples: &[i16; DCTSIZE2],
     coeffs: &mut [i16; DCTSIZE2],
@@ -348,8 +349,7 @@ pub fn forward_dct_8x8_i32_avx2_intrinsics(
 ) {
     use archmage::SimdToken;
     if let Some(token) = Avx2Token::try_new() {
-        // SAFETY: Token proves AVX2 is available
-        unsafe { forward_dct_8x8_i32_avx2_impl(token, samples, coeffs) }
+        forward_dct_8x8_i32_avx2_impl(token, samples, coeffs);
     } else {
         // Fallback to scalar (shouldn't happen if this module is only used with AVX2)
         crate::simd::scalar::forward_dct_8x8(samples, coeffs);
@@ -363,9 +363,9 @@ pub fn forward_dct_8x8_i32_avx2_intrinsics(
 /// AVX2-optimized RGB to YCbCr conversion.
 ///
 /// Processes 8 pixels at a time using proper SIMD loads (no gather).
-/// Uses archmage token for safe operations.
-#[target_feature(enable = "avx2")]
-unsafe fn convert_rgb_to_ycbcr_avx2_inner(
+/// Uses archmage `#[arcane]` for safe SIMD - token proves AVX2 is available.
+#[arcane]
+fn convert_rgb_to_ycbcr_avx2_inner(
     _token: Avx2Token,
     rgb: &[u8],
     y_out: &mut [u8],
@@ -533,8 +533,7 @@ pub fn convert_rgb_to_ycbcr(
 ) {
     use archmage::SimdToken;
     if let Some(token) = Avx2Token::try_new() {
-        // SAFETY: Token proves AVX2 is available
-        unsafe { convert_rgb_to_ycbcr_avx2_inner(token, rgb, y_out, cb_out, cr_out, num_pixels) }
+        convert_rgb_to_ycbcr_avx2_inner(token, rgb, y_out, cb_out, cr_out, num_pixels);
     } else {
         // Fallback to scalar
         crate::simd::scalar::convert_rgb_to_ycbcr(rgb, y_out, cb_out, cr_out, num_pixels);

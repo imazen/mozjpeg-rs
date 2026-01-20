@@ -1953,7 +1953,7 @@ mod tests {
         use archmage::SimdToken;
 
         // SAFETY: Test runs only on x86_64 with AVX2 support
-        let token = unsafe { Avx2Token::new_unchecked() };
+        let token = unsafe { Avx2Token::forge_token_dangerously() };
 
         // Exhaustive test with many patterns
         for seed in 0..20 {
@@ -1984,7 +1984,7 @@ mod tests {
         use archmage::SimdToken;
 
         // SAFETY: Test runs only on x86_64 with AVX2 support
-        let token = unsafe { Avx2Token::new_unchecked() };
+        let token = unsafe { Avx2Token::forge_token_dangerously() };
 
         // Exhaustive test with many patterns
         for seed in 0..20 {
