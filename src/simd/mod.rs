@@ -33,6 +33,9 @@ pub mod x86_64;
 
 use crate::consts::DCTSIZE2;
 
+#[cfg(target_arch = "x86_64")]
+use archmage::{tokens::x86::Avx2Token, SimdToken};
+
 // ============================================================================
 // Fast YUV color conversion using the yuv crate (when feature enabled)
 // ============================================================================
@@ -93,17 +96,34 @@ pub type ForwardDctFn = fn(&[i16; DCTSIZE2], &mut [i16; DCTSIZE2]);
 /// - num_pixels: total number of pixels to convert
 pub type ColorConvertFn = fn(&[u8], &mut [u8], &mut [u8], &mut [u8], usize);
 
+/// DCT implementation variant for dispatch.
+#[derive(Clone, Copy, Debug)]
+enum DctVariant {
+    /// Scalar with multiversion autovectorization
+    Multiversion,
+    /// Hand-written AVX2 intrinsics (simd-intrinsics feature)
+    #[cfg(all(target_arch = "x86_64", feature = "simd-intrinsics"))]
+    Avx2Intrinsics,
+    /// Archmage-based safe AVX2 with cached token
+    #[cfg(target_arch = "x86_64")]
+    Avx2Archmage,
+}
+
 /// SIMD operations dispatch table.
 ///
 /// This struct holds function pointers to the best available implementations
 /// for the current CPU. Create once at startup and reuse.
 #[derive(Clone, Copy)]
 pub struct SimdOps {
-    // Note: Debug is implemented manually below since fn pointers print as addresses
-    /// Forward DCT function
+    /// Forward DCT function pointer (legacy, kept for compatibility)
     pub forward_dct: ForwardDctFn,
     /// RGB to YCbCr conversion function
     pub color_convert_rgb_to_ycbcr: ColorConvertFn,
+    /// DCT implementation variant
+    dct_variant: DctVariant,
+    /// Cached AVX2 token for archmage-based DCT (x86_64 only)
+    #[cfg(target_arch = "x86_64")]
+    avx2_token: Option<Avx2Token>,
 }
 
 impl SimdOps {
@@ -111,8 +131,9 @@ impl SimdOps {
     ///
     /// Priority order:
     /// 1. `fast-yuv` feature: Uses the `yuv` crate for color conversion (~10x faster)
-    /// 2. `simd-intrinsics` feature: Hand-written AVX2 intrinsics (~15% faster DCT)
-    /// 3. Default: `multiversion` autovectorization (safe, ~87% of intrinsics perf)
+    /// 2. Archmage AVX2: Safe SIMD with cached capability token (default on x86_64 with AVX2)
+    /// 3. `simd-intrinsics` feature: Hand-written AVX2 intrinsics
+    /// 4. Default: `multiversion` autovectorization (safe, ~87% of intrinsics perf)
     #[must_use]
     pub fn detect() -> Self {
         // Color conversion: prefer yuv crate (fastest), then intrinsics, then scalar
@@ -136,20 +157,64 @@ impl SimdOps {
         ))]
         let color_fn: ColorConvertFn = scalar::convert_rgb_to_ycbcr;
 
-        // DCT: prefer intrinsics, then scalar with multiversion
-        #[cfg(all(target_arch = "x86_64", feature = "simd-intrinsics"))]
-        let dct_fn: ForwardDctFn = if is_x86_feature_detected!("avx2") {
-            x86_64::avx2::forward_dct_8x8_i32_avx2_intrinsics
+        // DCT: Try archmage first (cached token), then intrinsics, then multiversion
+        #[cfg(target_arch = "x86_64")]
+        let (dct_fn, dct_variant, avx2_token) = if let Some(token) = Avx2Token::try_new() {
+            // Archmage with cached token - use multiversion as the function pointer
+            // but actual dispatch will use the token-based method
+            (
+                scalar::forward_dct_8x8 as ForwardDctFn,
+                DctVariant::Avx2Archmage,
+                Some(token),
+            )
         } else {
-            scalar::forward_dct_8x8
+            (
+                scalar::forward_dct_8x8 as ForwardDctFn,
+                DctVariant::Multiversion,
+                None,
+            )
         };
 
-        #[cfg(not(all(target_arch = "x86_64", feature = "simd-intrinsics")))]
-        let dct_fn: ForwardDctFn = scalar::forward_dct_8x8;
+        #[cfg(not(target_arch = "x86_64"))]
+        let (dct_fn, dct_variant) = (
+            scalar::forward_dct_8x8 as ForwardDctFn,
+            DctVariant::Multiversion,
+        );
 
         Self {
             forward_dct: dct_fn,
             color_convert_rgb_to_ycbcr: color_fn,
+            dct_variant,
+            #[cfg(target_arch = "x86_64")]
+            avx2_token,
+        }
+    }
+
+    /// Perform forward DCT using the best available implementation.
+    ///
+    /// This method uses the cached AVX2 token when available, avoiding
+    /// per-call capability checks.
+    #[inline]
+    pub fn do_forward_dct(&self, samples: &[i16; DCTSIZE2], coeffs: &mut [i16; DCTSIZE2]) {
+        match self.dct_variant {
+            #[cfg(target_arch = "x86_64")]
+            DctVariant::Avx2Archmage => {
+                // Use archmage with cached token
+                if let Some(token) = self.avx2_token {
+                    #[allow(deprecated)]
+                    crate::dct::avx2_archmage::forward_dct_8x8_i32(token, samples, coeffs);
+                } else {
+                    // Fallback (shouldn't happen if variant is Avx2Archmage)
+                    crate::dct::forward_dct_8x8_i32_multiversion(samples, coeffs);
+                }
+            }
+            #[cfg(all(target_arch = "x86_64", feature = "simd-intrinsics"))]
+            DctVariant::Avx2Intrinsics => {
+                x86_64::avx2::forward_dct_8x8_i32_avx2_intrinsics(samples, coeffs);
+            }
+            DctVariant::Multiversion => {
+                crate::dct::forward_dct_8x8_i32_multiversion(samples, coeffs);
+            }
         }
     }
 
@@ -159,21 +224,50 @@ impl SimdOps {
         Self {
             forward_dct: scalar::forward_dct_8x8,
             color_convert_rgb_to_ycbcr: scalar::convert_rgb_to_ycbcr,
+            dct_variant: DctVariant::Multiversion,
+            #[cfg(target_arch = "x86_64")]
+            avx2_token: None,
         }
     }
 
     /// Get explicit AVX2 intrinsics (requires x86_64 with AVX2).
     /// Returns None if not available.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(all(target_arch = "x86_64", feature = "simd-intrinsics"))]
     #[must_use]
     pub fn avx2_intrinsics() -> Option<Self> {
         if is_x86_feature_detected!("avx2") {
             Some(Self {
                 forward_dct: x86_64::avx2::forward_dct_8x8_i32_avx2_intrinsics,
                 color_convert_rgb_to_ycbcr: x86_64::avx2::convert_rgb_to_ycbcr,
+                dct_variant: DctVariant::Avx2Intrinsics,
+                avx2_token: Avx2Token::try_new(),
             })
         } else {
             None
+        }
+    }
+
+    /// Get archmage-based AVX2 implementation with cached token.
+    /// Returns None if AVX2 is not available.
+    #[cfg(target_arch = "x86_64")]
+    #[must_use]
+    pub fn avx2_archmage() -> Option<Self> {
+        Avx2Token::try_new().map(|token| Self {
+            forward_dct: scalar::forward_dct_8x8,
+            color_convert_rgb_to_ycbcr: scalar::convert_rgb_to_ycbcr,
+            dct_variant: DctVariant::Avx2Archmage,
+            avx2_token: Some(token),
+        })
+    }
+
+    /// Check which DCT variant is active.
+    pub fn dct_variant_name(&self) -> &'static str {
+        match self.dct_variant {
+            DctVariant::Multiversion => "multiversion",
+            #[cfg(all(target_arch = "x86_64", feature = "simd-intrinsics"))]
+            DctVariant::Avx2Intrinsics => "avx2_intrinsics",
+            #[cfg(target_arch = "x86_64")]
+            DctVariant::Avx2Archmage => "avx2_archmage",
         }
     }
 }
@@ -186,18 +280,8 @@ impl Default for SimdOps {
 
 impl std::fmt::Debug for SimdOps {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        // Just indicate which implementation is in use, not the pointer addresses
-        #[cfg(target_arch = "x86_64")]
-        let variant = if is_x86_feature_detected!("avx2") {
-            "AVX2"
-        } else {
-            "Scalar"
-        };
-        #[cfg(not(target_arch = "x86_64"))]
-        let variant = "Scalar";
-
         f.debug_struct("SimdOps")
-            .field("variant", &variant)
+            .field("dct_variant", &self.dct_variant_name())
             .finish()
     }
 }
@@ -210,10 +294,10 @@ mod tests {
     fn test_detect_returns_valid_ops() {
         let ops = SimdOps::detect();
 
-        // Test that DCT works
+        // Test that DCT works via method
         let samples = [100i16; DCTSIZE2];
         let mut coeffs = [0i16; DCTSIZE2];
-        (ops.forward_dct)(&samples, &mut coeffs);
+        ops.do_forward_dct(&samples, &mut coeffs);
 
         // DC should be 64 * 100 = 6400 for flat block
         assert_eq!(coeffs[0], 6400);
@@ -228,8 +312,8 @@ mod tests {
         let mut coeffs_scalar = [0i16; DCTSIZE2];
         let mut coeffs_detect = [0i16; DCTSIZE2];
 
-        (scalar_ops.forward_dct)(&samples, &mut coeffs_scalar);
-        (detect_ops.forward_dct)(&samples, &mut coeffs_detect);
+        scalar_ops.do_forward_dct(&samples, &mut coeffs_scalar);
+        detect_ops.do_forward_dct(&samples, &mut coeffs_detect);
 
         assert_eq!(coeffs_scalar, coeffs_detect);
     }
@@ -250,5 +334,44 @@ mod tests {
         assert_eq!(y[0], 128);
         assert_eq!(cb[0], 128);
         assert_eq!(cr[0], 128);
+    }
+
+    #[test]
+    fn test_dct_variant_name() {
+        let ops = SimdOps::detect();
+        let name = ops.dct_variant_name();
+        // Should be one of the known variants
+        assert!(
+            name == "multiversion" || name == "avx2_intrinsics" || name == "avx2_archmage",
+            "Unknown variant: {}",
+            name
+        );
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn test_archmage_matches_multiversion() {
+        if let Some(archmage_ops) = SimdOps::avx2_archmage() {
+            let scalar_ops = SimdOps::scalar();
+
+            for seed in 0..20 {
+                let mut samples = [0i16; DCTSIZE2];
+                for i in 0..DCTSIZE2 {
+                    samples[i] = ((i as i32 * (seed * 37 + 13) + seed * 7) % 256 - 128) as i16;
+                }
+
+                let mut coeffs_archmage = [0i16; DCTSIZE2];
+                let mut coeffs_scalar = [0i16; DCTSIZE2];
+
+                archmage_ops.do_forward_dct(&samples, &mut coeffs_archmage);
+                scalar_ops.do_forward_dct(&samples, &mut coeffs_scalar);
+
+                assert_eq!(
+                    coeffs_archmage, coeffs_scalar,
+                    "Archmage should match scalar for seed {}",
+                    seed
+                );
+            }
+        }
     }
 }

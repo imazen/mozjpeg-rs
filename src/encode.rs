@@ -3085,7 +3085,7 @@ impl Encoder {
         }
 
         // Forward DCT (output scaled by factor of 8)
-        (self.simd.forward_dct)(&shifted, dct_block);
+        self.simd.do_forward_dct(&shifted, dct_block);
 
         // Convert to i32 for quantization
         let mut dct_i32 = [0i32; DCTSIZE2];
@@ -3240,7 +3240,7 @@ impl Encoder {
         }
 
         // Forward DCT (output scaled by factor of 8)
-        (self.simd.forward_dct)(&shifted, dct_block);
+        self.simd.do_forward_dct(&shifted, dct_block);
 
         // Convert to i32 for quantization
         let mut dct_i32 = [0i32; DCTSIZE2];

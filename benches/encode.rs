@@ -288,7 +288,10 @@ fn bench_subsampling(c: &mut Criterion) {
 /// Benchmark DCT implementations (scalar vs SIMD).
 #[allow(deprecated)] // Benchmarks compare deprecated implementations
 fn bench_dct(c: &mut Criterion) {
-    use mozjpeg_rs::dct::{forward_dct_8x8, forward_dct_8x8_simd, forward_dct_8x8_transpose};
+    use mozjpeg_rs::dct::{
+        forward_dct_8x8_i32_multiversion, forward_dct_8x8_i32_wide_gather,
+        forward_dct_8x8_i32_wide_transpose,
+    };
     use mozjpeg_rs::simd::SimdOps;
 
     // Create test data
@@ -300,36 +303,36 @@ fn bench_dct(c: &mut Criterion) {
     let mut group = c.benchmark_group("dct");
     group.throughput(Throughput::Elements(64)); // 64 coefficients per block
 
-    group.bench_function("scalar", |b| {
+    group.bench_function("multiversion", |b| {
         let mut coeffs = [0i16; 64];
         b.iter(|| {
-            forward_dct_8x8(black_box(&samples), &mut coeffs);
+            forward_dct_8x8_i32_multiversion(black_box(&samples), &mut coeffs);
             black_box(coeffs)
         })
     });
 
-    group.bench_function("simd_gather", |b| {
+    group.bench_function("wide_gather", |b| {
         let mut coeffs = [0i16; 64];
         b.iter(|| {
-            forward_dct_8x8_simd(black_box(&samples), &mut coeffs);
+            forward_dct_8x8_i32_wide_gather(black_box(&samples), &mut coeffs);
             black_box(coeffs)
         })
     });
 
-    group.bench_function("simd_transpose", |b| {
+    group.bench_function("wide_transpose", |b| {
         let mut coeffs = [0i16; 64];
         b.iter(|| {
-            forward_dct_8x8_transpose(black_box(&samples), &mut coeffs);
+            forward_dct_8x8_i32_wide_transpose(black_box(&samples), &mut coeffs);
             black_box(coeffs)
         })
     });
 
-    // New SIMD dispatch module (uses AVX2 intrinsics on x86_64)
+    // New SIMD dispatch module (uses archmage by default on x86_64)
     let simd_ops = SimdOps::detect();
     group.bench_function("simd_dispatch", |b| {
         let mut coeffs = [0i16; 64];
         b.iter(|| {
-            (simd_ops.forward_dct)(black_box(&samples), &mut coeffs);
+            simd_ops.do_forward_dct(black_box(&samples), &mut coeffs);
             black_box(coeffs)
         })
     });
@@ -339,7 +342,7 @@ fn bench_dct(c: &mut Criterion) {
     group.bench_function("simd_scalar_ref", |b| {
         let mut coeffs = [0i16; 64];
         b.iter(|| {
-            (scalar_ops.forward_dct)(black_box(&samples), &mut coeffs);
+            scalar_ops.do_forward_dct(black_box(&samples), &mut coeffs);
             black_box(coeffs)
         })
     });
