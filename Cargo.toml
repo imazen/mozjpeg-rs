@@ -54,7 +54,7 @@ png = { version = "0.17", optional = true }
 # Used by dct.rs and color.rs for portable SIMD
 wide = "1.1.1"
 # Safe SIMD memory operations with capability tokens
-archmage = { path = "../archmage", features = ["safe-simd"] }
+archmage = { path = "../archmage", features = ["safe_unaligned_simd"] }
 # Optional: mozjpeg-sys configuration (configure C encoder from our settings)
 mozjpeg-sys = { version = "2.2", optional = true }
 libc = { version = "0.2", optional = true }
