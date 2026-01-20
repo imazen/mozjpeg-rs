@@ -183,7 +183,7 @@ fn timing_breakdown_baseline() {
                             }
 
                             // Forward DCT
-                            dct::forward_dct_8x8_transpose(&samples, &mut dct_block);
+                            dct::forward_dct_8x8_i32_wide_transpose(&samples, &mut dct_block);
 
                             // Store as i32 for quantization
                             for i in 0..DCTSIZE2 {
@@ -391,7 +391,7 @@ fn timing_breakdown_trellis() {
                             }
 
                             // Forward DCT
-                            dct::forward_dct_8x8_transpose(&samples, &mut dct_block);
+                            dct::forward_dct_8x8_i32_wide_transpose(&samples, &mut dct_block);
 
                             // Store raw DCT as i32 for trellis
                             for i in 0..DCTSIZE2 {

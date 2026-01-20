@@ -15,11 +15,18 @@
 //! 2. Efficient de-interleaving using vpunpcklbw/hi, vpslldq, vperm2i128
 //! 3. vpmaddwd for coefficient multiply-accumulate
 //! 4. Direct storage to planar output buffers
+//!
+//! Note: Functions with `#[target_feature]` must be `unsafe` in Rust <1.92,
+//! but the memory operations use archmage's safe wrappers internally.
 
-// Allow unsafe code for SIMD intrinsics - memory loads/stores remain unsafe in Rust 1.92
+// Allow unsafe for #[target_feature] functions - memory ops use safe archmage wrappers
 #![allow(unsafe_code)]
 #![allow(clippy::too_many_lines)]
 
+#[cfg(target_arch = "x86_64")]
+use archmage::mem::avx as mem_avx;
+#[cfg(target_arch = "x86_64")]
+use archmage::tokens::x86::Avx2Token;
 #[cfg(target_arch = "x86_64")]
 use std::arch::x86_64::*;
 
@@ -55,13 +62,11 @@ const fn pack_i16_pair(lo: i32, hi: i32) -> i32 {
 /// Convert RGB to YCbCr using AVX2 intrinsics.
 ///
 /// Processes 32 pixels per iteration for optimal performance.
-///
-/// # Safety
-///
-/// Caller must ensure AVX2 is supported.
+/// Uses archmage for safe SIMD memory operations.
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx2")]
-pub unsafe fn convert_rgb_to_ycbcr_avx2(
+unsafe fn convert_rgb_to_ycbcr_avx2_impl(
+    token: Avx2Token,
     rgb: &[u8],
     y_out: &mut [u8],
     cb_out: &mut [u8],
@@ -89,16 +94,24 @@ pub unsafe fn convert_rgb_to_ycbcr_avx2(
     let pd_onehalf = _mm256_set1_epi32(1 << (SCALEBITS - 1));
 
     let chunks = num_pixels / 32;
-    let mut rgb_ptr = rgb.as_ptr();
-    let mut y_ptr = y_out.as_mut_ptr();
-    let mut cb_ptr = cb_out.as_mut_ptr();
-    let mut cr_ptr = cr_out.as_mut_ptr();
 
-    for _ in 0..chunks {
-        // Load 96 bytes (32 RGB pixels) using 3 YMM loads
-        let ymm_a = _mm256_loadu_si256(rgb_ptr.cast());
-        let ymm_f = _mm256_loadu_si256(rgb_ptr.add(32).cast());
-        let ymm_b = _mm256_loadu_si256(rgb_ptr.add(64).cast());
+    for chunk in 0..chunks {
+        let rgb_base = chunk * 96;
+        let out_base = chunk * 32;
+
+        // Load 96 bytes (32 RGB pixels) using 3 YMM loads with archmage safe wrappers
+        let ymm_a = mem_avx::_mm256_loadu_si256(
+            token,
+            <&[u8] as TryInto<&[u8; 32]>>::try_into(&rgb[rgb_base..rgb_base + 32]).unwrap(),
+        );
+        let ymm_f = mem_avx::_mm256_loadu_si256(
+            token,
+            <&[u8] as TryInto<&[u8; 32]>>::try_into(&rgb[rgb_base + 32..rgb_base + 64]).unwrap(),
+        );
+        let ymm_b = mem_avx::_mm256_loadu_si256(
+            token,
+            <&[u8] as TryInto<&[u8; 32]>>::try_into(&rgb[rgb_base + 64..rgb_base + 96]).unwrap(),
+        );
 
         // De-interleave RGB using the libjpeg-turbo shuffle sequence.
         // This complex sequence separates interleaved RGB into separate R, G, B vectors.
@@ -182,7 +195,7 @@ pub unsafe fn convert_rgb_to_ycbcr_avx2(
         let ymm_6 = _mm256_madd_epi16(ymm_6, pw_f0299_f0337);
         // ROL*-FIX(0.168) + GOL*-FIX(0.331) for Cb
         let ymm_7 = _mm256_madd_epi16(ymm_7, pw_mf016_mf033);
-        // ROH*-FIX(0.168) + GOH*-FIX(0.331) for Cb (was incorrectly using Cr coefficients!)
+        // ROH*-FIX(0.168) + GOH*-FIX(0.331) for Cb
         let ymm_4 = _mm256_madd_epi16(ymm_4, pw_mf016_mf033);
 
         // Save for later
@@ -219,7 +232,7 @@ pub unsafe fn convert_rgb_to_ycbcr_avx2(
         let ymm_6 = _mm256_madd_epi16(ymm_6, pw_f0299_f0337);
         // REL*-FIX(0.168) + GEL*-FIX(0.331) for Cb
         let ymm_5 = _mm256_madd_epi16(ymm_5, pw_mf016_mf033);
-        // REH*-FIX(0.168) + GEH*-FIX(0.331) for Cb (was incorrectly using Cr coefficients!)
+        // REH*-FIX(0.168) + GEH*-FIX(0.331) for Cb
         let ymm_4 = _mm256_madd_epi16(ymm_4, pw_mf016_mf033);
 
         let wk6 = ymm_0; // REL*FIX(0.299) + GEL*FIX(0.337)
@@ -244,7 +257,12 @@ pub unsafe fn convert_rgb_to_ycbcr_avx2(
         // Interleave Cb even and odd, store
         let cb_7 = _mm256_slli_epi16(cb_odd, 8);
         let cb_5 = _mm256_or_si256(cb_even, cb_7);
-        _mm256_storeu_si256(cb_ptr.cast(), cb_5);
+        mem_avx::_mm256_storeu_si256(
+            token,
+            <&mut [u8] as TryInto<&mut [u8; 32]>>::try_into(&mut cb_out[out_base..out_base + 32])
+                .unwrap(),
+            cb_5,
+        );
 
         // Now compute Y using saved R*0.299+G*0.337 values
         // Need B*0.114 + G*0.250
@@ -313,7 +331,12 @@ pub unsafe fn convert_rgb_to_ycbcr_avx2(
         // Interleave Y even and odd, store
         let y_0 = _mm256_slli_epi16(y_odd, 8);
         let y_6 = _mm256_or_si256(y_even, y_0);
-        _mm256_storeu_si256(y_ptr.cast(), y_6);
+        mem_avx::_mm256_storeu_si256(
+            token,
+            <&mut [u8] as TryInto<&mut [u8; 32]>>::try_into(&mut y_out[out_base..out_base + 32])
+                .unwrap(),
+            y_6,
+        );
 
         // Cr even
         let ymm_2 = _mm256_setzero_si256();
@@ -334,12 +357,12 @@ pub unsafe fn convert_rgb_to_ycbcr_avx2(
         // Interleave Cr even and odd, store
         let cr_7 = _mm256_slli_epi16(cr_odd, 8);
         let cr_1 = _mm256_or_si256(cr_even, cr_7);
-        _mm256_storeu_si256(cr_ptr.cast(), cr_1);
-
-        rgb_ptr = rgb_ptr.add(96);
-        y_ptr = y_ptr.add(32);
-        cb_ptr = cb_ptr.add(32);
-        cr_ptr = cr_ptr.add(32);
+        mem_avx::_mm256_storeu_si256(
+            token,
+            <&mut [u8] as TryInto<&mut [u8; 32]>>::try_into(&mut cr_out[out_base..out_base + 32])
+                .unwrap(),
+            cr_1,
+        );
     }
 
     // Handle remaining pixels with scalar code
@@ -370,6 +393,28 @@ pub unsafe fn convert_rgb_to_ycbcr_avx2(
     }
 }
 
+/// Convert RGB to YCbCr using AVX2 intrinsics.
+///
+/// Processes 32 pixels per iteration for optimal performance.
+///
+/// # Safety
+///
+/// Caller must ensure AVX2 is supported.
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx2")]
+pub unsafe fn convert_rgb_to_ycbcr_avx2(
+    rgb: &[u8],
+    y_out: &mut [u8],
+    cb_out: &mut [u8],
+    cr_out: &mut [u8],
+    num_pixels: usize,
+) {
+    use archmage::SimdToken;
+    // SAFETY: Token is guaranteed valid since we're in a #[target_feature(enable = "avx2")] function
+    let token = Avx2Token::forge_token_dangerously();
+    convert_rgb_to_ycbcr_avx2_impl(token, rgb, y_out, cb_out, cr_out, num_pixels);
+}
+
 /// Runtime dispatch wrapper for AVX2 color conversion.
 ///
 /// Falls back to the scalar implementation if AVX2 is not available.
@@ -381,10 +426,11 @@ pub fn convert_rgb_to_ycbcr_dispatch(
     cr_out: &mut [u8],
     num_pixels: usize,
 ) {
-    if is_x86_feature_detected!("avx2") {
-        // SAFETY: We just checked for AVX2 support
+    use archmage::SimdToken;
+    if let Some(token) = Avx2Token::try_new() {
+        // SAFETY: Token proves AVX2 is available
         unsafe {
-            convert_rgb_to_ycbcr_avx2(rgb, y_out, cb_out, cr_out, num_pixels);
+            convert_rgb_to_ycbcr_avx2_impl(token, rgb, y_out, cb_out, cr_out, num_pixels);
         }
     } else {
         // Fallback to scalar
@@ -404,7 +450,8 @@ mod tests {
 
     #[test]
     fn test_avx2_matches_scalar() {
-        if !is_x86_feature_detected!("avx2") {
+        use archmage::SimdToken;
+        if Avx2Token::try_new().is_none() {
             eprintln!("AVX2 not available, skipping test");
             return;
         }
@@ -463,7 +510,8 @@ mod tests {
 
     #[test]
     fn test_avx2_remainder_handling() {
-        if !is_x86_feature_detected!("avx2") {
+        use archmage::SimdToken;
+        if Avx2Token::try_new().is_none() {
             eprintln!("AVX2 not available, skipping test");
             return;
         }

@@ -116,7 +116,7 @@ fn generate_blocks(
                 }
             }
 
-            dct::forward_dct_8x8_transpose(&samples, &mut dct_block);
+            dct::forward_dct_8x8_i32_wide_transpose(&samples, &mut dct_block);
 
             let mut quant_block = [0i16; DCTSIZE2];
             let raw: [i32; DCTSIZE2] = std::array::from_fn(|i| dct_block[i] as i32);

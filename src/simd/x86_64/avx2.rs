@@ -1,17 +1,23 @@
 //! AVX2 SIMD implementations for x86_64.
 //!
-//! These implementations use `core::arch::x86_64` intrinsics directly
-//! for maximum performance. Key optimizations:
+//! These implementations use `core::arch::x86_64` intrinsics with archmage
+//! for safe memory operations. Key optimizations:
 //!
 //! - Proper load+widen instructions (no scalar gather)
 //! - AVX2 shuffle/permute for transpose
 //! - Minimal register spills
 //!
-//! All functions require AVX2 support and are marked with `#[target_feature(enable = "avx2")]`.
+//! All functions require AVX2 support via archmage capability tokens.
+//!
+//! Note: Functions with `#[target_feature]` must be `unsafe` in Rust <1.92,
+//! but the memory operations use archmage's safe wrappers internally.
 
+// Allow unsafe for #[target_feature] functions - memory ops use safe archmage wrappers
 #![allow(unsafe_code)]
 
 use crate::consts::DCTSIZE2;
+use archmage::mem::sse2 as mem_sse2;
+use archmage::tokens::x86::Avx2Token;
 use core::arch::x86_64::*;
 
 // ============================================================================
@@ -61,13 +67,19 @@ const FIX_CR_B: i32 = -fix(0.08131);
 // ============================================================================
 
 /// Load 8 contiguous i16 values and sign-extend to 8 i32 values.
+///
+/// # Safety
+/// Must be called from a context where AVX2 is enabled.
 #[inline(always)]
-unsafe fn load_i16_to_i32(ptr: *const i16) -> __m256i {
-    let row_i16 = _mm_loadu_si128(ptr as *const __m128i);
+unsafe fn load_i16_to_i32(token: Avx2Token, data: &[i16; 8]) -> __m256i {
+    let row_i16 = mem_sse2::_mm_loadu_si128(token, data);
     _mm256_cvtepi16_epi32(row_i16)
 }
 
 /// Pack 8 i32 values to 8 i16 values with saturation.
+///
+/// # Safety
+/// Must be called from a context where AVX2 is enabled.
 #[inline(always)]
 unsafe fn pack_i32_to_i16(v: __m256i) -> __m128i {
     let lo = _mm256_castsi256_si128(v);
@@ -76,6 +88,9 @@ unsafe fn pack_i32_to_i16(v: __m256i) -> __m128i {
 }
 
 /// Descale with rounding for pass 1 (CONST_BITS - PASS1_BITS = 11).
+///
+/// # Safety
+/// Must be called from a context where AVX2 is enabled.
 #[inline(always)]
 unsafe fn descale_pass1(x: __m256i) -> __m256i {
     const N: i32 = CONST_BITS - PASS1_BITS;
@@ -84,6 +99,9 @@ unsafe fn descale_pass1(x: __m256i) -> __m256i {
 }
 
 /// Descale with rounding for pass 2 (CONST_BITS + PASS1_BITS = 15).
+///
+/// # Safety
+/// Must be called from a context where AVX2 is enabled.
 #[inline(always)]
 unsafe fn descale_pass2(x: __m256i) -> __m256i {
     const N: i32 = CONST_BITS + PASS1_BITS;
@@ -92,6 +110,9 @@ unsafe fn descale_pass2(x: __m256i) -> __m256i {
 }
 
 /// Descale with rounding for PASS1_BITS = 2.
+///
+/// # Safety
+/// Must be called from a context where AVX2 is enabled.
 #[inline(always)]
 unsafe fn descale_pass1_bits(x: __m256i) -> __m256i {
     const N: i32 = PASS1_BITS;
@@ -100,6 +121,9 @@ unsafe fn descale_pass1_bits(x: __m256i) -> __m256i {
 }
 
 /// Transpose 8x8 matrix of i32 values stored in 8 ymm registers.
+///
+/// # Safety
+/// Must be called from a context where AVX2 is enabled.
 #[inline(always)]
 unsafe fn transpose_8x8_avx2(rows: &mut [__m256i; 8]) {
     // Phase 1: Interleave 32-bit elements
@@ -134,6 +158,9 @@ unsafe fn transpose_8x8_avx2(rows: &mut [__m256i; 8]) {
 }
 
 /// Perform 1D DCT on 8 rows simultaneously using AVX2.
+///
+/// # Safety
+/// Must be called from a context where AVX2 is enabled.
 #[inline(always)]
 unsafe fn dct_1d_pass_avx2(data: &mut [__m256i; 8], pass1: bool) {
     let fix_0_541196100 = _mm256_set1_epi32(FIX_0_541196100);
@@ -246,22 +273,23 @@ unsafe fn dct_1d_pass_avx2(data: &mut [__m256i; 8], pass1: bool) {
 
 /// AVX2-optimized forward DCT on 8x8 block using i32 arithmetic internally.
 ///
-/// # Safety
-/// Requires AVX2 support. Use `is_x86_feature_detected!("avx2")` before calling.
+/// Uses archmage token for safe SIMD memory operations.
 #[target_feature(enable = "avx2")]
-pub unsafe fn forward_dct_8x8_i32_avx2_unsafe(
+unsafe fn forward_dct_8x8_i32_avx2_impl(
+    token: Avx2Token,
     samples: &[i16; DCTSIZE2],
     coeffs: &mut [i16; DCTSIZE2],
 ) {
+    // Load rows - convert slices to fixed arrays for archmage
     let mut rows: [__m256i; 8] = [
-        load_i16_to_i32(samples.as_ptr().add(0)),
-        load_i16_to_i32(samples.as_ptr().add(8)),
-        load_i16_to_i32(samples.as_ptr().add(16)),
-        load_i16_to_i32(samples.as_ptr().add(24)),
-        load_i16_to_i32(samples.as_ptr().add(32)),
-        load_i16_to_i32(samples.as_ptr().add(40)),
-        load_i16_to_i32(samples.as_ptr().add(48)),
-        load_i16_to_i32(samples.as_ptr().add(56)),
+        load_i16_to_i32(token, samples[0..8].try_into().unwrap()),
+        load_i16_to_i32(token, samples[8..16].try_into().unwrap()),
+        load_i16_to_i32(token, samples[16..24].try_into().unwrap()),
+        load_i16_to_i32(token, samples[24..32].try_into().unwrap()),
+        load_i16_to_i32(token, samples[32..40].try_into().unwrap()),
+        load_i16_to_i32(token, samples[40..48].try_into().unwrap()),
+        load_i16_to_i32(token, samples[48..56].try_into().unwrap()),
+        load_i16_to_i32(token, samples[56..64].try_into().unwrap()),
     ];
 
     transpose_8x8_avx2(&mut rows);
@@ -269,36 +297,45 @@ pub unsafe fn forward_dct_8x8_i32_avx2_unsafe(
     transpose_8x8_avx2(&mut rows);
     dct_1d_pass_avx2(&mut rows, false);
 
-    _mm_storeu_si128(
-        coeffs.as_mut_ptr().add(0) as *mut __m128i,
+    // Store results using archmage safe stores
+    mem_sse2::_mm_storeu_si128(
+        token,
+        <&mut [i16] as TryInto<&mut [i16; 8]>>::try_into(&mut coeffs[0..8]).unwrap(),
         pack_i32_to_i16(rows[0]),
     );
-    _mm_storeu_si128(
-        coeffs.as_mut_ptr().add(8) as *mut __m128i,
+    mem_sse2::_mm_storeu_si128(
+        token,
+        <&mut [i16] as TryInto<&mut [i16; 8]>>::try_into(&mut coeffs[8..16]).unwrap(),
         pack_i32_to_i16(rows[1]),
     );
-    _mm_storeu_si128(
-        coeffs.as_mut_ptr().add(16) as *mut __m128i,
+    mem_sse2::_mm_storeu_si128(
+        token,
+        <&mut [i16] as TryInto<&mut [i16; 8]>>::try_into(&mut coeffs[16..24]).unwrap(),
         pack_i32_to_i16(rows[2]),
     );
-    _mm_storeu_si128(
-        coeffs.as_mut_ptr().add(24) as *mut __m128i,
+    mem_sse2::_mm_storeu_si128(
+        token,
+        <&mut [i16] as TryInto<&mut [i16; 8]>>::try_into(&mut coeffs[24..32]).unwrap(),
         pack_i32_to_i16(rows[3]),
     );
-    _mm_storeu_si128(
-        coeffs.as_mut_ptr().add(32) as *mut __m128i,
+    mem_sse2::_mm_storeu_si128(
+        token,
+        <&mut [i16] as TryInto<&mut [i16; 8]>>::try_into(&mut coeffs[32..40]).unwrap(),
         pack_i32_to_i16(rows[4]),
     );
-    _mm_storeu_si128(
-        coeffs.as_mut_ptr().add(40) as *mut __m128i,
+    mem_sse2::_mm_storeu_si128(
+        token,
+        <&mut [i16] as TryInto<&mut [i16; 8]>>::try_into(&mut coeffs[40..48]).unwrap(),
         pack_i32_to_i16(rows[5]),
     );
-    _mm_storeu_si128(
-        coeffs.as_mut_ptr().add(48) as *mut __m128i,
+    mem_sse2::_mm_storeu_si128(
+        token,
+        <&mut [i16] as TryInto<&mut [i16; 8]>>::try_into(&mut coeffs[48..56]).unwrap(),
         pack_i32_to_i16(rows[6]),
     );
-    _mm_storeu_si128(
-        coeffs.as_mut_ptr().add(56) as *mut __m128i,
+    mem_sse2::_mm_storeu_si128(
+        token,
+        <&mut [i16] as TryInto<&mut [i16; 8]>>::try_into(&mut coeffs[56..64]).unwrap(),
         pack_i32_to_i16(rows[7]),
     );
 }
@@ -309,8 +346,14 @@ pub fn forward_dct_8x8_i32_avx2_intrinsics(
     samples: &[i16; DCTSIZE2],
     coeffs: &mut [i16; DCTSIZE2],
 ) {
-    // SAFETY: This module is only compiled when target_feature = "avx2"
-    unsafe { forward_dct_8x8_i32_avx2_unsafe(samples, coeffs) }
+    use archmage::SimdToken;
+    if let Some(token) = Avx2Token::try_new() {
+        // SAFETY: Token proves AVX2 is available
+        unsafe { forward_dct_8x8_i32_avx2_impl(token, samples, coeffs) }
+    } else {
+        // Fallback to scalar (shouldn't happen if this module is only used with AVX2)
+        crate::simd::scalar::forward_dct_8x8(samples, coeffs);
+    }
 }
 
 // ============================================================================
@@ -320,11 +363,10 @@ pub fn forward_dct_8x8_i32_avx2_intrinsics(
 /// AVX2-optimized RGB to YCbCr conversion.
 ///
 /// Processes 8 pixels at a time using proper SIMD loads (no gather).
-///
-/// # Safety
-/// Requires AVX2 support.
+/// Uses archmage token for safe operations.
 #[target_feature(enable = "avx2")]
 unsafe fn convert_rgb_to_ycbcr_avx2_inner(
+    _token: Avx2Token,
     rgb: &[u8],
     y_out: &mut [u8],
     cb_out: &mut [u8],
@@ -429,11 +471,10 @@ unsafe fn convert_rgb_to_ycbcr_avx2_inner(
         );
         let cr = _mm256_max_epi32(_mm256_min_epi32(cr, max_val), zero);
 
-        // Extract and store results
-        // AVX2 doesn't have a great way to pack i32->u8, so we extract manually
-        let y_arr: [i32; 8] = core::mem::transmute(y);
-        let cb_arr: [i32; 8] = core::mem::transmute(cb);
-        let cr_arr: [i32; 8] = core::mem::transmute(cr);
+        // Extract and store results using bytemuck for safe transmute
+        let y_arr: [i32; 8] = bytemuck::cast(y);
+        let cb_arr: [i32; 8] = bytemuck::cast(cb);
+        let cr_arr: [i32; 8] = bytemuck::cast(cr);
 
         y_out[base] = y_arr[0] as u8;
         y_out[base + 1] = y_arr[1] as u8;
@@ -490,8 +531,14 @@ pub fn convert_rgb_to_ycbcr(
     cr_out: &mut [u8],
     num_pixels: usize,
 ) {
-    // SAFETY: This module is only compiled when target_feature = "avx2"
-    unsafe { convert_rgb_to_ycbcr_avx2_inner(rgb, y_out, cb_out, cr_out, num_pixels) }
+    use archmage::SimdToken;
+    if let Some(token) = Avx2Token::try_new() {
+        // SAFETY: Token proves AVX2 is available
+        unsafe { convert_rgb_to_ycbcr_avx2_inner(token, rgb, y_out, cb_out, cr_out, num_pixels) }
+    } else {
+        // Fallback to scalar
+        crate::simd::scalar::convert_rgb_to_ycbcr(rgb, y_out, cb_out, cr_out, num_pixels);
+    }
 }
 
 #[cfg(test)]

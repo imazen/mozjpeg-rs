@@ -10,10 +10,15 @@
 //!
 //! Reference: libjpeg-turbo/simd/x86_64/jchuff-sse2.asm
 
+// Note: unsafe code is needed for #[target_feature] functions which must be
+// declared unsafe in stable Rust. The actual SIMD operations use archmage's
+// safe wrappers where possible.
 #![allow(unsafe_code)]
 
 #[cfg(target_arch = "x86_64")]
 use std::arch::x86_64::*;
+
+use archmage::tokens::x86::Sse2Token;
 
 use crate::consts::{DCTSIZE2, JPEG_NATURAL_ORDER};
 use crate::huffman::DerivedTable;
@@ -127,7 +132,7 @@ impl SimdEntropyEncoder {
     /// Encode a single 8x8 block of DCT coefficients using SIMD.
     ///
     /// This is the safe wrapper that checks for SSE2 and dispatches to the
-    /// SIMD implementation. On x86_64, SSE2 is always available.
+    /// SIMD implementation. On x86_64, SSE2 is always available (baseline).
     #[inline]
     pub fn encode_block(
         &mut self,
@@ -136,10 +141,49 @@ impl SimdEntropyEncoder {
         dc_table: &DerivedTable,
         ac_table: &DerivedTable,
     ) {
-        // SAFETY: SSE2 is always available on x86_64
-        unsafe {
-            self.encode_block_sse2(block, component, dc_table, ac_table);
+        use archmage::SimdToken;
+        // SSE2 is baseline on x86_64, so this should always succeed
+        if let Some(_token) = Sse2Token::try_new() {
+            // SAFETY: Token proves SSE2 is available
+            unsafe {
+                self.encode_block_sse2(block, component, dc_table, ac_table);
+            }
+        } else {
+            // Fallback for non-x86_64 or hypothetical no-SSE2 scenarios
+            // (This branch is effectively dead code on x86_64)
+            self.encode_block_scalar(block, component, dc_table, ac_table);
         }
+    }
+
+    /// Scalar fallback for block encoding.
+    fn encode_block_scalar(
+        &mut self,
+        block: &[i16; DCTSIZE2],
+        component: usize,
+        dc_table: &DerivedTable,
+        ac_table: &DerivedTable,
+    ) {
+        // Scalar zigzag reorder + sign handling
+        let mut temp = [0i16; DCTSIZE2];
+        for (zigzag_pos, &natural_pos) in JPEG_NATURAL_ORDER.iter().enumerate() {
+            let value = block[natural_pos];
+            // Sign handling: for negative values, compute value - 1
+            temp[zigzag_pos] = if value < 0 { value - 1 } else { value };
+        }
+
+        // Encode DC
+        self.encode_dc_fast(temp[0], component, dc_table);
+
+        // Build non-zero mask
+        let mut nonzero_mask: u64 = 0;
+        for (i, &v) in temp.iter().enumerate() {
+            if v != 0 {
+                nonzero_mask |= 1u64 << i;
+            }
+        }
+
+        // Encode AC using tzcnt iteration
+        self.encode_ac_tzcnt(&temp, nonzero_mask, ac_table);
     }
 
     /// Encode a single 8x8 block of DCT coefficients using SIMD.
@@ -221,8 +265,8 @@ impl SimdEntropyEncoder {
             let sign_mask = _mm_cmpgt_epi16(zero, values); // -1 where value < 0
             let adjusted = _mm_add_epi16(values, sign_mask); // value += sign_mask
 
-            // Store the adjusted values
-            let adjusted_arr: [i16; 8] = std::mem::transmute(adjusted);
+            // Store the adjusted values - use bytemuck for safe type conversion
+            let adjusted_arr: [i16; 8] = bytemuck::cast(adjusted);
             temp[base..base + 8].copy_from_slice(&adjusted_arr);
 
             // Build non-zero mask: compare with zero, pack to bytes
