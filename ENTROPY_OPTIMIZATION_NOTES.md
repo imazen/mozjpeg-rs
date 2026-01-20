@@ -308,3 +308,30 @@ only remaining optimization with significant impact potential (5.6x improvement)
 
 The `simd-intrinsics` feature is NOT in defaults because the 3% improvement is marginal
 and the multiversion autovectorization is almost as good (93% of intrinsics perf).
+
+## SIMD Entropy Encoder Port (2026-01-19)
+
+### Implementation
+
+Ported key techniques from jchuff-sse2.asm to Rust:
+
+1. **Fused zigzag reorder + sign handling** - SSE2 shuffles for zigzag order,
+   pcmpgtw + paddw for sign handling in same pass
+2. **64KB nbits lookup table** - Direct mapping: value → bit count
+3. **64-bit non-zero mask** - Built during zigzag reorder
+4. **tzcnt-based iteration** - `trailing_zeros()` to skip zeros efficiently
+
+### Benchmark Results (Real Image Data, 512x512)
+
+| Quality | Standard (µs) | SIMD (µs) | Speedup |
+|---------|---------------|-----------|---------|
+| Q50 | 775.81 | 330.10 | **2.35x** |
+| Q75 | ~880 | ~370 | **2.38x** |
+| Q85 | ~980 | ~420 | **2.33x** |
+| Q95 | ~1180 | ~550 | **2.15x** |
+
+### Integration
+
+- Safe wrapper `encode_block()` calls unsafe SSE2 intrinsics internally
+- `cfg(target_arch = "x86_64")` with fallback to standard encoder
+- All tests pass, produces valid JPEG files
