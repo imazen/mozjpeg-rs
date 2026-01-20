@@ -8,6 +8,4 @@
 //! runtime feature detection confirms AVX2 support.
 
 pub mod avx2;
-
-// Future: SSE2 fallback
-// pub mod sse2;
+pub mod entropy;

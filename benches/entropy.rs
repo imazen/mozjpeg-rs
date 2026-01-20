@@ -14,6 +14,9 @@ use mozjpeg_rs::entropy::EntropyEncoder;
 use mozjpeg_rs::fast_entropy::FastEntropyEncoder;
 use mozjpeg_rs::huffman::{DerivedTable, HuffTable};
 use mozjpeg_rs::quant;
+
+#[cfg(target_arch = "x86_64")]
+use mozjpeg_rs::simd::x86_64::entropy::SimdEntropyEncoder;
 use png::ColorType;
 use std::fs::File;
 use std::path::Path;
@@ -210,6 +213,21 @@ fn bench_fast_encoder(
     encoder.into_bytes()
 }
 
+#[cfg(target_arch = "x86_64")]
+fn bench_simd_encoder(
+    blocks: &[[i16; DCTSIZE2]],
+    dc_table: &DerivedTable,
+    ac_table: &DerivedTable,
+) -> Vec<u8> {
+    let mut encoder = SimdEntropyEncoder::new();
+    for block in blocks {
+        unsafe {
+            encoder.encode_block_sse2(block, 0, dc_table, ac_table);
+        }
+    }
+    encoder.finish()
+}
+
 fn entropy_benchmark(c: &mut Criterion) {
     let dc_table = create_dc_luma_table();
     let ac_table = create_ac_luma_table();
@@ -246,6 +264,15 @@ fn entropy_benchmark(c: &mut Criterion) {
             &blocks,
             |b, blocks| {
                 b.iter(|| bench_fast_encoder(black_box(blocks), &dc_table, &ac_table))
+            },
+        );
+
+        #[cfg(target_arch = "x86_64")]
+        real_group.bench_with_input(
+            BenchmarkId::new("simd_sse2", &name),
+            &blocks,
+            |b, blocks| {
+                b.iter(|| bench_simd_encoder(black_box(blocks), &dc_table, &ac_table))
             },
         );
     }
