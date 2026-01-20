@@ -286,6 +286,7 @@ fn bench_subsampling(c: &mut Criterion) {
 }
 
 /// Benchmark DCT implementations (scalar vs SIMD).
+#[allow(deprecated)] // Benchmarks compare deprecated implementations
 fn bench_dct(c: &mut Criterion) {
     use mozjpeg_rs::dct::{forward_dct_8x8, forward_dct_8x8_simd, forward_dct_8x8_transpose};
     use mozjpeg_rs::simd::SimdOps;

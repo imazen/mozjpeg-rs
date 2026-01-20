@@ -12,7 +12,7 @@ fn main() {
     let mut files: Vec<_> = fs::read_dir(corpus_dir)
         .unwrap()
         .filter_map(|e| e.ok())
-        .filter(|e| e.path().extension().map_or(false, |ext| ext == "png"))
+        .filter(|e| e.path().extension().is_some_and(|ext| ext == "png"))
         .map(|e| e.path())
         .collect();
     files.sort();

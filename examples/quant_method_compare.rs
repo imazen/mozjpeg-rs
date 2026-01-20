@@ -5,7 +5,6 @@
 //!
 //! These should give same results, but let's verify.
 
-use mozjpeg_rs::consts::DCTSIZE2;
 use mozjpeg_rs::quant::{create_quant_table, get_luminance_quant_table, quantize_coef};
 use mozjpeg_rs::QuantTableIdx;
 

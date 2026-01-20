@@ -1,9 +1,9 @@
 //! Force SA script encoding to debug why it produces larger files
 use mozjpeg_rs::progressive::generate_mozjpeg_max_compression_scans;
-use mozjpeg_rs::types::ScanInfo;
 use std::fs::File;
 use std::path::Path;
 
+#[allow(dead_code)]
 fn load_png(path: &Path) -> Option<(Vec<u8>, u32, u32)> {
     let file = File::open(path).ok()?;
     let decoder = png::Decoder::new(file);
@@ -22,7 +22,7 @@ fn load_png(path: &Path) -> Option<(Vec<u8>, u32, u32)> {
 }
 
 fn main() {
-    let (rgb, width, height) = load_png(Path::new("corpus/kodak/10.png")).unwrap();
+    let (_rgb, _width, _height) = load_png(Path::new("corpus/kodak/10.png")).unwrap();
     let quality = 85u8;
 
     // Get the SA scan script

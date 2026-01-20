@@ -30,7 +30,7 @@ fn print_m256i_i32(name: &str, v: __m256i) {
 unsafe fn trace_deinterleave() {
     // Create test RGB data: 32 pixels = 96 bytes
     // Use simple pattern: pixel i has R=i*3, G=i*3+1, B=i*3+2
-    let mut rgb = vec![0u8; 96];
+    let mut rgb = [0u8; 96];
     for i in 0..32 {
         rgb[i * 3] = (i * 3) as u8; // R
         rgb[i * 3 + 1] = (i * 3 + 1) as u8; // G
@@ -150,7 +150,7 @@ unsafe fn trace_deinterleave() {
     // Verify: extract values and compare with expected
     let r_even: [i16; 16] = std::mem::transmute(ymm_a);
     let g_even: [i16; 16] = std::mem::transmute(ymm_c);
-    let b_even: [i16; 16] = std::mem::transmute(ymm_e);
+    let _b_even: [i16; 16] = std::mem::transmute(ymm_e);
     let r_odd: [i16; 16] = std::mem::transmute(ymm_b_new);
     let g_odd: [i16; 16] = std::mem::transmute(ymm_d);
     let b_odd: [i16; 16] = std::mem::transmute(ymm_f);

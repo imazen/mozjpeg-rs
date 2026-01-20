@@ -8,6 +8,8 @@
 //! Or for detailed assembly:
 //!   perf annotate -s forward_dct_8x8
 
+#![allow(deprecated)] // Profiling deprecated implementations for comparison
+
 use mozjpeg_rs::dct::{forward_dct_8x8, forward_dct_8x8_simd, forward_dct_8x8_transpose};
 use std::hint::black_box;
 use std::time::Instant;

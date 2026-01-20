@@ -33,7 +33,7 @@ fn main() {
     let mut entries: Vec<_> = std::fs::read_dir("corpus/kodak")
         .unwrap()
         .filter_map(|e| e.ok())
-        .filter(|e| e.path().extension().map_or(false, |ext| ext == "png"))
+        .filter(|e| e.path().extension().is_some_and(|ext| ext == "png"))
         .collect();
     entries.sort_by_key(|e| e.path());
 

@@ -26,6 +26,7 @@ struct ProgressiveTestConfig {
 
 /// Result of a progressive comparison
 #[derive(Debug)]
+#[allow(dead_code)]
 struct ComparisonResult {
     config_name: String,
     quality: u8,

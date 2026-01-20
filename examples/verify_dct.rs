@@ -1,5 +1,7 @@
 //! Verify old vs new AVX2 DCT produce identical output
 
+#![allow(deprecated)] // Testing deprecated archmage-based implementation
+
 fn main() {
     const DCTSIZE2: usize = 64;
     

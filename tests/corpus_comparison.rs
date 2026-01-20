@@ -177,12 +177,11 @@ fn test_corpus_comparison_optimize_scans() {
 
         let mut total_rust = 0usize;
         let mut total_c = 0usize;
-        let mut count = 0;
 
         let mut entries: Vec<_> = std::fs::read_dir(corpus_path)
             .unwrap()
             .filter_map(|e| e.ok())
-            .filter(|e| e.path().extension().map_or(false, |ext| ext == "png"))
+            .filter(|e| e.path().extension().is_some_and(|ext| ext == "png"))
             .collect();
         entries.sort_by_key(|e| e.path());
 
@@ -212,7 +211,6 @@ fn test_corpus_comparison_optimize_scans() {
 
                 total_rust += rust_jpeg.len();
                 total_c += c_jpeg.len();
-                count += 1;
             }
         }
 
@@ -252,7 +250,7 @@ fn test_corpus_comparison_no_optimize_scans() {
     let mut entries: Vec<_> = std::fs::read_dir(corpus_path)
         .unwrap()
         .filter_map(|e| e.ok())
-        .filter(|e| e.path().extension().map_or(false, |ext| ext == "png"))
+        .filter(|e| e.path().extension().is_some_and(|ext| ext == "png"))
         .collect();
     entries.sort_by_key(|e| e.path());
 

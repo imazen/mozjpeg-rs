@@ -296,6 +296,11 @@ fn dct_1d_simd(
 /// - Pre-negated constants (no runtime negation)
 /// - Inlined 1D DCT helper (no function call overhead)
 /// - Unrolled loops for row/column batches
+#[deprecated(
+    since = "0.5.0",
+    note = "Not used by encoder. Use forward_dct_8x8 (with multiversion autovectorization) \
+            or enable simd-intrinsics feature for hand-written AVX2."
+)]
 pub fn forward_dct_8x8_simd(samples: &[i16; DCTSIZE2], coeffs: &mut [i16; DCTSIZE2]) {
     // Work buffer - aligned to 64 bytes for potential future SIMD improvements
     let mut data = [0i32; DCTSIZE2];
@@ -881,6 +886,12 @@ pub fn level_shift(samples: &[u8; DCTSIZE2], output: &mut [i16; DCTSIZE2]) {
 /// # Arguments
 /// * `samples` - Input 8x8 block of pixel samples (0-255)
 /// * `coeffs` - Output 8x8 block of DCT coefficients
+#[deprecated(
+    since = "0.5.0",
+    note = "Not used by encoder. The encoder calls level_shift and forward_dct_8x8 separately \
+            via SimdOps dispatch. This function exists for standalone/testing use."
+)]
+#[allow(deprecated)]
 pub fn forward_dct(samples: &[u8; DCTSIZE2], coeffs: &mut [i16; DCTSIZE2]) {
     let mut shifted = [0i16; DCTSIZE2];
     level_shift(samples, &mut shifted);
@@ -912,6 +923,13 @@ pub fn forward_dct(samples: &[u8; DCTSIZE2], coeffs: &mut [i16; DCTSIZE2]) {
 ///
 /// # See Also
 /// [`crate::deringing::preprocess_deringing`] for algorithm details.
+#[deprecated(
+    since = "0.5.0",
+    note = "Not used by encoder. The encoder calls level_shift, preprocess_deringing, and \
+            forward_dct_8x8 separately via SimdOps dispatch. This function exists for \
+            standalone/testing use."
+)]
+#[allow(deprecated)]
 pub fn forward_dct_with_deringing(
     samples: &[u8; DCTSIZE2],
     coeffs: &mut [i16; DCTSIZE2],
@@ -936,21 +954,32 @@ pub fn forward_dct_with_deringing(
 }
 
 // ============================================================================
-// AVX2 Intrinsics-based DCT (x86_64 only)
+// AVX2 Intrinsics-based DCT (x86_64 only) - DEPRECATED
 // ============================================================================
 //
-// This module uses core::arch intrinsics directly for maximum performance.
+// This module uses archmage for safe SIMD with capability tokens. However, it is
+// NOT used by the encoder (which uses simd/x86_64/avx2.rs via SimdOps dispatch).
+// This module exists for experimentation with archmage-based safe SIMD patterns.
+//
 // Key optimizations over the wide-based version:
 // - Uses _mm256_cvtepi16_epi32 for proper load+sign-extend (no vpinsrw gather)
 // - Uses proper shuffle instructions for transpose
 // - Avoids to_array()/from_array() overhead
 
 #[cfg(target_arch = "x86_64")]
+#[deprecated(
+    since = "0.5.0",
+    note = "Not used by encoder. This archmage-based module exists for experimentation. \
+            The encoder uses src/simd/x86_64/avx2.rs via SimdOps dispatch."
+)]
 pub mod avx2 {
-    //! AVX2 SIMD implementation of forward DCT.
+    //! AVX2 SIMD implementation of forward DCT (DEPRECATED).
     //!
     //! This module uses archmage for safe SIMD operations with capability tokens.
     //! The `#[arcane]` macro enables safe use of value-based intrinsics.
+    //!
+    //! **Note:** This module is not used by the encoder. It exists for experimentation
+    //! with archmage-based safe SIMD patterns. The encoder uses `src/simd/x86_64/avx2.rs`.
     //! Runtime feature detection via `Avx2Token::try_new()` ensures safety.
 
     use super::*;
@@ -1713,6 +1742,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(deprecated)]
     fn test_simd_matches_scalar_flat() {
         // Test SIMD produces identical output to scalar for flat block
         let samples = [100i16; DCTSIZE2];
@@ -1729,6 +1759,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(deprecated)]
     fn test_simd_matches_scalar_gradient() {
         // Test SIMD produces identical output to scalar for gradient pattern
         let mut samples = [0i16; DCTSIZE2];
@@ -1751,6 +1782,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(deprecated)]
     fn test_simd_matches_scalar_random() {
         // Test SIMD produces identical output to scalar for pseudo-random pattern
         let mut samples = [0i16; DCTSIZE2];
@@ -1772,6 +1804,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(deprecated)]
     fn test_simd_matches_scalar_all_patterns() {
         // Exhaustive test with many patterns
         for seed in 0..20 {
