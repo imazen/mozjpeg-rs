@@ -92,9 +92,9 @@ pub fn trellis_quantize_block(
     //
     // Only significant for Q80-100 on noisy images; at lower quality most
     // blocks have few non-zero coefficients anyway.
-    let (max_lookback, max_candidates) = if config.speed_level > 0 {
+    let (max_lookback, max_candidates) = {
         // Count non-zero coefficients to determine block complexity
-        let mut nonzero_count = 0;
+        let mut nonzero_count = 0i32;
         for i in 1..DCTSIZE2 {
             let z = JPEG_NATURAL_ORDER[i];
             let x = src[z].abs();
@@ -103,24 +103,7 @@ pub fn trellis_quantize_block(
                 nonzero_count += 1;
             }
         }
-
-        // Threshold decreases as level increases (more blocks affected)
-        // Level 1: threshold=58, Level 7: threshold=40, Level 10: threshold=31
-        let threshold = 61 - (config.speed_level as i32) * 3;
-
-        if nonzero_count > threshold {
-            // Lookback limit: decreases as level increases
-            // Level 1: 24, Level 7: 12, Level 10: 6
-            let lookback = (26 - (config.speed_level as usize) * 2).max(4);
-            // Candidate limit: decreases as level increases
-            // Level 1: 8, Level 7: 5, Level 10: 3
-            let candidates = (9 - ((config.speed_level as usize) + 1) / 2).max(2);
-            (lookback, candidates)
-        } else {
-            (63, 16) // Full search
-        }
-    } else {
-        (63, 16) // Full search when speed_level=0
+        config.speed_mode.get_limits(nonzero_count)
     };
 
     // Process AC coefficients in zigzag order (positions 1 to 63)
@@ -330,8 +313,8 @@ pub fn trellis_quantize_block_with_eob_info(
     accumulated_cost[ss - 1] = 0.0;
 
     // Speed optimization: detect high-entropy blocks and limit search
-    let (max_lookback, max_candidates) = if config.speed_level > 0 {
-        let mut nonzero_count = 0;
+    let (max_lookback, max_candidates) = {
+        let mut nonzero_count = 0i32;
         for i in ss..=se {
             let z = JPEG_NATURAL_ORDER[i];
             let x = src[z].abs();
@@ -340,16 +323,7 @@ pub fn trellis_quantize_block_with_eob_info(
                 nonzero_count += 1;
             }
         }
-        let threshold = 61 - (config.speed_level as i32) * 3;
-        if nonzero_count > threshold {
-            let lookback = (26 - (config.speed_level as usize) * 2).max(4);
-            let candidates = (9 - ((config.speed_level as usize) + 1) / 2).max(2);
-            (lookback, candidates)
-        } else {
-            (63, 16)
-        }
-    } else {
-        (63, 16)
+        config.speed_mode.get_limits(nonzero_count)
     };
 
     // Process AC coefficients in zigzag order

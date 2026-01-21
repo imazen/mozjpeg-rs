@@ -738,6 +738,107 @@ impl HuffmanTable {
 // Trellis Configuration
 // =============================================================================
 
+/// Speed optimization mode for trellis quantization.
+///
+/// Trellis quantization has O(n²) complexity per block. For high-entropy
+/// blocks (many non-zero coefficients at high quality), this can be slow.
+/// These modes control how aggressively to limit the search space.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum TrellisSpeedMode {
+    /// Full search on all blocks (slowest, optimal quality).
+    /// Use when encoding time is not a concern.
+    Thorough,
+
+    /// Two-tier adaptive limits matching C mozjpeg (default).
+    /// - nonzero > 55: lookback=8, candidates=3 (extreme entropy)
+    /// - nonzero > 48: lookback=16, candidates=4 (high entropy)
+    /// - otherwise: full search
+    Adaptive,
+
+    /// Formula-based level (0-10), the original Rust implementation.
+    /// - threshold = 61 - level×3
+    /// - lookback = 26 - level×2
+    /// - candidates = 9 - (level+1)/2
+    ///
+    /// Level 0 = full search, Level 7 ≈ C mozjpeg adaptive, Level 10 = fastest.
+    Level(u8),
+
+    /// Custom two-tier thresholds for fine-tuning.
+    ///
+    /// When nonzero coefficient count exceeds a threshold, the search is limited.
+    /// Tier 1 is for extreme entropy (higher threshold, more aggressive limits).
+    /// Tier 2 is for high entropy (lower threshold, moderate limits).
+    Custom {
+        /// Tier 1: nonzero count threshold (e.g., 55)
+        tier1_threshold: u8,
+        /// Tier 1: maximum lookback positions (e.g., 8)
+        tier1_lookback: u8,
+        /// Tier 1: maximum quantization candidates (e.g., 3)
+        tier1_candidates: u8,
+        /// Tier 2: nonzero count threshold (e.g., 48, must be <= tier1)
+        tier2_threshold: u8,
+        /// Tier 2: maximum lookback positions (e.g., 16)
+        tier2_lookback: u8,
+        /// Tier 2: maximum quantization candidates (e.g., 4)
+        tier2_candidates: u8,
+    },
+}
+
+impl Default for TrellisSpeedMode {
+    fn default() -> Self {
+        Self::Adaptive
+    }
+}
+
+impl TrellisSpeedMode {
+    /// Returns (max_lookback, max_candidates) for the given nonzero count.
+    #[inline]
+    pub fn get_limits(&self, nonzero_count: i32) -> (usize, usize) {
+        match *self {
+            Self::Thorough => (63, 16),
+            Self::Adaptive => {
+                if nonzero_count > 55 {
+                    (8, 3)
+                } else if nonzero_count > 48 {
+                    (16, 4)
+                } else {
+                    (63, 16)
+                }
+            }
+            Self::Level(level) => {
+                let level = level.min(10) as i32;
+                if level == 0 {
+                    return (63, 16);
+                }
+                let threshold = 61 - level * 3;
+                if nonzero_count > threshold {
+                    let lookback = (26 - level * 2).max(4) as usize;
+                    let candidates = (9 - (level + 1) / 2).max(2) as usize;
+                    (lookback, candidates)
+                } else {
+                    (63, 16)
+                }
+            }
+            Self::Custom {
+                tier1_threshold,
+                tier1_lookback,
+                tier1_candidates,
+                tier2_threshold,
+                tier2_lookback,
+                tier2_candidates,
+            } => {
+                if nonzero_count > tier1_threshold as i32 {
+                    (tier1_lookback as usize, tier1_candidates as usize)
+                } else if nonzero_count > tier2_threshold as i32 {
+                    (tier2_lookback as usize, tier2_candidates as usize)
+                } else {
+                    (63, 16)
+                }
+            }
+        }
+    }
+}
+
 /// Configuration for trellis quantization.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct TrellisConfig {
@@ -763,22 +864,10 @@ pub struct TrellisConfig {
     pub num_loops: i32,
     /// DC delta weight for vertical gradient consideration
     pub delta_dc_weight: f32,
-    /// Speed optimization level (0-10).
+    /// Speed optimization mode for high-entropy blocks.
     ///
-    /// Trellis quantization has O(n²) complexity per block. For high-entropy
-    /// blocks (many non-zero coefficients at high quality), this can be slow.
-    /// Higher speed levels detect such blocks and limit the search.
-    ///
-    /// - 0 = thorough (full search, slowest but optimal)
-    /// - 7 = default (balanced, ~30% faster than level 0)
-    /// - 10 = fast (most blocks limited, ~50% faster)
-    ///
-    /// **Note:** Speed impact is only significant for Q80-100 on noisy/high-detail
-    /// images. At lower quality levels or on smooth images, most blocks have few
-    /// non-zero coefficients and the optimization rarely triggers.
-    ///
-    /// Quality impact is negligible even at level 10.
-    pub speed_level: u8,
+    /// See [`TrellisSpeedMode`] for details on each mode.
+    pub speed_mode: TrellisSpeedMode,
 }
 
 impl Default for TrellisConfig {
@@ -798,7 +887,7 @@ impl Default for TrellisConfig {
             freq_split: crate::consts::DEFAULT_TRELLIS_FREQ_SPLIT,
             num_loops: crate::consts::DEFAULT_TRELLIS_NUM_LOOPS,
             delta_dc_weight: crate::consts::DEFAULT_TRELLIS_DELTA_DC_WEIGHT,
-            speed_level: 7, // Default: balanced speed/quality
+            speed_mode: TrellisSpeedMode::Adaptive,
         }
     }
 }
@@ -818,7 +907,7 @@ impl TrellisConfig {
             freq_split: 8,
             num_loops: 1,
             delta_dc_weight: 0.0,
-            speed_level: 7,
+            speed_mode: TrellisSpeedMode::Adaptive,
         }
     }
 
@@ -897,26 +986,35 @@ impl TrellisConfig {
         self
     }
 
-    /// Set the speed optimization level (0-10).
+    /// Set the speed optimization mode.
     ///
-    /// Higher levels detect high-entropy blocks and limit the trellis search,
-    /// trading a negligible quality loss for faster encoding.
-    ///
-    /// - 0 = thorough (full search, slowest but optimal)
-    /// - 7 = default (balanced, ~30% faster)
-    /// - 10 = fast (most blocks limited, ~50% faster)
-    pub fn speed_level(mut self, level: u8) -> Self {
-        self.speed_level = level.min(10);
+    /// See [`TrellisSpeedMode`] for available modes.
+    pub fn speed_mode(mut self, mode: TrellisSpeedMode) -> Self {
+        self.speed_mode = mode;
         self
     }
 
-    /// Preset for thorough encoding (speed_level=0).
+    /// Set the speed optimization level (0-10).
+    ///
+    /// This uses the formula-based [`TrellisSpeedMode::Level`] mode.
+    /// For C mozjpeg compatibility, use [`TrellisSpeedMode::Adaptive`] instead.
+    ///
+    /// - 0 = thorough (full search, slowest but optimal)
+    /// - 7 ≈ C mozjpeg adaptive behavior
+    /// - 10 = fast (most blocks limited)
+    #[deprecated(since = "0.5.0", note = "Use speed_mode(TrellisSpeedMode::Level(n)) instead")]
+    pub fn speed_level(mut self, level: u8) -> Self {
+        self.speed_mode = TrellisSpeedMode::Level(level.min(10));
+        self
+    }
+
+    /// Preset for thorough encoding (full search).
     ///
     /// Full trellis search on all blocks. Slowest but optimal quality.
     /// Use this when encoding time is not a concern.
     pub fn thorough() -> Self {
         Self {
-            speed_level: 0,
+            speed_mode: TrellisSpeedMode::Thorough,
             ..Self::default()
         }
     }

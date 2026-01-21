@@ -429,6 +429,7 @@ pub use types::DensityUnit;
 /// # }
 /// ```
 pub use types::TrellisConfig;
+pub use types::TrellisSpeedMode;
 
 /// Estimated resource usage for an encoding operation.
 ///
