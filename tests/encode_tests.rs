@@ -1313,3 +1313,120 @@ fn test_custom_quant_tables() {
 
     println!("Custom quant table: {} bytes", jpeg.len());
 }
+
+/// Regression test for mozilla/mozjpeg#444: overshoot deringing + SIMD DCT overflow.
+///
+/// An 8x8 block split half-black/half-white triggers maximum overshoot deringing,
+/// which pushes level-shifted sample values to +-158. In SIMD forward DCT
+/// implementations using 16-bit arithmetic, the column pass final butterfly
+/// (tmp10+tmp11) reaches 8*5056 = 40448, overflowing signed 16-bit and causing
+/// catastrophic sign flips that invert the entire block's brightness.
+///
+/// The Rust encoder uses 32-bit DCT intermediates and is immune, but this test
+/// documents the pattern and ensures correctness is maintained.
+#[test]
+fn test_issue444_deringing_overflow_pattern() {
+    let width = 8u32;
+    let height = 8u32;
+    let mut rgb_data = vec![0u8; (width * height * 3) as usize];
+
+    // Half-black, half-white vertical split — the worst case for deringing overflow
+    for y in 0..height {
+        for x in 4..width {
+            let i = (y * width + x) as usize;
+            rgb_data[i * 3] = 255;
+            rgb_data[i * 3 + 1] = 255;
+            rgb_data[i * 3 + 2] = 255;
+        }
+    }
+
+    // Test at Q25 (where the C SIMD bug is most visible) with deringing enabled
+    let encoder = Encoder::baseline_optimized()
+        .quality(25)
+        .subsampling(Subsampling::S444);
+    let jpeg = encoder.encode_rgb(&rgb_data, width, height).unwrap();
+
+    let mut decoder = jpeg_decoder::Decoder::new(&jpeg[..]);
+    let decoded = decoder.decode().expect("Failed to decode");
+
+    // Left half (columns 0-3) must be dark, right half (columns 4-7) must be bright.
+    // The SIMD overflow bug inverts this completely (left=~197, right=~70).
+    let mut left_sum: u64 = 0;
+    let mut right_sum: u64 = 0;
+    for y in 0..8 {
+        for x in 0..4 {
+            let i = (y * 8 + x) * 3;
+            left_sum += decoded[i] as u64;
+        }
+        for x in 4..8 {
+            let i = (y * 8 + x) * 3;
+            right_sum += decoded[i] as u64;
+        }
+    }
+    let left_mean = left_sum as f64 / 32.0;
+    let right_mean = right_sum as f64 / 32.0;
+
+    assert!(
+        left_mean < 80.0,
+        "Left half should be dark (got mean {:.1}). Sign flip bug?",
+        left_mean
+    );
+    assert!(
+        right_mean > 180.0,
+        "Right half should be bright (got mean {:.1}). Sign flip bug?",
+        right_mean
+    );
+}
+
+/// Extended regression test for issue #444 across quality range Q2-Q57.
+///
+/// The overflow occurs when the DC quantization value is large enough that
+/// 2*quantval[0] >= 28 (the overshoot threshold for overflow). This is true
+/// for Q1-Q57 with the default ImageMagick quant tables.
+#[test]
+fn test_issue444_across_quality_range() {
+    let width = 8u32;
+    let height = 8u32;
+    let mut rgb_data = vec![0u8; (width * height * 3) as usize];
+    for y in 0..height {
+        for x in 4..width {
+            let i = (y * width + x) as usize;
+            rgb_data[i * 3] = 255;
+            rgb_data[i * 3 + 1] = 255;
+            rgb_data[i * 3 + 2] = 255;
+        }
+    }
+
+    for q in [2, 10, 25, 50, 57, 75, 90] {
+        let encoder = Encoder::baseline_optimized()
+            .quality(q)
+            .subsampling(Subsampling::S444);
+        let jpeg = encoder.encode_rgb(&rgb_data, width, height).unwrap();
+
+        let mut decoder = jpeg_decoder::Decoder::new(&jpeg[..]);
+        let decoded = decoder.decode().unwrap_or_else(|e| {
+            panic!("Failed to decode Q{}: {:?}", q, e);
+        });
+
+        let mut left_sum: f64 = 0.0;
+        let mut right_sum: f64 = 0.0;
+        for y in 0..8usize {
+            for x in 0..4usize {
+                left_sum += decoded[(y * 8 + x) * 3] as f64;
+            }
+            for x in 4..8usize {
+                right_sum += decoded[(y * 8 + x) * 3] as f64;
+            }
+        }
+        let left_mean = left_sum / 32.0;
+        let right_mean = right_sum / 32.0;
+
+        assert!(
+            left_mean < right_mean,
+            "Q{}: left half ({:.1}) should be darker than right half ({:.1})",
+            q,
+            left_mean,
+            right_mean
+        );
+    }
+}
