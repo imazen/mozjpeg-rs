@@ -1321,6 +1321,13 @@ pub mod avx2_archmage {
     /// Each assembly instruction is translated to the corresponding Rust intrinsic.
     /// This provides identical output to the reference C/asm implementation.
     ///
+    /// **WARNING:** Uses `_mm256_add_epi16` (wrapping) in the column-pass even-part
+    /// butterfly. When overshoot deringing pushes inputs to ±158, the final sum
+    /// `8 × 5056 = 40,448` overflows i16, causing catastrophic sign flips.
+    /// Fix: replace with `_mm256_adds_epi16` (saturating) for those 2 operations.
+    /// See [mozilla/mozjpeg#453](https://github.com/mozilla/mozjpeg/pull/453).
+    /// Test patterns: `imazen/codec-corpus` at `imageflow/test_inputs/dct_overflow_patterns/`.
+    ///
     /// The token proves AVX2 is available. Memory operations use safe archmage wrappers.
     #[arcane]
     pub fn forward_dct_8x8_i16(

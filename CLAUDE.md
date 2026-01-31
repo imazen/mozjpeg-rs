@@ -434,6 +434,36 @@ let encoder = Encoder::new().overshoot_deringing(true);
 let encoder = Encoder::fastest().overshoot_deringing(false); // fastest disables it
 ```
 
+### Deringing + 16-bit SIMD DCT Overflow (mozilla/mozjpeg#453)
+
+**Bug:** Overshoot deringing pushes level-shifted samples to ±158. The ISLOW forward
+DCT's 16-bit SIMD path (`_mm256_add_epi16`) overflows in the column-pass final butterfly:
+`8 × 5056 = 40,448 > i16::MAX (32,767)`. Wrapping causes sign flips that invert entire
+8×8 blocks.
+
+**mozjpeg-rs status:** Production paths use i32 intermediates — **immune**.
+The experimental `SimdOps::avx2_i16()` path (`src/dct.rs:1326`) reproduces the bug.
+Use `Encoder::simd_ops()` to select it for testing.
+
+**Trigger conditions:**
+- Deringing enabled + i16 SIMD DCT path
+- Vertical half-black/half-white edge within an 8×8 block
+- Quality ≤ Q57 (DC quant value ≥ 14)
+
+**Horizontal splits do NOT trigger** because each row is uniform (DC-only, zero AC energy).
+
+**Test patterns:** `imazen/codec-corpus` at `imageflow/test_inputs/dct_overflow_patterns/`
+- `left_black_right_white.png` — 64×64, triggers overflow
+- `left_white_right_black.png` — 64×64, triggers overflow
+- `single_8x8_half.png` — 8×8 minimal reproducer
+- `top_black_bottom_white.png` — 64×64, does NOT trigger (control)
+- `checkerboard_8x8.png` — 64×64, does NOT trigger (control)
+
+**Regression tests:** `tests/encode_tests.rs:1328` (`test_issue444_deringing_overflow_pattern`)
+and `tests/encode_tests.rs:1387` (`test_issue444_across_quality_range`).
+
+**Reference:** https://github.com/mozilla/mozjpeg/pull/453
+
 ### Implementation Notes
 1. **Huffman tree construction**: Use sentinel values carefully to avoid overflow
    - `FREQ_INITIAL_MAX = 1_000_000_000` for comparison

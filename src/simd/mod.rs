@@ -107,6 +107,10 @@ enum DctVariant {
     /// Archmage-based safe AVX2 with cached token
     #[cfg(target_arch = "x86_64")]
     Avx2Archmage,
+    /// Experimental i16 packed AVX2 DCT (libjpeg-turbo jfdctint-avx2.asm port).
+    /// Has known overflow with deringing; see [`SimdOps::avx2_i16()`].
+    #[cfg(target_arch = "x86_64")]
+    Avx2I16,
 }
 
 /// SIMD operations dispatch table.
@@ -215,6 +219,14 @@ impl SimdOps {
             DctVariant::Multiversion => {
                 crate::dct::forward_dct_8x8_i32_multiversion(samples, coeffs);
             }
+            #[cfg(target_arch = "x86_64")]
+            DctVariant::Avx2I16 => {
+                if let Some(token) = self.avx2_token {
+                    crate::dct::avx2_archmage::forward_dct_8x8_i16(token, samples, coeffs);
+                } else {
+                    crate::dct::forward_dct_8x8_i32_multiversion(samples, coeffs);
+                }
+            }
         }
     }
 
@@ -260,6 +272,32 @@ impl SimdOps {
         })
     }
 
+    /// Get experimental i16 packed AVX2 DCT (libjpeg-turbo jfdctint-avx2.asm port).
+    ///
+    /// **WARNING:** This path uses 16-bit packed SIMD arithmetic (`_mm256_add_epi16`)
+    /// which overflows when overshoot deringing pushes inputs to ±158. The column-pass
+    /// final butterfly sums 8 identical row outputs: `8 × 5056 = 40,448 > i16::MAX`.
+    /// This causes catastrophic sign flips in DC/AC coefficients, producing inverted
+    /// 8×8 blocks. See [mozilla/mozjpeg#453](https://github.com/mozilla/mozjpeg/pull/453).
+    ///
+    /// The production DCT paths ([`detect()`](Self::detect), [`avx2_archmage()`](Self::avx2_archmage))
+    /// use i32 intermediates and are immune.
+    ///
+    /// Test patterns that trigger the overflow are in the codec-corpus at
+    /// `imageflow/test_inputs/dct_overflow_patterns/` (vertical half-black/half-white splits).
+    ///
+    /// Returns `None` if AVX2 is not available.
+    #[cfg(target_arch = "x86_64")]
+    #[must_use]
+    pub fn avx2_i16() -> Option<Self> {
+        Avx2Token::try_new().map(|token| Self {
+            forward_dct: scalar::forward_dct_8x8,
+            color_convert_rgb_to_ycbcr: scalar::convert_rgb_to_ycbcr,
+            dct_variant: DctVariant::Avx2I16,
+            avx2_token: Some(token),
+        })
+    }
+
     /// Check which DCT variant is active.
     pub fn dct_variant_name(&self) -> &'static str {
         match self.dct_variant {
@@ -268,6 +306,8 @@ impl SimdOps {
             DctVariant::Avx2Intrinsics => "avx2_intrinsics",
             #[cfg(target_arch = "x86_64")]
             DctVariant::Avx2Archmage => "avx2_archmage",
+            #[cfg(target_arch = "x86_64")]
+            DctVariant::Avx2I16 => "avx2_i16",
         }
     }
 }
