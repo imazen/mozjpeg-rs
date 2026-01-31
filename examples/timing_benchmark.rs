@@ -145,7 +145,12 @@ fn main() {
     let (rgb, width, height) = load_png(&test_image).expect("Failed to load test image");
 
     println!("\n=== Apples-to-Apples Timing Benchmark ===");
-    println!("Image: {}x{} ({})", width, height, test_image.file_name().unwrap().to_string_lossy());
+    println!(
+        "Image: {}x{} ({})",
+        width,
+        height,
+        test_image.file_name().unwrap().to_string_lossy()
+    );
     println!("Settings: 4:2:0, Robidoux tables, Trellis AC+DC, Huffman opt, Deringing");
     println!();
 
@@ -153,7 +158,10 @@ fn main() {
     let warmup = 5;
     let iterations = 30;
 
-    println!("Quality {} ({} iterations, {} warmup):\n", quality, iterations, warmup);
+    println!(
+        "Quality {} ({} iterations, {} warmup):\n",
+        quality, iterations, warmup
+    );
 
     // Baseline mode (sequential)
     let (rust_ms, rust_size) = benchmark(
@@ -198,7 +206,10 @@ fn main() {
     let warmup = 2;
     let iterations = 10;
 
-    println!("Quality {} ({} iterations, {} warmup):\n", quality, iterations, warmup);
+    println!(
+        "Quality {} ({} iterations, {} warmup):\n",
+        quality, iterations, warmup
+    );
 
     let (rust_ms, rust_size) = benchmark(
         || encode_rust_baseline(&large_rgb, 2048, 2048, quality),

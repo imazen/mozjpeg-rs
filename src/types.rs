@@ -1002,7 +1002,10 @@ impl TrellisConfig {
     /// - 0 = thorough (full search, slowest but optimal)
     /// - 7 ≈ C mozjpeg adaptive behavior
     /// - 10 = fast (most blocks limited)
-    #[deprecated(since = "0.5.0", note = "Use speed_mode(TrellisSpeedMode::Level(n)) instead")]
+    #[deprecated(
+        since = "0.5.0",
+        note = "Use speed_mode(TrellisSpeedMode::Level(n)) instead"
+    )]
     pub fn speed_level(mut self, level: u8) -> Self {
         self.speed_mode = TrellisSpeedMode::Level(level.min(10));
         self
