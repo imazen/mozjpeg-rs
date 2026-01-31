@@ -1321,12 +1321,12 @@ pub mod avx2_archmage {
     /// Each assembly instruction is translated to the corresponding Rust intrinsic.
     /// This provides identical output to the reference C/asm implementation.
     ///
-    /// **WARNING:** Uses `_mm256_add_epi16` (wrapping) in the column-pass even-part
-    /// butterfly. When overshoot deringing pushes inputs to ±158, the final sum
-    /// `8 × 5056 = 40,448` overflows i16, causing catastrophic sign flips.
-    /// Fix: replace with `_mm256_adds_epi16` (saturating) for those 2 operations.
+    /// The column-pass even-part butterfly uses `_mm256_adds_epi16` (saturating)
+    /// instead of wrapping add to prevent i16 overflow when overshoot deringing
+    /// pushes inputs to ±158 (`8 × 5056 = 40,448 > i16::MAX`).
+    /// Row pass uses wrapping add (no overflow risk, no perf penalty).
     /// See [mozilla/mozjpeg#453](https://github.com/mozilla/mozjpeg/pull/453).
-    /// Test patterns: `imazen/codec-corpus` at `imageflow/test_inputs/dct_overflow_patterns/`.
+    /// Test: `cargo run --release --example synth_dct_overflow`.
     ///
     /// The token proves AVX2 is available. Memory operations use safe archmage wrappers.
     #[arcane]
@@ -1439,30 +1439,34 @@ pub mod avx2_archmage {
         pass1: bool,
     ) -> (__m256i, __m256i, __m256i, __m256i) {
         // Step 1: Compute butterfly differences/sums
-        let ymm4 = _mm256_sub_epi16(ymm0, ymm3); // tmp6_7
-        let ymm5 = _mm256_add_epi16(ymm0, ymm3); // tmp1_0
-        let ymm6 = _mm256_add_epi16(ymm1, ymm2); // tmp3_2
-        let ymm7 = _mm256_sub_epi16(ymm1, ymm2); // tmp4_5
+        // Use saturating add/sub to prevent i16 overflow when deringing
+        // pushes inputs beyond normal range. See PR #453.
+        let ymm4 = _mm256_subs_epi16(ymm0, ymm3); // tmp6_7
+        let ymm5 = _mm256_adds_epi16(ymm0, ymm3); // tmp1_0
+        let ymm6 = _mm256_adds_epi16(ymm1, ymm2); // tmp3_2
+        let ymm7 = _mm256_subs_epi16(ymm1, ymm2); // tmp4_5
 
         // ---- Even part ----
 
         // Swap halves to get tmp0_1
         let ymm5 = _mm256_permute2x128_si256(ymm5, ymm5, 0x01);
-        let ymm0 = _mm256_add_epi16(ymm5, ymm6); // tmp10_11
-        let ymm5 = _mm256_sub_epi16(ymm5, ymm6); // tmp13_12
+        let ymm0 = _mm256_adds_epi16(ymm5, ymm6); // tmp10_11
+        let ymm5 = _mm256_subs_epi16(ymm5, ymm6); // tmp13_12
 
         let ymm6 = _mm256_permute2x128_si256(ymm0, ymm0, 0x01); // tmp11_10
 
         // PW_1_NEG1: high lane = 1, low lane = -1
         let pw_1_neg1 = _mm256_set_epi16(-1, -1, -1, -1, -1, -1, -1, -1, 1, 1, 1, 1, 1, 1, 1, 1);
         let ymm0 = _mm256_sign_epi16(ymm0, pw_1_neg1); // tmp10_neg11
-        let ymm6 = _mm256_add_epi16(ymm6, ymm0); // (tmp10+tmp11)_(tmp10-tmp11)
+        let ymm6 = _mm256_adds_epi16(ymm6, ymm0); // (tmp10+tmp11)_(tmp10-tmp11)
 
         let out0_4 = if pass1 {
             _mm256_slli_epi16(ymm6, PASS1_BITS as i32)
         } else {
+            // Saturating add for rounding constant: butterfly output near i16::MAX
+            // would wrap when adding descale bias (e.g., 32767 + 2 = -32767 wrapped).
             let pw_descale = _mm256_set1_epi16(1 << (PASS1_BITS - 1));
-            _mm256_srai_epi16(_mm256_add_epi16(ymm6, pw_descale), PASS1_BITS as i32)
+            _mm256_srai_epi16(_mm256_adds_epi16(ymm6, pw_descale), PASS1_BITS as i32)
         };
 
         // data2_6 calculation
@@ -1517,7 +1521,7 @@ pub mod avx2_archmage {
 
         // ---- Odd part ----
 
-        let ymm6 = _mm256_add_epi16(ymm7, ymm4); // z3_4
+        let ymm6 = _mm256_adds_epi16(ymm7, ymm4); // z3_4
 
         // z3/z4 calculation
         let ymm1 = _mm256_permute2x128_si256(ymm6, ymm6, 0x01); // z4_3
