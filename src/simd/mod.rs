@@ -222,6 +222,7 @@ impl SimdOps {
             #[cfg(target_arch = "x86_64")]
             DctVariant::Avx2I16 => {
                 if let Some(token) = self.avx2_token {
+                    #[allow(deprecated)]
                     crate::dct::avx2_archmage::forward_dct_8x8_i16(token, samples, coeffs);
                 } else {
                     crate::dct::forward_dct_8x8_i32_multiversion(samples, coeffs);

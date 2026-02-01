@@ -1,7 +1,7 @@
 //! Fast entropy encoding for JPEG.
 //!
 //! This module provides optimized Huffman entropy encoding based on jpegli-rs approach:
-//! - Owned Vec<u8> output instead of Write trait (no virtual dispatch)
+//! - Owned `Vec<u8>` output instead of Write trait (no virtual dispatch)
 //! - 64-bit bit buffer with delayed flush at 32+ bits
 //! - SWAR (SIMD Within A Register) 0xFF detection for fast byte stuffing
 //! - Combined code+extra bit writes

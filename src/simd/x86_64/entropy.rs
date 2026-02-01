@@ -224,7 +224,7 @@ impl SimdEntropyEncoder {
 
     /// Reorder coefficients to zigzag order with sign handling using SSE2.
     ///
-    /// Returns a 64-bit mask where bit i is set if temp[i] != 0.
+    /// Returns a 64-bit mask where bit `i` is set if `temp[i]` != 0.
     ///
     /// Sign handling: for negative values, we compute `value - 1` which gives
     /// the JPEG-format encoding where negative values are represented as

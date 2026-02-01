@@ -20,7 +20,7 @@
 /// * `smoothing_factor` - Smoothing strength (0-100, 0 = no smoothing)
 ///
 /// # Returns
-/// Smoothed RGB data as a new Vec<u8>
+/// Smoothed RGB data as a new `Vec<u8>`
 pub fn smooth_rgb(rgb_data: &[u8], width: u32, height: u32, smoothing_factor: u8) -> Vec<u8> {
     if smoothing_factor == 0 || width < 3 || height < 3 {
         return rgb_data.to_vec();
@@ -88,7 +88,7 @@ pub fn smooth_rgb(rgb_data: &[u8], width: u32, height: u32, smoothing_factor: u8
 /// * `smoothing_factor` - Smoothing strength (0-100, 0 = no smoothing)
 ///
 /// # Returns
-/// Smoothed grayscale data as a new Vec<u8>
+/// Smoothed grayscale data as a new `Vec<u8>`
 pub fn smooth_grayscale(
     gray_data: &[u8],
     width: u32,

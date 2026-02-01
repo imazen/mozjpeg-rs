@@ -433,7 +433,7 @@ pub use types::TrellisSpeedMode;
 
 /// Estimated resource usage for an encoding operation.
 ///
-/// Use [`Encoder::estimate_resources()`] to predict memory and CPU requirements
+/// Use [`Encoder::estimate_resources()`](crate::encode::Encoder::estimate_resources) to predict memory and CPU requirements
 /// before encoding. Useful for scheduling, resource limits, or progress feedback.
 ///
 /// # Example

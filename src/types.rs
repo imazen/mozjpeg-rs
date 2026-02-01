@@ -81,7 +81,7 @@ impl PixelDensity {
 
 /// Estimated resource usage for an encoding operation.
 ///
-/// Use [`Encoder::estimate_resources()`] to get these estimates before encoding.
+/// Use [`Encoder::estimate_resources()`](crate::encode::Encoder::estimate_resources) to get these estimates before encoding.
 /// This is useful for:
 /// - Scheduling work across multiple threads
 /// - Enforcing memory limits
@@ -743,7 +743,7 @@ impl HuffmanTable {
 /// Trellis quantization has O(n²) complexity per block. For high-entropy
 /// blocks (many non-zero coefficients at high quality), this can be slow.
 /// These modes control how aggressively to limit the search space.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub enum TrellisSpeedMode {
     /// Full search on all blocks (slowest, optimal quality).
     /// Use when encoding time is not a concern.
@@ -753,6 +753,7 @@ pub enum TrellisSpeedMode {
     /// - nonzero > 55: lookback=8, candidates=3 (extreme entropy)
     /// - nonzero > 48: lookback=16, candidates=4 (high entropy)
     /// - otherwise: full search
+    #[default]
     Adaptive,
 
     /// Formula-based level (0-10), the original Rust implementation.
@@ -782,12 +783,6 @@ pub enum TrellisSpeedMode {
         /// Tier 2: maximum quantization candidates (e.g., 4)
         tier2_candidates: u8,
     },
-}
-
-impl Default for TrellisSpeedMode {
-    fn default() -> Self {
-        Self::Adaptive
-    }
 }
 
 impl TrellisSpeedMode {
@@ -869,7 +864,7 @@ pub struct TrellisConfig {
     pub lambda_log_scale2: f32,
     /// Frequency split point for spectral selection.
     ///
-    /// Used by scan optimization ([`crate::progressive::ScanSearchConfig`]) for
+    /// Used by scan optimization ([`crate::scan_optimize::ScanSearchConfig`]) for
     /// progressive scan structure. Not used in the trellis DP loop itself.
     pub freq_split: i32,
     /// Number of trellis optimization loops.

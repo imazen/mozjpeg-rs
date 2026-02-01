@@ -3736,7 +3736,7 @@ impl Encoder {
     /// Note that streaming mode does NOT support trellis quantization, progressive
     /// mode, or Huffman optimization (these require buffering the entire image).
     ///
-    /// For full-featured encoding with all mozjpeg optimizations, use [`Encoder::new(Preset)`]
+    /// For full-featured encoding with all mozjpeg optimizations, use [`Encoder::new()`]
     /// with [`encode_rgb()`](Encoder::encode_rgb) or [`encode_gray()`](Encoder::encode_gray).
     ///
     /// # Example

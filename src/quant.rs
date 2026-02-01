@@ -166,7 +166,7 @@ pub fn quantize_block(
 ///
 /// This function matches C mozjpeg's non-trellis quantization approach:
 /// - Takes raw DCT output (scaled by 8, NOT descaled)
-/// - Uses scaled quantization: q_scaled = 8 * quant_table[i]
+/// - Uses scaled quantization: `q_scaled = 8 * quant_table[i]`
 /// - Single rounding step: (abs(coef) + q_scaled/2) / q_scaled
 ///
 /// This avoids the rounding differences that occur when descaling and
