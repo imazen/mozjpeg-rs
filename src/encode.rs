@@ -2378,14 +2378,9 @@ impl Encoder {
             }
 
             // Generate progressive scan script
-            //
-            // TEMPORARY: Always use 4-scan minimal script to avoid refinement scan bugs.
-            // Our AC refinement encoding has bugs causing "failed to decode huffman code".
-            // TODO: Fix AC refinement encoding and re-enable optimize_scans.
             let scans = if self.optimize_scans {
                 // When optimize_scans is enabled, use the scan optimizer to find
-                // the best frequency split and Al levels. However, SA refinement
-                // (Ah > 0) is currently disabled due to encoding bugs.
+                // the best frequency split and Al levels, including SA refinement.
                 self.optimize_progressive_scans(
                     3, // num_components
                     &y_blocks,
