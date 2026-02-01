@@ -848,21 +848,42 @@ pub struct TrellisConfig {
     pub dc_enabled: bool,
     /// Optimize for sequences of EOB
     pub eob_opt: bool,
-    /// Use perceptual lambda weighting table
+    /// Use perceptual lambda weighting table.
+    ///
+    /// Not currently used. C mozjpeg hardcodes flat (1/q²) weights regardless
+    /// of this flag (mode=1 is always selected). Rust matches C behavior.
     pub use_lambda_weight_tbl: bool,
-    /// Consider scan order in trellis optimization
+    /// Consider scan order in trellis optimization.
+    ///
+    /// Not implemented. C mozjpeg benchmarks show +0.52% file size and 20%
+    /// slower encoding with negligible quality improvement. Poor tradeoff.
     pub use_scans_in_trellis: bool,
-    /// Optimize quantization table in trellis loop
+    /// Optimize quantization table in trellis loop.
+    ///
+    /// Not implemented. Experimental in C mozjpeg, not enabled in any default
+    /// profile.
     pub q_opt: bool,
     /// Lambda log scale parameter 1
     pub lambda_log_scale1: f32,
     /// Lambda log scale parameter 2
     pub lambda_log_scale2: f32,
-    /// Frequency split point for spectral selection
+    /// Frequency split point for spectral selection.
+    ///
+    /// Used by scan optimization ([`crate::progressive::ScanSearchConfig`]) for
+    /// progressive scan structure. Not used in the trellis DP loop itself.
     pub freq_split: i32,
-    /// Number of trellis optimization loops
+    /// Number of trellis optimization loops.
+    ///
+    /// Not implemented. Always runs one trellis pass. Multi-loop requires
+    /// buffering all blocks and re-running with updated Huffman statistics.
     pub num_loops: i32,
-    /// DC delta weight for vertical gradient consideration
+    /// Weight for vertical DC gradient consideration (0.0 = disabled).
+    ///
+    /// When > 0.0, the DC trellis optimizer blends vertical gradient error
+    /// into the DC distortion cost, encouraging smoother DC transitions
+    /// between rows. This reduces blocking artifacts on smooth gradients.
+    /// Default is 0.0 (disabled), matching C mozjpeg defaults.
+    /// Reference: C mozjpeg `trellis_delta_dc_weight` in jcdctmgr.c:1069-1084.
     pub delta_dc_weight: f32,
     /// Speed optimization mode for high-entropy blocks.
     ///

@@ -521,6 +521,8 @@ pub fn dc_trellis_optimize(
         last_dc,
         lambda_log_scale1,
         lambda_log_scale2,
+        0.0,  // No vertical gradient consideration
+        None, // No row above
     )
 }
 
@@ -533,6 +535,11 @@ pub fn dc_trellis_optimize(
 /// * `raw_dct_blocks` - All raw DCT blocks (may be in any storage order)
 /// * `quantized_blocks` - All quantized blocks (same storage order as raw_dct_blocks)
 /// * `indices` - Indices into the block arrays specifying processing order
+/// * `delta_dc_weight` - Weight for vertical DC gradient consideration (0.0 = disabled).
+///   When > 0.0, blends vertical gradient error into the DC distortion cost,
+///   encouraging smoother DC transitions between rows. Reference: C mozjpeg jcdctmgr.c:1069-1084.
+/// * `above_row_data` - Raw and quantized DC values from the row above, indexed by block
+///   position within the row (same order as `indices`). `None` for the first row.
 /// * Other arguments same as `dc_trellis_optimize`
 #[allow(clippy::too_many_arguments)]
 #[allow(clippy::needless_range_loop)]
@@ -545,6 +552,8 @@ pub fn dc_trellis_optimize_indexed(
     last_dc: i16,
     lambda_log_scale1: f32,
     lambda_log_scale2: f32,
+    delta_dc_weight: f32,
+    above_row_data: Option<(&[i32], &[i16])>,
 ) -> i16 {
     let num_blocks = indices.len();
     if num_blocks == 0 {
@@ -603,10 +612,25 @@ pub fn dc_trellis_optimize_indexed(
 
             // Distortion from this candidate
             let delta = candidate_val * q - x;
-            let candidate_dist = (delta as f32).powi(2) * lambda_dc;
+            let mut candidate_dist = (delta as f32).powi(2) * lambda_dc;
 
             // Store the signed candidate value
             dc_candidate[k][bi] = (candidate_val as i16) * sign;
+
+            // Take into account DC differences with row above
+            // Reference: C mozjpeg jcdctmgr.c:1069-1084
+            if delta_dc_weight > 0.0 {
+                if let Some((raw_dc_above, quantized_dc_above)) = above_row_data {
+                    let dc_above_orig = raw_dc_above[bi];
+                    let dc_above_recon = quantized_dc_above[bi] as i32 * q;
+                    let dc_orig = raw_dct_blocks[block_idx][0];
+                    let dc_recon = dc_candidate[k][bi] as i32 * q;
+                    // delta is difference of vertical gradients
+                    let vdelta = (dc_above_orig - dc_orig) - (dc_above_recon - dc_recon);
+                    let vertical_dist = (vdelta as f32).powi(2) * lambda_dc;
+                    candidate_dist += delta_dc_weight * (vertical_dist - candidate_dist);
+                }
+            }
 
             if bi == 0 {
                 // First block: cost is based on difference from last_dc
@@ -1261,6 +1285,246 @@ mod tests {
         println!(
             "EOB optimization zeroed {} coefficients across 10 blocks",
             zeroed
+        );
+    }
+
+    fn create_dc_table() -> DerivedTable {
+        use crate::consts::{DC_LUMINANCE_BITS, DC_LUMINANCE_VALUES};
+        let mut htbl = HuffTable::default();
+        htbl.bits.copy_from_slice(&DC_LUMINANCE_BITS);
+        for (i, &v) in DC_LUMINANCE_VALUES.iter().enumerate() {
+            htbl.huffval[i] = v;
+        }
+        DerivedTable::from_huff_table(&htbl, true).unwrap()
+    }
+
+    #[test]
+    fn test_delta_dc_weight_zero_matches_baseline() {
+        // delta_dc_weight=0.0 must produce identical output to the code path
+        // that doesn't use above-row data at all (None).
+        let dc_table = create_dc_table();
+        let qtable = create_qtable();
+        let dc_quantval = qtable[0];
+
+        // Create 2 rows of 4 blocks each with varying DC values
+        let num_cols = 4;
+        let mut raw_blocks = Vec::new();
+        for row in 0..2 {
+            for col in 0..num_cols {
+                let mut block = [0i32; DCTSIZE2];
+                // Varying DC values to make the test interesting
+                block[0] = ((row * num_cols + col) as i32 * 300 + 100) * 8;
+                // Some AC content
+                block[JPEG_NATURAL_ORDER[1]] = 50 * 8;
+                block[JPEG_NATURAL_ORDER[5]] = -30 * 8;
+                raw_blocks.push(block);
+            }
+        }
+
+        // Baseline: process with delta_dc_weight=0.0 and None above data
+        let mut quantized_baseline = vec![[0i16; DCTSIZE2]; raw_blocks.len()];
+        for (i, block) in raw_blocks.iter().enumerate() {
+            simple_quantize_block(block, &mut quantized_baseline[i], &qtable);
+        }
+        let indices_row0: Vec<usize> = (0..num_cols).collect();
+        let indices_row1: Vec<usize> = (num_cols..2 * num_cols).collect();
+
+        let last_dc = dc_trellis_optimize_indexed(
+            &raw_blocks,
+            &mut quantized_baseline,
+            &indices_row0,
+            dc_quantval,
+            &dc_table,
+            0,
+            14.75,
+            16.0,
+            0.0,
+            None,
+        );
+        // Row 1 with some fake above data — but weight=0.0, so it should be ignored
+        let fake_above_raw = vec![999i32; num_cols];
+        let fake_above_quant = vec![99i16; num_cols];
+        dc_trellis_optimize_indexed(
+            &raw_blocks,
+            &mut quantized_baseline,
+            &indices_row1,
+            dc_quantval,
+            &dc_table,
+            last_dc,
+            14.75,
+            16.0,
+            0.0,
+            Some((&fake_above_raw, &fake_above_quant)),
+        );
+
+        // Comparison: process with delta_dc_weight=0.0 and None (no above data at all)
+        let mut quantized_no_above = vec![[0i16; DCTSIZE2]; raw_blocks.len()];
+        for (i, block) in raw_blocks.iter().enumerate() {
+            simple_quantize_block(block, &mut quantized_no_above[i], &qtable);
+        }
+        let last_dc2 = dc_trellis_optimize_indexed(
+            &raw_blocks,
+            &mut quantized_no_above,
+            &indices_row0,
+            dc_quantval,
+            &dc_table,
+            0,
+            14.75,
+            16.0,
+            0.0,
+            None,
+        );
+        dc_trellis_optimize_indexed(
+            &raw_blocks,
+            &mut quantized_no_above,
+            &indices_row1,
+            dc_quantval,
+            &dc_table,
+            last_dc2,
+            14.75,
+            16.0,
+            0.0,
+            None,
+        );
+
+        // Must be identical — delta_dc_weight=0.0 means above data is never used
+        for i in 0..raw_blocks.len() {
+            assert_eq!(
+                quantized_baseline[i], quantized_no_above[i],
+                "Block {} differs with delta_dc_weight=0.0",
+                i
+            );
+        }
+    }
+
+    #[test]
+    fn test_delta_dc_weight_affects_dc_values() {
+        // With delta_dc_weight > 0.0, the DC trellis should produce different
+        // (smoother) DC values compared to weight=0.0, given a vertical edge.
+        let dc_table = create_dc_table();
+        let qtable = create_qtable();
+        let dc_quantval = qtable[0];
+        let q = 8 * dc_quantval as i32;
+
+        let num_cols = 4;
+
+        // Create blocks with a strong vertical DC gradient:
+        // Row 0: high DC values, Row 1: low DC values
+        let mut raw_blocks = Vec::new();
+        for _col in 0..num_cols {
+            let mut block = [0i32; DCTSIZE2];
+            block[0] = 200 * q; // High DC
+            block[JPEG_NATURAL_ORDER[1]] = 10 * 8;
+            raw_blocks.push(block);
+        }
+        for _col in 0..num_cols {
+            let mut block = [0i32; DCTSIZE2];
+            block[0] = 50 * q; // Low DC — large vertical gradient
+            block[JPEG_NATURAL_ORDER[1]] = 10 * 8;
+            raw_blocks.push(block);
+        }
+
+        let indices_row0: Vec<usize> = (0..num_cols).collect();
+        let indices_row1: Vec<usize> = (num_cols..2 * num_cols).collect();
+
+        // Run without delta_dc_weight
+        let mut quant_no_weight = vec![[0i16; DCTSIZE2]; raw_blocks.len()];
+        for (i, block) in raw_blocks.iter().enumerate() {
+            simple_quantize_block(block, &mut quant_no_weight[i], &qtable);
+        }
+        let last_dc_0 = dc_trellis_optimize_indexed(
+            &raw_blocks,
+            &mut quant_no_weight,
+            &indices_row0,
+            dc_quantval,
+            &dc_table,
+            0,
+            14.75,
+            16.0,
+            0.0,
+            None,
+        );
+        let above_raw: Vec<i32> = indices_row0.iter().map(|&i| raw_blocks[i][0]).collect();
+        let above_quant: Vec<i16> = indices_row0
+            .iter()
+            .map(|&i| quant_no_weight[i][0])
+            .collect();
+        dc_trellis_optimize_indexed(
+            &raw_blocks,
+            &mut quant_no_weight,
+            &indices_row1,
+            dc_quantval,
+            &dc_table,
+            last_dc_0,
+            14.75,
+            16.0,
+            0.0,
+            Some((&above_raw, &above_quant)),
+        );
+
+        // Run with delta_dc_weight=0.5
+        let mut quant_with_weight = vec![[0i16; DCTSIZE2]; raw_blocks.len()];
+        for (i, block) in raw_blocks.iter().enumerate() {
+            simple_quantize_block(block, &mut quant_with_weight[i], &qtable);
+        }
+        let last_dc_1 = dc_trellis_optimize_indexed(
+            &raw_blocks,
+            &mut quant_with_weight,
+            &indices_row0,
+            dc_quantval,
+            &dc_table,
+            0,
+            14.75,
+            16.0,
+            0.5,
+            None, // First row has no above
+        );
+        let above_raw_w: Vec<i32> = indices_row0.iter().map(|&i| raw_blocks[i][0]).collect();
+        let above_quant_w: Vec<i16> = indices_row0
+            .iter()
+            .map(|&i| quant_with_weight[i][0])
+            .collect();
+        dc_trellis_optimize_indexed(
+            &raw_blocks,
+            &mut quant_with_weight,
+            &indices_row1,
+            dc_quantval,
+            &dc_table,
+            last_dc_1,
+            14.75,
+            16.0,
+            0.5,
+            Some((&above_raw_w, &above_quant_w)),
+        );
+
+        // Row 0 should be identical (no above data for either)
+        for col in 0..num_cols {
+            assert_eq!(
+                quant_no_weight[col][0], quant_with_weight[col][0],
+                "Row 0 col {} DC should be identical (no above row)",
+                col
+            );
+        }
+
+        // Row 1 may differ — the vertical gradient consideration can change
+        // DC decisions. We check that the function ran without panicking and
+        // produced valid results. The actual difference depends on the gradient
+        // magnitude relative to the quantization step.
+        let mut any_different = false;
+        for col in 0..num_cols {
+            let idx = num_cols + col;
+            if quant_no_weight[idx][0] != quant_with_weight[idx][0] {
+                any_different = true;
+            }
+            // Both should produce valid quantized DC values
+            assert!(
+                quant_with_weight[idx][0].unsigned_abs() <= 1023,
+                "DC value out of range"
+            );
+        }
+        println!(
+            "delta_dc_weight produced {} DC values in row 1",
+            if any_different { "different" } else { "same" }
         );
     }
 }

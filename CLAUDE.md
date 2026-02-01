@@ -168,10 +168,17 @@ let jpeg_data = encoder.encode_rgb(&pixels, width, height)?;
 - **`freq_split`** (default 8) — Field exists, only used in progressive scan generation,
   not in the trellis DP loop. Could split AC trellis into low/high frequency passes.
   `trellis_quantize_block_with_eob_info()` already accepts `ss`/`se` parameters.
-- **`delta_dc_weight`** (default 0.0) — Field exists but never read in `dc_trellis_optimize_indexed()`.
-  Would blend vertical DC gradient error with per-pixel DC distortion (~15 lines to add).
 - **`q_opt`** (default false) — Field exists but not implemented. Would optimize quant tables
   within trellis loop. Not implemented in C mozjpeg either (experimental/placeholder).
+
+### TrellisConfig Fields — Implemented but No-Op by Default
+- **`delta_dc_weight`** (default 0.0) — Wired up in `dc_trellis_optimize_indexed()`.
+  When > 0.0, blends vertical DC gradient error into the distortion cost, encouraging
+  smoother DC transitions between rows. Matches C mozjpeg `trellis_delta_dc_weight`
+  (jcdctmgr.c:1069-1084). Default 0.0 matches C defaults (disabled).
+- **`use_lambda_weight_tbl`** — Not used. C mozjpeg hardcodes flat (1/q^2) weights
+  regardless of this flag. Rust matches C behavior.
+- **`num_loops`** — Not used. Always runs one trellis pass.
 
 ### Not Implemented (Poor Tradeoff)
 - **Multipass trellis** (`use_scans_in_trellis`) - C mozjpeg benchmarks show +0.52% larger files,

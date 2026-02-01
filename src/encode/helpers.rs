@@ -87,6 +87,10 @@ pub(crate) fn get_row_indices(
 /// processing all blocks as one giant chain in that each row's optimization
 /// is independent, but the differential encoding cost uses the previous row's
 /// final DC value.
+///
+/// When `delta_dc_weight > 0.0`, each row (except the first) also considers
+/// vertical DC gradient consistency with the row above, encouraging smoother
+/// DC transitions. Reference: C mozjpeg jcdctmgr.c:1069-1084.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn run_dc_trellis_by_row(
     raw_blocks: &[[i32; DCTSIZE2]],
@@ -100,13 +104,27 @@ pub(crate) fn run_dc_trellis_by_row(
     mcu_cols: usize,
     h_samp: usize,
     v_samp: usize,
+    delta_dc_weight: f32,
 ) {
     // Start with last_dc = 0 for the first row (matching C mozjpeg)
     let mut last_dc = 0i16;
 
+    // Previous row's DC values for vertical gradient consideration.
+    // raw_dc_above[bi] = raw DCT DC of block at position bi in the previous row
+    // quantized_dc_above[bi] = quantized DC of block at position bi in the previous row
+    let mut prev_raw_dc: Vec<i32> = Vec::new();
+    let mut prev_quantized_dc: Vec<i16> = Vec::new();
+
     // Process each block row, propagating last_dc between rows
     for block_row in 0..block_rows {
         let indices = get_row_indices(block_row, block_cols, mcu_cols, h_samp, v_samp);
+
+        // Build above-row data for vertical gradient consideration
+        let above_data = if delta_dc_weight > 0.0 && !prev_raw_dc.is_empty() {
+            Some((prev_raw_dc.as_slice(), prev_quantized_dc.as_slice()))
+        } else {
+            None
+        };
 
         // Use last_dc from previous row (or 0 for first row)
         // The function returns the final DC value for the next row
@@ -119,7 +137,19 @@ pub(crate) fn run_dc_trellis_by_row(
             last_dc,
             lambda_log_scale1,
             lambda_log_scale2,
+            delta_dc_weight,
+            above_data,
         );
+
+        // Save this row's DC values for the next row's vertical gradient calculation
+        if delta_dc_weight > 0.0 {
+            prev_raw_dc.clear();
+            prev_quantized_dc.clear();
+            for &idx in &indices {
+                prev_raw_dc.push(raw_blocks[idx][0]);
+                prev_quantized_dc.push(quantized_blocks[idx][0]);
+            }
+        }
     }
 }
 

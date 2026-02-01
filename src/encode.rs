@@ -1471,6 +1471,7 @@ impl Encoder {
                         mcu_cols,
                         1,
                         1,
+                        self.trellis.delta_dc_weight,
                     );
                 }
             }
@@ -2312,6 +2313,7 @@ impl Encoder {
                         mcu_cols,
                         h,
                         v,
+                        self.trellis.delta_dc_weight,
                     );
                 }
                 // Chroma has 1x1 per MCU, so MCU order = row order
@@ -2328,6 +2330,7 @@ impl Encoder {
                         mcu_cols,
                         1,
                         1,
+                        self.trellis.delta_dc_weight,
                     );
                 }
                 if let Some(ref cr_raw) = cr_raw_dct {
@@ -2343,6 +2346,7 @@ impl Encoder {
                         mcu_cols,
                         1,
                         1,
+                        self.trellis.delta_dc_weight,
                     );
                 }
             }
@@ -2695,6 +2699,7 @@ impl Encoder {
                         mcu_cols,
                         h,
                         v,
+                        self.trellis.delta_dc_weight,
                     );
                 }
                 // Chroma has 1x1 per MCU, so MCU order = row order
@@ -2711,6 +2716,7 @@ impl Encoder {
                         mcu_cols,
                         1,
                         1,
+                        self.trellis.delta_dc_weight,
                     );
                 }
                 if let Some(ref cr_raw) = cr_raw_dct {
@@ -2726,6 +2732,7 @@ impl Encoder {
                         mcu_cols,
                         1,
                         1,
+                        self.trellis.delta_dc_weight,
                     );
                 }
             }
