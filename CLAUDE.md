@@ -161,8 +161,17 @@ let jpeg_data = encoder.encode_rgb(&pixels, width, height)?;
 - **Smoothing filter** - Noise reduction for dithered images (`.smoothing(30)`)
 
 ### Remaining Work
-- **Performance optimization (SIMD)** - DCT and color conversion are 7.5x slower than C
+- **Baseline entropy encoding** - ~4.7x slower than C (trellis mode is 10% faster than C)
 - Arithmetic coding (optional, rarely used)
+
+### TrellisConfig Fields Not Yet Wired Up
+- **`freq_split`** (default 8) — Field exists, only used in progressive scan generation,
+  not in the trellis DP loop. Could split AC trellis into low/high frequency passes.
+  `trellis_quantize_block_with_eob_info()` already accepts `ss`/`se` parameters.
+- **`delta_dc_weight`** (default 0.0) — Field exists but never read in `dc_trellis_optimize_indexed()`.
+  Would blend vertical DC gradient error with per-pixel DC distortion (~15 lines to add).
+- **`q_opt`** (default false) — Field exists but not implemented. Would optimize quant tables
+  within trellis loop. Not implemented in C mozjpeg either (experimental/placeholder).
 
 ### Not Implemented (Poor Tradeoff)
 - **Multipass trellis** (`use_scans_in_trellis`) - C mozjpeg benchmarks show +0.52% larger files,
@@ -212,49 +221,18 @@ cascade through DC differential encoding. Both produce visually identical images
 
 ### Known Issues / Active Investigations
 
-#### File Size Gap (2-4% with optimize_scans) - ROOT CAUSE IDENTIFIED
+#### File Size Gap with optimize_scans - FIXED ✅ (Dec 2025)
 
-**Symptom:** Rust produces ~2-4% larger files with `optimize_scans` enabled.
+**Original symptom:** Rust produced ~2-4% larger files with `optimize_scans` enabled
+because refinement scans were trial-encoded independently, producing garbage sizes.
 
-**Root Cause:** Trial encoding for refinement scans is fundamentally broken.
+**Fix:** `ScanTrialEncoder` (`src/scan_trial.rs`) now encodes all 64 candidate scans
+sequentially with proper state tracking between scans. Each scan also builds its own
+optimal Huffman table via two-pass encoding (count + encode), matching C mozjpeg's
+per-scan Huffman behavior.
 
-When `optimize_scans` is enabled, C mozjpeg:
-1. Generates 64 candidate scans (matching Rust exactly as of Dec 2024)
-2. Encodes ALL scans **in sequence**, storing the bytes in buffers
-3. Uses scan sizes to select optimal Al levels and frequency splits
-4. **Copies pre-encoded bytes** directly to output (copy_buffer)
-
-Rust's approach differs critically:
-1. Generates 64 candidate scans (matching C exactly ✓)
-2. Trial-encodes each scan **independently** to get sizes
-3. Uses sizes to select configuration (algorithm matches C ✓)
-4. **Re-encodes** the selected scans from scratch
-
-**The problem:** Refinement scans (Ah > 0) cannot be encoded independently.
-They require the state from previous "first" scans to know which bits to refine.
-
-When we trial-encode a refinement scan alone, it produces garbage sizes:
-- Scan 3 (Y refine Ah=1→Al=0): **22,728 bytes** (should be ~200-500)
-- This causes Al=1 cost to be ~10x higher than Al=0
-- Optimizer always picks Al=0 (no successive approximation)
-
-**Evidence:**
-```
-Scan sizes: [2466, 2128, 11, 22728, 657, 5, 21922, 24, 2, 21515, ...]
-                           ^^^^^ garbage refine scan size
-Al=0 cost: 2128 + 11 = 2139
-Al=1 cost: 657 + 5 + 22728 = 23390 (10x higher due to garbage refine)
-```
-
-**To fully match C mozjpeg's optimize_scans:**
-1. Encode all 64 candidate scans in proper sequence (with state)
-2. Store encoded bytes for each scan in buffers
-3. Select optimal configuration based on sizes
-4. Copy selected scan buffers directly to output
-
-This is a significant architectural change. The current implementation still
-produces valid, well-optimized progressive JPEGs - just not with successive
-approximation, which limits high-quality compression gains.
+**Result:** Max Compression mode matches C mozjpeg within ±2.2% at all quality levels.
+At Q50-Q70, Rust often produces smaller files than C.
 
 #### AC Refinement Decoder Errors - FIXED ✅ (Dec 2024)
 
