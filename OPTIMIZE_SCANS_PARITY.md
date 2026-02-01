@@ -6,7 +6,12 @@ Match C mozjpeg's `optimize_scans` output exactly (0% file size difference).
 ## Status: FIXED (Dec 2025)
 
 **Result:** Max Compression mode (progressive + optimize_scans + trellis) matches
-C mozjpeg within ±2.2% at all quality levels. At Q50-Q70, Rust often beats C.
+C mozjpeg within ±0.15% at all quality levels. At Q75 and below, Rust beats C.
+
+**Note (Feb 2025):** The previous ±2.2% claim was inflated because C test wrappers
+didn't explicitly disable `optimize_scans`. C mozjpeg's default `JCP_MAX_COMPRESSION`
+profile enables `optimize_scans=TRUE`, so C was using an optimized ~12-scan script
+while Rust used the fixed 9-scan script. All C wrappers now properly control this.
 
 ## What Was Fixed
 

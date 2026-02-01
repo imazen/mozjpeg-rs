@@ -362,8 +362,12 @@ fn encode_c(rgb: &[u8], width: u32, height: u32, quality: u8) -> Vec<u8> {
         // Must be set BEFORE jpeg_set_quality which uses this index
         jpeg_c_set_int_param(&mut cinfo, JINT_BASE_QUANT_TBL_IDX, 3);
 
-        // Use JCP_MAX_COMPRESSION equivalent settings
-        jpeg_simple_progression(&mut cinfo);
+        // Disable optimize_scans so C uses the fixed 9-scan JCP_MAX_COMPRESSION
+        // script (same as Rust). Without this, C's JCP_MAX_COMPRESSION default
+        // enables optimize_scans, which generates an optimized ~12-scan script
+        // that is unfairly compared against Rust's fixed 9-scan script.
+        jpeg_c_set_bool_param(&mut cinfo, JBOOLEAN_OPTIMIZE_SCANS, 0);
+
         jpeg_set_quality(&mut cinfo, quality as i32, 1);
 
         // 4:2:0 subsampling (default)
@@ -377,8 +381,10 @@ fn encode_c(rgb: &[u8], width: u32, height: u32, quality: u8) -> Vec<u8> {
         // Enable optimizations
         cinfo.optimize_coding = 1;
 
+        // Set progressive AFTER disabling optimize_scans
+        jpeg_simple_progression(&mut cinfo);
+
         // Enable trellis quantization
-        // Note: JBOOLEAN_OPTIMIZE_SCANS requires more complex setup and causes decode issues
         jpeg_c_set_bool_param(&mut cinfo, JBOOLEAN_TRELLIS_QUANT, 1);
         jpeg_c_set_bool_param(&mut cinfo, JBOOLEAN_TRELLIS_QUANT_DC, 1);
         jpeg_c_set_bool_param(&mut cinfo, JBOOLEAN_OVERSHOOT_DERINGING, 1);

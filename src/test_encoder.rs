@@ -173,13 +173,18 @@ pub fn encode_c(rgb: &[u8], width: u32, height: u32, config: &TestEncoderConfig)
 
         jpeg_set_defaults(&mut cinfo);
 
-        // Set progressive mode
-        if config.progressive {
-            jpeg_simple_progression(&mut cinfo);
-        } else {
-            cinfo.num_scans = 0;
-            cinfo.scan_info = ptr::null();
-        }
+        // CRITICAL: Control optimize_scans BEFORE calling jpeg_simple_progression.
+        // C mozjpeg defaults to JCP_MAX_COMPRESSION which sets optimize_scans=TRUE.
+        // When optimize_scans is TRUE, jpeg_simple_progression() calls
+        // jpeg_search_progression() which generates an optimized ~12-scan script
+        // instead of the fixed 9-scan JCP_MAX_COMPRESSION script. For fair
+        // comparison with Rust (which uses the fixed script when optimize_scans
+        // is false), we must disable it first.
+        jpeg_c_set_bool_param(
+            &mut cinfo,
+            JBOOLEAN_OPTIMIZE_SCANS,
+            if config.optimize_scans { 1 } else { 0 },
+        );
 
         jpeg_set_quality(&mut cinfo, config.quality as i32, 1);
 
@@ -200,6 +205,14 @@ pub fn encode_c(rgb: &[u8], width: u32, height: u32, config: &TestEncoderConfig)
 
         // Set optimization flags
         cinfo.optimize_coding = if config.optimize_huffman { 1 } else { 0 };
+
+        // Set progressive mode AFTER setting optimize_scans
+        if config.progressive {
+            jpeg_simple_progression(&mut cinfo);
+        } else {
+            cinfo.num_scans = 0;
+            cinfo.scan_info = ptr::null();
+        }
 
         // Set trellis options
         jpeg_c_set_bool_param(

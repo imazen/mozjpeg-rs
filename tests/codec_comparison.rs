@@ -76,13 +76,15 @@ fn encode_c_with_config(
 
         jpeg_set_defaults(&mut cinfo);
 
-        // Set progressive mode
-        if config.progressive {
-            jpeg_simple_progression(&mut cinfo);
-        } else {
-            cinfo.num_scans = 0;
-            cinfo.scan_info = ptr::null();
-        }
+        // Control optimize_scans BEFORE jpeg_simple_progression.
+        // C mozjpeg's JCP_MAX_COMPRESSION default enables optimize_scans,
+        // which causes jpeg_simple_progression() to run jpeg_search_progression()
+        // and generate an optimized scan script instead of the fixed 9-scan one.
+        jpeg_c_set_bool_param(
+            &mut cinfo,
+            JBOOLEAN_OPTIMIZE_SCANS,
+            if config.optimize_scans { 1 } else { 0 },
+        );
 
         jpeg_set_quality(&mut cinfo, config.quality as i32, 1);
 
@@ -103,6 +105,14 @@ fn encode_c_with_config(
 
         // Set optimization flags
         cinfo.optimize_coding = if config.optimize_huffman { 1 } else { 0 };
+
+        // Set progressive mode AFTER setting optimize_scans
+        if config.progressive {
+            jpeg_simple_progression(&mut cinfo);
+        } else {
+            cinfo.num_scans = 0;
+            cinfo.scan_info = ptr::null();
+        }
 
         // Set trellis options
         jpeg_c_set_bool_param(
