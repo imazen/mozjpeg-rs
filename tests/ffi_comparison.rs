@@ -35,7 +35,7 @@ fn test_dct_matches_c() {
     for (idx, pattern) in test_patterns.iter().enumerate() {
         // Rust implementation
         let mut rust_coeffs = [0i16; 64];
-        dct::forward_dct_8x8(pattern, &mut rust_coeffs);
+        dct::forward_dct_8x8_i32_multiversion(pattern, &mut rust_coeffs);
 
         // C implementation (mutates in place)
         let mut c_data = *pattern;
@@ -67,7 +67,7 @@ fn test_dct_matches_c_varied() {
 
         // Rust implementation
         let mut rust_coeffs = [0i16; 64];
-        dct::forward_dct_8x8(&pattern, &mut rust_coeffs);
+        dct::forward_dct_8x8_i32_multiversion(&pattern, &mut rust_coeffs);
 
         // C implementation
         let mut c_data = pattern;

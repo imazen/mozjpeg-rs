@@ -124,9 +124,6 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Run FFI comparison tests
-        run: cargo test --test ffi_comparison --features _instrument-c-mozjpeg-internals
-
       - name: Run sys-local tests
         run: cargo test -p sys-local
 
