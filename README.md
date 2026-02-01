@@ -35,52 +35,55 @@ For decoding, use one of these excellent crates:
 - Simple integration via Cargo
 
 **Choose C mozjpeg when you need:**
-- Smallest possible files at high quality (Q85+)
 - Maximum baseline encoding speed (SIMD-optimized entropy coding)
 - Established C ABI for FFI
+- Arithmetic coding (rarely used)
 
 ## Compression Results vs C mozjpeg
 
-Tested on full [Kodak](http://r0k.us/graphics/kodak/) corpus (24 images), trellis + Huffman opt, 4:2:0 subsampling.
+Tested on full [Kodak](http://r0k.us/graphics/kodak/) corpus (24 images), 4:2:0 subsampling, `fast-yuv` enabled. Six encoder configurations across four quality levels. Positive delta = Rust files are larger; negative = Rust files are smaller.
 
-### Max Compression Mode (`Encoder::max_compression()`)
+Reproduce with: `cargo test --release --test parity_benchmark -- --nocapture`
 
-Progressive mode with `optimize_scans=true` - each AC scan gets its own optimal Huffman table.
+| Config                   |  Q |   Avg Rust |      Avg C |   Delta | Max Dev |
+|--------------------------|----|------------|------------|---------|---------|
+| Baseline                 | 75 |     60,253 |     60,126 |  +0.21% |   0.35% |
+| Baseline                 | 85 |     83,482 |     83,296 |  +0.22% |   0.42% |
+| Baseline                 | 90 |    106,716 |    106,479 |  +0.22% |   0.40% |
+| Baseline                 | 95 |    150,888 |    150,570 |  +0.21% |   0.45% |
+| Baseline + Trellis       | 75 |     53,054 |     53,183 |  -0.24% |   0.97% |
+| Baseline + Trellis       | 85 |     74,781 |     74,792 |  -0.01% |   0.54% |
+| Baseline + Trellis       | 90 |     96,902 |     96,805 |  +0.10% |   0.56% |
+| Baseline + Trellis       | 95 |    139,188 |    138,957 |  +0.17% |   0.57% |
+| Full Baseline            | 75 |     53,077 |     53,191 |  -0.21% |   0.94% |
+| Full Baseline            | 85 |     74,796 |     74,795 |  +0.00% |   0.53% |
+| Full Baseline            | 90 |     96,915 |     96,818 |  +0.10% |   0.55% |
+| Full Baseline            | 95 |    139,211 |    139,007 |  +0.15% |   0.37% |
+| Progressive              | 75 |     58,998 |     58,873 |  +0.21% |   0.30% |
+| Progressive              | 85 |     80,928 |     80,749 |  +0.22% |   0.38% |
+| Progressive              | 90 |    102,410 |    102,204 |  +0.20% |   0.37% |
+| Progressive              | 95 |    143,747 |    143,446 |  +0.21% |   0.41% |
+| Progressive + Trellis    | 75 |     52,774 |     52,866 |  -0.17% |   0.64% |
+| Progressive + Trellis    | 85 |     73,652 |     73,642 |  +0.01% |   0.33% |
+| Progressive + Trellis    | 90 |     94,364 |     94,302 |  +0.07% |   0.35% |
+| Progressive + Trellis    | 95 |    134,226 |    134,051 |  +0.13% |   0.41% |
+| Full Progressive         | 75 |     52,789 |     52,869 |  -0.15% |   0.65% |
+| Full Progressive         | 85 |     73,654 |     73,652 |  +0.00% |   0.35% |
+| Full Progressive         | 90 |     94,380 |     94,308 |  +0.08% |   0.34% |
+| Full Progressive         | 95 |    134,253 |    134,074 |  +0.13% |   0.40% |
+| Max Compression          | 75 |     52,789 |     52,480 |  +0.59% |   2.12% |
+| Max Compression          | 85 |     73,654 |     73,353 |  +0.41% |   1.25% |
+| Max Compression          | 90 |     94,380 |     94,120 |  +0.28% |   0.59% |
+| Max Compression          | 95 |    134,253 |    133,721 |  +0.40% |   0.81% |
 
-| Quality | Rust vs C | Notes |
-|---------|-----------|-------|
-| Q50 | **-0.39%** | Rust produces smaller files |
-| Q60 | **-0.26%** | Rust smaller |
-| Q70 | **-0.38%** | Rust smaller |
-| Q75 | **-0.14%** | Rust smaller |
-| Q80 | +0.17% | Near-identical |
-| Q85 | +0.42% | Near-identical |
-| Q90 | +0.97% | Slight gap |
-| Q95 | +1.59% | |
-| Q97 | +2.13% | |
-| Q100 | +0.98% | |
+**Configs:** Baseline = huffman opt only. +Trellis = AC trellis. Full = AC trellis + DC trellis + deringing. Max Compression = Full + `optimize_scans: true`. All others use `optimize_scans: false`. All use `force_baseline: true`.
 
-### All Modes Comparison
-
-| Quality | Baseline | Progressive | Max Compression |
-|---------|----------|-------------|-----------------|
-| Q50 | +0.15% | **-1.23%** | **-0.39%** |
-| Q60 | +0.47% | **-0.70%** | **-0.26%** |
-| Q70 | +0.54% | **-0.35%** | **-0.38%** |
-| Q75 | +0.87% | +0.22% | **-0.14%** |
-| Q80 | +1.34% | +0.90% | +0.17% |
-| Q85 | +1.75% | +1.44% | +0.42% |
-| Q90 | +2.73% | +2.63% | +0.97% |
-| Q95 | +3.87% | +3.64% | +1.59% |
-| Q97 | +5.36% | +4.90% | +2.13% |
-| Q100 | +3.53% | +2.59% | +0.98% |
-
-**Summary**:
-- **Max Compression**: Rust matches or beats C at Q50-Q80, within 2.2% at all quality levels
-- **Progressive**: Rust beats C at Q50-Q70, within 5% at all levels
-- **Baseline**: Larger gap due to trellis quantization differences at high quality
-
-Visual quality (SSIMULACRA2, Butteraugli) is virtually identical at all quality levels.
+**Key findings:**
+- With trellis at Q75, Rust produces **smaller** files than C (-0.15% to -0.24%)
+- Without trellis, the consistent +0.21% gap comes from `fast-yuv` color conversion (±1 level rounding)
+- Without `optimize_scans`, all configs stay within ±0.25% average, worst-case per-image deviation under 1%
+- With `optimize_scans` (Max Compression), within +0.6% average — different scan search heuristics
+- Visual quality (SSIMULACRA2, Butteraugli) is equivalent at all settings
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="benchmark/pareto_ssimulacra2.svg">
@@ -217,7 +220,7 @@ mozjpeg-rs aims for compatibility with C mozjpeg but has some differences:
 
 | Feature | mozjpeg-rs | C mozjpeg |
 |---------|---------------|-----------|
-| **Progressive scan script** | Simple 4-scan (or optimize_scans) | 9-scan with successive approximation |
+| **Progressive scan script** | 9-scan with successive approximation (or optimize_scans) | 9-scan with successive approximation |
 | **optimize_scans** | Per-scan Huffman tables | Per-scan Huffman tables |
 | **Trellis EOB optimization** | Available (opt-in) | Available (rarely used) |
 | **Smoothing filter** | Available | Available |
@@ -237,21 +240,18 @@ C mozjpeg's multipass option makes trellis quantization "scan-aware" for progres
 
 Multipass produces larger files, is slower, and provides no perceptible quality improvement.
 
-### Why the file size gap at high quality?
+### Where does the remaining gap come from?
 
-At quality levels above Q85, there's a small gap (1-3%) due to differences in the progressive scan structure:
+The consistent +0.21% gap in non-trellis modes comes from the `fast-yuv` feature, which uses the `yuv` crate for SIMD color conversion (AVX-512/AVX2/SSE/NEON). It has ±1 level rounding differences vs C mozjpeg's color conversion, producing slightly different DCT coefficients. This is invisible after JPEG quantization. Without `fast-yuv`, Rust matches or beats C at all quality levels.
 
-- **C mozjpeg** uses a 9-scan successive approximation (SA) script that splits coefficient bits into coarse and fine layers
-- **mozjpeg-rs** uses a 4-scan script (DC + full AC for each component) with per-scan optimal Huffman tables
-
-With `optimize_scans=true` (enabled in `max_compression()`), mozjpeg-rs matches or beats C mozjpeg at Q50-Q80.
+With trellis enabled, Rust's trellis optimizer finds slightly better rate-distortion tradeoffs at Q75, producing smaller files than C.
 
 ### Matching C mozjpeg output exactly
 
-For exact byte-identical output to C mozjpeg, you would need to:
-1. Use baseline (non-progressive) mode
-2. Match all encoder settings exactly
-3. Use the same quantization tables (Robidoux/ImageMagick tables)
+For near byte-identical output to C mozjpeg, use baseline mode with matching settings:
+1. Use baseline (non-progressive) mode with Huffman optimization
+2. Match all encoder settings via `TestEncoderConfig`
+3. Use the same quantization tables (Robidoux/ImageMagick, the default for both)
 
 The FFI comparison tests in `tests/ffi_comparison.rs` verify component-level parity.
 

@@ -53,28 +53,51 @@ Rust port of Mozilla's mozjpeg JPEG encoder, following the jpegli-rs methodology
 
 ### Compression Results vs C mozjpeg
 
-**Kodak corpus benchmark (24 images, 4:2:0, trellis + deringing + huffman opt, same 9-scan script):**
+**Kodak corpus (24 images), 4:2:0, fast-yuv enabled. 6 configs × 4 quality levels.**
+Reproduce: `cargo test --release --test parity_benchmark -- --nocapture`
 
-| Quality | Baseline | Progressive |
-|---------|----------|-------------|
-| Q75 | **-0.22%** | **-0.15%** |
-| Q85 | +0.00% | +0.00% |
-| Q90 | +0.10% | +0.08% |
-| Q95 | +0.15% | +0.13% |
+| Config                   |  Q |   Delta | Max Dev |
+|--------------------------|----|---------|---------|
+| Baseline                 | 75 |  +0.21% |   0.35% |
+| Baseline                 | 85 |  +0.22% |   0.42% |
+| Baseline                 | 90 |  +0.22% |   0.40% |
+| Baseline                 | 95 |  +0.21% |   0.45% |
+| Baseline + Trellis       | 75 |  -0.24% |   0.97% |
+| Baseline + Trellis       | 85 |  -0.01% |   0.54% |
+| Baseline + Trellis       | 90 |  +0.10% |   0.56% |
+| Baseline + Trellis       | 95 |  +0.17% |   0.57% |
+| Full Baseline            | 75 |  -0.21% |   0.94% |
+| Full Baseline            | 85 |  +0.00% |   0.53% |
+| Full Baseline            | 90 |  +0.10% |   0.55% |
+| Full Baseline            | 95 |  +0.15% |   0.37% |
+| Progressive              | 75 |  +0.21% |   0.30% |
+| Progressive              | 85 |  +0.22% |   0.38% |
+| Progressive              | 90 |  +0.20% |   0.37% |
+| Progressive              | 95 |  +0.21% |   0.41% |
+| Progressive + Trellis    | 75 |  -0.17% |   0.64% |
+| Progressive + Trellis    | 85 |  +0.01% |   0.33% |
+| Progressive + Trellis    | 90 |  +0.07% |   0.35% |
+| Progressive + Trellis    | 95 |  +0.13% |   0.41% |
+| Full Progressive         | 75 |  -0.15% |   0.65% |
+| Full Progressive         | 85 |  +0.00% |   0.35% |
+| Full Progressive         | 90 |  +0.08% |   0.34% |
+| Full Progressive         | 95 |  +0.13% |   0.40% |
+| Max Compression          | 75 |  +0.59% |   2.12% |
+| Max Compression          | 85 |  +0.41% |   1.25% |
+| Max Compression          | 90 |  +0.28% |   0.59% |
+| Max Compression          | 95 |  +0.40% |   0.81% |
+
+**Configs:** Baseline = huffman opt only. +Trellis = AC trellis. Full = AC trellis + DC trellis + deringing. Max Compression = Full + `optimize_scans: true`. All others use `optimize_scans: false`. All use `force_baseline: true`.
 
 **Key findings:**
-- Rust **matches or beats** C at all quality levels when using the same scan script
-- With trellis, Rust consistently finds slightly better R-D tradeoffs at Q75
-- The small gap at Q90-Q95 (+0.1%) is from `fast-yuv` color conversion ±1 rounding
-- Without `fast-yuv`, Rust **beats C** at all quality levels (up to -0.5%)
-- Visual quality is equivalent (verified via SSIMULACRA2 and Butteraugli)
-
-**Previous results (before Feb 2025) showed inflated gaps (up to +5.36%) due to a
-measurement bug: C's `optimize_scans` was not explicitly disabled, so C used an
-optimized 12-scan script while Rust used the fixed 9-scan JCP_MAX_COMPRESSION script.**
+- With trellis at Q75, Rust produces **smaller** files than C (-0.15% to -0.24%)
+- Without trellis, consistent +0.21% gap from `fast-yuv` color conversion ±1 rounding
+- Without `optimize_scans`, all configs within ±0.25% average, worst-case per-image deviation under 1%
+- With `optimize_scans` (Max Compression), within +0.6% average — different scan search heuristics
+- Visual quality equivalent (SSIMULACRA2 and Butteraugli verified)
 
 **Mode explanations:**
-- **Baseline** (`progressive(false)`): Sequential DCT with trellis quantization
+- **Baseline** (`progressive(false)`): Sequential DCT
 - **Progressive** (`progressive(true), optimize_scans(false)`): 9-scan JCP_MAX_COMPRESSION script with successive approximation
 - **Max Compression** (`Encoder::max_compression()`): Progressive + `optimize_scans=true` with per-scan Huffman tables
 
