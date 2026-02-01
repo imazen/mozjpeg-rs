@@ -82,10 +82,12 @@ Reproduce: `cargo test --release --test parity_benchmark -- --nocapture`
 | Full Progressive         | 85 |  +0.00% |   0.35% |
 | Full Progressive         | 90 |  +0.08% |   0.34% |
 | Full Progressive         | 95 |  +0.13% |   0.40% |
-| Max Compression          | 75 |  +0.59% |   2.12% |
-| Max Compression          | 85 |  +0.41% |   1.25% |
-| Max Compression          | 90 |  +0.28% |   0.59% |
-| Max Compression          | 95 |  +0.40% |   0.81% |
+| Max Compression          | 55 |  -0.04% |   1.64% |
+| Max Compression          | 65 |  +0.14% |   0.97% |
+| Max Compression          | 75 |  +0.29% |   1.08% |
+| Max Compression          | 85 |  +0.36% |   0.87% |
+| Max Compression          | 90 |  +0.39% |   0.84% |
+| Max Compression          | 95 |  +0.28% |   0.64% |
 
 **Configs:** Baseline = huffman opt only. +Trellis = AC trellis. Full = AC trellis + DC trellis + deringing. Max Compression = Full + `optimize_scans: true`. All others use `optimize_scans: false`. All use `force_baseline: true`.
 
@@ -93,7 +95,8 @@ Reproduce: `cargo test --release --test parity_benchmark -- --nocapture`
 - With trellis at Q75, Rust produces **smaller** files than C (-0.15% to -0.24%)
 - Without trellis, consistent +0.21% gap from `fast-yuv` color conversion ±1 rounding
 - Without `optimize_scans`, all configs within ±0.25% average, worst-case per-image deviation under 1%
-- With `optimize_scans` (Max Compression), within +0.6% average — different scan search heuristics
+- With `optimize_scans` (Max Compression), within ±0.4% average, per-image max ~1.6%
+- Rust scan optimizer sometimes finds different local optima than C (different Al/freq split choices)
 - Visual quality equivalent (SSIMULACRA2 and Butteraugli verified)
 
 **Mode explanations:**
@@ -248,24 +251,26 @@ cascade through DC differential encoding. Both produce visually identical images
 
 ### Known Issues / Active Investigations
 
-#### File Size Gap with optimize_scans - FIXED ✅ (Dec 2025)
+#### File Size Gap with optimize_scans - FIXED ✅ (Feb 2026)
 
-**Original symptom:** Rust produced ~2-4% larger files with `optimize_scans` enabled
-because refinement scans were trial-encoded independently, producing garbage sizes.
+**Original symptom:** Rust produced ~1-4% larger files with `optimize_scans` at low
+quality levels (Q10-Q50), with kodim23 showing +3.37% at Q40.
 
-**Fix:** `ScanTrialEncoder` (`src/scan_trial.rs`) now encodes all 64 candidate scans
-sequentially with proper state tracking between scans. Each scan also builds its own
-optimal Huffman table via two-pass encoding (count + encode), matching C mozjpeg's
-per-scan Huffman behavior.
+**Root cause:** `encode_rust()` in `test_encoder.rs` was not passing `optimize_scans`
+to the `Encoder` builder chain. The Rust scan optimizer was never called — the encoder
+always used the fixed 9-scan script regardless of the `optimize_scans` flag. The C
+encoder correctly used its scan search to find simpler scripts (4-5 scans, no SA) at
+low quality.
 
-**Result:** Max Compression mode matches C mozjpeg within ±0.15% at all quality levels.
-At Q75, Rust produces smaller files than C.
+**Fix:** Added `.optimize_scans(config.optimize_scans)` to `encode_rust()` builder chain
+in `src/test_encoder.rs`.
 
-**Note (Feb 2025):** Previous results showed ±2.2% because the C test harness didn't
-explicitly disable `optimize_scans`. C mozjpeg's `JCP_MAX_COMPRESSION` default enables
-`optimize_scans=TRUE`, causing `jpeg_simple_progression()` to call
-`jpeg_search_progression()` and generate an optimized ~12-scan script, while Rust used
-the fixed 9-scan script. All C encoder wrappers now explicitly control `optimize_scans`.
+**Result:** Max Compression within ±0.4% average at all quality levels. At low quality
+(Q10-Q50) Rust is now **smaller** than C. Per-image max deviation ~1.6% (from different
+local optima in scan search, not a bug).
+
+**Previous fixes (Dec 2025):** ScanTrialEncoder sequential encoding + per-scan Huffman.
+**Previous note (Feb 2025):** C test harness optimize_scans control.
 
 #### AC Refinement Decoder Errors - FIXED ✅ (Dec 2024)
 

@@ -135,6 +135,7 @@ pub fn encode_rust(rgb: &[u8], width: u32, height: u32, config: &TestEncoderConf
         .subsampling(config.subsampling)
         .progressive(config.progressive)
         .optimize_huffman(config.optimize_huffman)
+        .optimize_scans(config.optimize_scans)
         .trellis(trellis)
         .overshoot_deringing(config.overshoot_deringing)
         .force_baseline(config.force_baseline)
