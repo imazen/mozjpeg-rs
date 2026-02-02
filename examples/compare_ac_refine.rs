@@ -120,7 +120,7 @@ fn analyze_scans(jpeg: &[u8]) -> Vec<(u8, u8, u8, u8, u8)> {
 }
 
 fn main() {
-    let path = Path::new("corpus/kodak/1.png");
+    let path = Path::new("corpus/CID22/CID22-512/training/1.png");
     let (rgb, w, h) = match load_png(path) {
         Some(d) => d,
         None => {

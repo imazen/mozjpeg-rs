@@ -365,12 +365,12 @@ fn test_all_encoder_permutations_work() {
 #[cfg(feature = "ffi-test")]
 mod corpus_tests {
     use super::*;
-    use mozjpeg_rs::corpus::kodak_dir;
+    use mozjpeg_rs::corpus::cid22_dir;
 
     /// Test 4:4:4 subsampling produces reasonable output compared to C mozjpeg.
     #[test]
     fn test_444_subsampling_vs_c() {
-        let corpus_dir = match kodak_dir() {
+        let corpus_dir = match cid22_dir() {
             Some(dir) => dir,
             None => {
                 eprintln!("Skipping test_444_subsampling_vs_c: no corpus");

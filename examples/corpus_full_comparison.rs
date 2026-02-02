@@ -1,11 +1,11 @@
-//! Full Kodak corpus comparison with explicit trellis settings
+//! Full CID22 corpus comparison with explicit trellis settings
 
 use mozjpeg_rs::{Encoder, TrellisConfig};
 use std::fs;
 use std::path::Path;
 
 fn main() {
-    let corpus_dir = "/home/lilith/work/mozjpeg-rs/corpus/kodak";
+    let corpus_dir = "/home/lilith/work/mozjpeg-rs/corpus/CID22/CID22-512/training";
 
     let mut files: Vec<_> = fs::read_dir(corpus_dir)
         .unwrap()
@@ -16,7 +16,7 @@ fn main() {
     files.sort();
 
     println!(
-        "=== Kodak Corpus Full Comparison ({} images) ===",
+        "=== CID22 Corpus Full Comparison ({} images) ===",
         files.len()
     );
     println!();

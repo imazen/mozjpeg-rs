@@ -1,6 +1,6 @@
 //! Corpus validation tests.
 //!
-//! Tests against the Kodak corpus to ensure consistent quality vs C mozjpeg.
+//! Tests against the CID22 corpus to ensure consistent quality vs C mozjpeg.
 //! Run `./scripts/fetch-corpus.sh` first to download test images.
 
 use mozjpeg_rs::corpus::all_corpus_dirs;
@@ -149,13 +149,13 @@ fn psnr(original: &[u8], jpeg: &[u8]) -> f64 {
     }
 }
 
-/// Test Rust vs C mozjpeg on Kodak corpus.
+/// Test Rust vs C mozjpeg on CID22 corpus.
 ///
 /// Requirements:
 /// - File size ratio within 5% of C
 /// - PSNR within 0.5 dB of C
 #[test]
-fn test_kodak_corpus_quality() {
+fn test_corpus_quality() {
     if !has_corpus() {
         println!("Skipping corpus test - run ./scripts/fetch-corpus.sh first");
         return;
@@ -218,7 +218,7 @@ fn test_kodak_corpus_quality() {
         let avg_size_ratio: f64 = size_ratios.iter().sum::<f64>() / size_ratios.len() as f64;
         let avg_psnr_diff: f64 = psnr_diffs.iter().sum::<f64>() / psnr_diffs.len() as f64;
 
-        println!("\nKodak corpus results:");
+        println!("\nCorpus results:");
         println!("  Passed: {}, Failed: {}", passed, failed);
         println!("  Average size ratio: {:.3}x", avg_size_ratio);
         println!("  Average PSNR diff: {:.2} dB", avg_psnr_diff);

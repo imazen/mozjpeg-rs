@@ -1,7 +1,7 @@
-//! Corpus comparison test - Rust vs C mozjpeg on Kodak images.
+//! Corpus comparison test - Rust vs C mozjpeg on CID22 images.
 //!
 //! This test compares file sizes between Rust and C mozjpeg encoders
-//! across the full Kodak corpus at multiple quality levels.
+//! across the CID22 corpus at multiple quality levels.
 
 use mozjpeg_rs::{Encoder, Subsampling, TrellisConfig};
 use std::fs::File;
@@ -155,7 +155,7 @@ fn print_scan_details(jpeg_data: &[u8], label: &str) {
 
 #[test]
 fn test_corpus_comparison_optimize_scans() {
-    let corpus_path = Path::new("corpus/kodak");
+    let corpus_path = Path::new("corpus/CID22/CID22-512/training");
     if !corpus_path.exists() {
         eprintln!("Skipping: corpus not available. Run ./scripts/fetch-corpus.sh");
         return;
@@ -226,7 +226,7 @@ fn test_corpus_comparison_optimize_scans() {
 
 #[test]
 fn test_corpus_comparison_no_optimize_scans() {
-    let corpus_path = Path::new("corpus/kodak");
+    let corpus_path = Path::new("corpus/CID22/CID22-512/training");
     if !corpus_path.exists() {
         eprintln!("Skipping: corpus not available. Run ./scripts/fetch-corpus.sh");
         return;

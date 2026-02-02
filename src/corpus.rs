@@ -47,15 +47,25 @@ pub fn corpus_dir() -> Option<PathBuf> {
     None
 }
 
-/// Returns the path to the Kodak test images.
-pub fn kodak_dir() -> Option<PathBuf> {
+/// Returns the path to the CID22 training images.
+pub fn cid22_dir() -> Option<PathBuf> {
     let corpus = corpus_dir()?;
-    let kodak = corpus.join("kodak");
-    if kodak.is_dir() {
-        Some(kodak)
-    } else {
-        None
+    let cid22 = corpus.join("CID22").join("CID22-512").join("training");
+    if cid22.is_dir() {
+        return Some(cid22);
     }
+    // Fallback: check for flat CID22 directory
+    let cid22 = corpus.join("CID22");
+    if cid22.is_dir() {
+        return Some(cid22);
+    }
+    None
+}
+
+/// Legacy alias for `cid22_dir()`.
+#[deprecated(note = "Use cid22_dir() instead")]
+pub fn kodak_dir() -> Option<PathBuf> {
+    cid22_dir()
 }
 
 /// Returns the path to the CLIC validation images.
@@ -81,8 +91,8 @@ pub fn clic_validation_dir() -> Option<PathBuf> {
 pub fn all_corpus_dirs() -> Vec<PathBuf> {
     let mut dirs = Vec::new();
 
-    if let Some(kodak) = kodak_dir() {
-        dirs.push(kodak);
+    if let Some(cid22) = cid22_dir() {
+        dirs.push(cid22);
     }
 
     if let Some(clic) = clic_validation_dir() {
@@ -219,16 +229,16 @@ mod tests {
     }
 
     #[test]
-    fn test_kodak_dir_returns_valid_or_none() {
-        let result = kodak_dir();
+    fn test_cid22_dir_returns_valid_or_none() {
+        let result = cid22_dir();
         if let Some(dir) = result {
             assert!(
                 dir.is_dir(),
-                "If kodak_dir returns Some, it should be a directory"
+                "If cid22_dir returns Some, it should be a directory"
             );
             // Should have PNG files if it exists
             let files = png_files_in_dir(&dir);
-            assert!(!files.is_empty(), "Kodak dir should have PNG files");
+            assert!(!files.is_empty(), "CID22 dir should have PNG files");
         }
     }
 

@@ -277,9 +277,9 @@ where
 }
 
 fn main() {
-    let corpus_path = Path::new("corpus/kodak");
+    let corpus_path = Path::new("corpus/CID22/CID22-512/training");
     if !corpus_path.exists() {
-        eprintln!("Corpus not found at corpus/kodak");
+        eprintln!("Corpus not found at corpus/CID22/CID22-512/training");
         eprintln!("Run: ./scripts/fetch-corpus.sh");
         return;
     }
@@ -299,7 +299,7 @@ fn main() {
         }
     }
 
-    println!("Loaded {} images from Kodak corpus\n", images.len());
+    println!("Loaded {} images from CID22 corpus\n", images.len());
 
     let qualities = [50, 60, 70, 75, 80, 85, 90, 95, 97, 99, 100];
 
@@ -352,7 +352,7 @@ fn main() {
     // Summary table for README
     println!("\n=== SUMMARY (for README) ===\n");
     println!(
-        "### Compression Parity with C mozjpeg (Kodak corpus, {} images)\n",
+        "### Compression Parity with C mozjpeg (CID22 corpus, {} images)\n",
         images.len()
     );
     println!("| Quality | Baseline | Progressive | Max Compression |");

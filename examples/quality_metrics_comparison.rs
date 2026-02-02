@@ -7,7 +7,7 @@ use std::fs;
 use std::path::Path;
 
 fn main() {
-    let corpus_dir = "/home/lilith/work/mozjpeg-rs/corpus/kodak";
+    let corpus_dir = "/home/lilith/work/mozjpeg-rs/corpus/CID22/CID22-512/training";
 
     let mut files: Vec<_> = fs::read_dir(corpus_dir)
         .unwrap()
@@ -21,7 +21,7 @@ fn main() {
     let files = &files[..6.min(files.len())];
 
     println!("=== Quality Metrics Comparison (Rust vs C mozjpeg) ===");
-    println!("Source: {} Kodak images", files.len());
+    println!("Source: {} CID22 images", files.len());
     println!();
     println!("DSSIM: lower is better (0 = identical)");
     println!();

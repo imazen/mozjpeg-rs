@@ -20,7 +20,7 @@ fn load_png(path: &Path) -> Option<(Vec<u8>, u32, u32)> {
 }
 
 fn main() {
-    let corpus_path = Path::new("corpus/kodak");
+    let corpus_path = Path::new("corpus/CID22/CID22-512/training");
     if !corpus_path.exists() {
         eprintln!("Corpus not found");
         return;
@@ -28,7 +28,7 @@ fn main() {
 
     let qualities = [50, 75, 85, 90, 95, 97];
 
-    println!("KODAK CORPUS - Comparing optimize_scans=false vs =true\n");
+    println!("CID22 CORPUS - Comparing optimize_scans=false vs =true\n");
 
     for &quality in &qualities {
         let mut total_simple = 0usize;

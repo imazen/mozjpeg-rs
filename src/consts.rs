@@ -90,7 +90,7 @@ pub enum QuantTableIdx {
     JpegAnnexK = 0,
     /// Flat (uniform quantization)
     Flat = 1,
-    /// MSSIM-tuned on Kodak image set
+    /// MSSIM-tuned quantization tables
     MssimTuned = 2,
     /// Robidoux tables (Nicolas Robidoux, used by ImageMagick and mozjpeg default)
     /// Psychovisually optimized for high-frequency detail preservation.
@@ -146,7 +146,7 @@ pub const STD_LUMINANCE_QUANT_TBL: [[u16; DCTSIZE2]; NUM_QUANT_TABLE_VARIANTS] =
         16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16,
         16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16,
     ],
-    // 2: MSSIM-tuned on Kodak
+    // 2: MSSIM-tuned
     [
         12, 17, 20, 21, 30, 34, 56, 63, 18, 20, 20, 26, 28, 51, 61, 55, 19, 20, 21, 26, 33, 58, 69,
         55, 26, 26, 26, 30, 46, 87, 86, 66, 31, 33, 36, 40, 46, 96, 100, 73, 40, 35, 46, 62, 81,
@@ -208,7 +208,7 @@ pub const STD_CHROMINANCE_QUANT_TBL: [[u16; DCTSIZE2]; NUM_QUANT_TABLE_VARIANTS]
         16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16,
         16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16,
     ],
-    // 2: MSSIM-tuned on Kodak
+    // 2: MSSIM-tuned
     [
         8, 12, 15, 15, 86, 96, 96, 98, 13, 13, 15, 26, 90, 96, 99, 98, 12, 15, 18, 96, 99, 99, 99,
         99, 17, 16, 90, 96, 99, 99, 99, 99, 96, 96, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99,

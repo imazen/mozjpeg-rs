@@ -43,10 +43,8 @@ struct ComparisonResult {
 fn load_test_image() -> Option<(Vec<u8>, u32, u32)> {
     // Try various test image locations
     let paths = [
-        "corpus/kodak/10.png", // First available Kodak image
         "tests/images/1.png",  // Available test image
         "tests/images/kodim23.png",
-        "corpus/kodak/kodim23.png",
     ];
 
     for path in paths {

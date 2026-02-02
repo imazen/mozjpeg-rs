@@ -42,7 +42,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **EOB cross-block optimization** - Opt-in via `TrellisConfig::eob_optimization(true)`
 
 ### Fixed
-- **AC refinement ZRL encoding** - Fixed decoder errors on 8/24 Kodak images with successive approximation
+- **AC refinement ZRL encoding** - Fixed decoder errors on 8/24 test corpus images with successive approximation
 - Progressive encoding now works correctly for all image sizes including non-MCU-aligned dimensions
 
 ### Changed

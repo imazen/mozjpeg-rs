@@ -3,8 +3,8 @@ use std::time::Instant;
 
 fn main() {
     // Load test image
-    let source_path = "corpus/kodak/10.png";
-    let file = std::fs::File::open(source_path).expect("Need corpus/kodak/10.png");
+    let source_path = "corpus/CID22/CID22-512/training/10.png";
+    let file = std::fs::File::open(source_path).expect("Need corpus/CID22/CID22-512/training/10.png");
     let decoder = png::Decoder::new(file);
     let mut reader = decoder.read_info().unwrap();
     let mut buf = vec![0; reader.output_buffer_size()];

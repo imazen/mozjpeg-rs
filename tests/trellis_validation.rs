@@ -4,13 +4,13 @@
 //! Uses bundled test image if corpus not available.
 
 use dssim::Dssim;
-use mozjpeg_rs::corpus::{bundled_test_image, kodak_dir};
+use mozjpeg_rs::corpus::{bundled_test_image, cid22_dir};
 use std::fs::File;
 use std::path::{Path, PathBuf};
 
 /// Get a test image path, preferring corpus but falling back to bundled.
 fn get_test_image() -> PathBuf {
-    kodak_dir()
+    cid22_dir()
         .map(|d| d.join("kodim01.png"))
         .filter(|p| p.exists())
         .or_else(|| bundled_test_image("1.png"))

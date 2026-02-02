@@ -1,6 +1,6 @@
 //! Comprehensive parity benchmark: Rust vs C mozjpeg file sizes.
 //!
-//! Encodes the full Kodak corpus (24 images) across 6 encoder configurations
+//! Encodes the test corpus across 6 encoder configurations
 //! and 4 quality levels (24 rows), producing a reproducible markdown table.
 //!
 //! Uses raw mozjpeg-sys FFI (not the `mozjpeg` crate) because we need
@@ -259,21 +259,21 @@ const QUALITIES: &[u8] = &[55, 65, 75, 85, 90, 95];
 
 #[test]
 fn parity_benchmark() {
-    // Locate Kodak corpus
-    let kodak = match corpus::kodak_dir() {
+    // Locate test corpus
+    let corpus = match corpus::cid22_dir() {
         Some(d) => d,
         None => {
-            eprintln!("Skipping parity_benchmark: Kodak corpus not found.");
+            eprintln!("Skipping parity_benchmark: CID22 corpus not found.");
             eprintln!("Run ./scripts/fetch-corpus.sh to download it.");
             return;
         }
     };
 
-    let png_paths = corpus::png_files_in_dir(&kodak);
+    let png_paths = corpus::png_files_in_dir(&corpus);
     if png_paths.is_empty() {
         eprintln!(
             "Skipping parity_benchmark: no PNG files in {}",
-            kodak.display()
+            corpus.display()
         );
         return;
     }
@@ -305,7 +305,7 @@ fn parity_benchmark() {
     println!("## File Size Parity: mozjpeg-rs vs C mozjpeg");
     println!();
     println!(
-        "Kodak corpus ({} images), 4:2:0, fast-yuv {}.",
+        "CID22 corpus ({} images), 4:2:0, fast-yuv {}.",
         n_images, fast_yuv_status
     );
     println!();

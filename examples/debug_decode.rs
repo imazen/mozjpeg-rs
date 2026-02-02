@@ -29,8 +29,8 @@ fn try_decode(jpeg: &[u8]) -> Result<(), String> {
 }
 
 fn main() {
-    // Test all Kodak images
-    let mut entries: Vec<_> = std::fs::read_dir("corpus/kodak")
+    // Test all CID22 images
+    let mut entries: Vec<_> = std::fs::read_dir("corpus/CID22/CID22-512/training")
         .unwrap()
         .filter_map(|e| e.ok())
         .filter(|e| e.path().extension().is_some_and(|ext| ext == "png"))
@@ -78,7 +78,7 @@ fn main() {
 
     // Test with different quality levels on a failing image
     if let Some((name, _, _)) = failed.first() {
-        let path = Path::new("corpus/kodak").join(name);
+        let path = Path::new("corpus/CID22/CID22-512/training").join(name);
         let (rgb, w, h) = load_png(&path).unwrap();
 
         println!("\nTesting {} at different quality levels:", name);

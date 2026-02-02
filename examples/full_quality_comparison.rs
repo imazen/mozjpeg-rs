@@ -404,9 +404,9 @@ fn print_results(results: &[Result], mode_name: &str) {
 }
 
 fn main() {
-    let corpus_path = Path::new("corpus/kodak");
+    let corpus_path = Path::new("corpus/CID22/CID22-512/training");
     if !corpus_path.exists() {
-        eprintln!("Corpus not found at corpus/kodak");
+        eprintln!("Corpus not found at corpus/CID22/CID22-512/training");
         eprintln!("Run: ./scripts/fetch-corpus.sh");
         return;
     }

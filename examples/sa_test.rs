@@ -43,9 +43,9 @@ fn main() {
         );
     }
 
-    let (rgb, width, height) = load_png(Path::new("corpus/kodak/10.png")).unwrap();
+    let (rgb, width, height) = load_png(Path::new("corpus/CID22/CID22-512/training/10.png")).unwrap();
 
-    println!("\n=== Encoding comparison (kodak/10.png) ===");
+    println!("\n=== Encoding comparison (CID22/10.png) ===");
 
     for quality in [50, 75, 85, 90, 95, 97] {
         // Simple progressive

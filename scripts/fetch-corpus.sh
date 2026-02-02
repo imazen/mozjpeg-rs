@@ -2,8 +2,8 @@
 # Fetch codec-corpus test images for testing
 #
 # Usage: ./scripts/fetch-corpus.sh [--minimal|--full]
-#   --minimal: Just Kodak images (24 images, ~15MB)
-#   --full: Kodak + sample CLIC images (~100MB)
+#   --minimal: Just CID22 training images (~15MB)
+#   --full: CID22 + sample CLIC images (~100MB)
 #
 # Images are downloaded to ./corpus/
 
@@ -49,34 +49,35 @@ check_requirements() {
 }
 
 fetch_minimal() {
-    info "Fetching minimal corpus (Kodak images)..."
+    info "Fetching minimal corpus (CID22 training images)..."
 
-    if [ -d "$CORPUS_DIR/kodak" ] && [ "$(ls -A "$CORPUS_DIR/kodak" 2>/dev/null)" ]; then
-        info "Kodak corpus already exists, skipping..."
+    if [ -d "$CORPUS_DIR/CID22/CID22-512/training" ] && [ "$(ls -A "$CORPUS_DIR/CID22/CID22-512/training" 2>/dev/null)" ]; then
+        info "CID22 corpus already exists, skipping..."
         return 0
     fi
 
     mkdir -p "$CORPUS_DIR"
 
-    # Use sparse checkout to get only kodak directory
+    # Use sparse checkout to get only CID22/CID22-512/training directory
     local temp_dir=$(mktemp -d)
     trap "rm -rf $temp_dir" EXIT
 
-    info "Cloning codec-corpus (sparse checkout for kodak)..."
+    info "Cloning codec-corpus (sparse checkout for CID22/CID22-512/training)..."
     cd "$temp_dir"
     git init -q
     git remote add origin "$CODEC_CORPUS_REPO"
     git config core.sparseCheckout true
-    echo "kodak/*" > .git/info/sparse-checkout
+    echo "CID22/CID22-512/training/*" > .git/info/sparse-checkout
     git fetch --depth=1 origin "$CODEC_CORPUS_BRANCH" -q
     git checkout -q FETCH_HEAD
 
     # Copy to corpus directory
-    if [ -d "kodak" ]; then
-        cp -r kodak "$CORPUS_DIR/"
-        info "Kodak corpus downloaded to $CORPUS_DIR/kodak"
+    if [ -d "CID22" ]; then
+        mkdir -p "$CORPUS_DIR/CID22/CID22-512"
+        cp -r CID22/CID22-512/training "$CORPUS_DIR/CID22/CID22-512/"
+        info "CID22 corpus downloaded to $CORPUS_DIR/CID22/CID22-512/training"
     else
-        error "Failed to fetch kodak directory"
+        error "Failed to fetch CID22/CID22-512/training directory"
         exit 1
     fi
 
@@ -122,8 +123,8 @@ print_usage() {
     echo "Usage: $0 [--minimal|--full]"
     echo ""
     echo "Options:"
-    echo "  --minimal  Download only Kodak images (24 images, ~15MB)"
-    echo "  --full     Download Kodak + CLIC validation images (~100MB)"
+    echo "  --minimal  Download only CID22 training images (~15MB)"
+    echo "  --full     Download CID22 + CLIC validation images (~100MB)"
     echo ""
     echo "Default: --minimal"
     echo ""
@@ -155,8 +156,8 @@ info "Corpus fetch complete!"
 echo ""
 echo "Corpus location: $CORPUS_DIR"
 echo ""
-if [ -d "$CORPUS_DIR/kodak" ]; then
-    echo "  kodak/: $(ls "$CORPUS_DIR/kodak" | wc -l | tr -d ' ') images"
+if [ -d "$CORPUS_DIR/CID22/CID22-512/training" ]; then
+    echo "  CID22/CID22-512/training/: $(ls "$CORPUS_DIR/CID22/CID22-512/training" | wc -l | tr -d ' ') images"
 fi
 if [ -d "$CORPUS_DIR/clic2025/validation" ]; then
     echo "  clic2025/validation/: $(ls "$CORPUS_DIR/clic2025/validation" | wc -l | tr -d ' ') images"

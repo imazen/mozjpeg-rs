@@ -2,7 +2,7 @@ use mozjpeg_rs::{Encoder, TrellisConfig};
 use std::fs;
 
 fn main() {
-    let source_path = "/home/lilith/work/mozjpeg-rs/corpus/kodak/10.png";
+    let source_path = "/home/lilith/work/mozjpeg-rs/corpus/CID22/CID22-512/training/10.png";
     let decoder = png::Decoder::new(fs::File::open(source_path).unwrap());
     let mut reader = decoder.read_info().unwrap();
     let mut buf = vec![0; reader.output_buffer_size()];

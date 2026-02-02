@@ -9,7 +9,7 @@
 //!   --corpus PATH    Path to corpus directory (default: ./corpus)
 //!   --output PATH    Output CSV file (default: benchmark_results.csv)
 //!   --qualities      Comma-separated quality levels (default: fine-grained 5-95)
-//!   --kodak-only     Only use Kodak corpus
+//!   --cid22-only     Only use CID22 corpus
 //!   --clic-only      Only use CLIC corpus
 //!   --xyb-roundtrip  Enable XYB roundtrip for fair comparison (isolates compression error)
 
@@ -49,7 +49,7 @@ fn main() {
     let mut qualities: Vec<u8> = vec![
         5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60, 65, 70, 75, 80, 85, 90, 92, 95, 97,
     ];
-    let mut kodak_only = false;
+    let mut cid22_only = false;
     let mut clic_only = false;
     let mut xyb_roundtrip = false;
 
@@ -71,7 +71,7 @@ fn main() {
                     .filter_map(|s| s.trim().parse().ok())
                     .collect();
             }
-            "--kodak-only" => kodak_only = true,
+            "--cid22-only" => cid22_only = true,
             "--clic-only" => clic_only = true,
             "--xyb-roundtrip" => xyb_roundtrip = true,
             "--help" | "-h" => {
@@ -95,24 +95,24 @@ fn main() {
     let mut images: Vec<(String, PathBuf)> = Vec::new();
 
     if !clic_only {
-        let kodak_dir = corpus_path.join("kodak");
-        if kodak_dir.is_dir() {
-            for entry in fs::read_dir(&kodak_dir).unwrap() {
+        let cid22_dir = corpus_path.join("CID22").join("CID22-512").join("training");
+        if cid22_dir.is_dir() {
+            for entry in fs::read_dir(&cid22_dir).unwrap() {
                 let path = entry.unwrap().path();
                 if path.extension().map(|e| e == "png").unwrap_or(false) {
-                    images.push(("kodak".to_string(), path));
+                    images.push(("cid22".to_string(), path));
                 }
             }
             println!(
-                "Kodak corpus: {} images",
-                images.iter().filter(|(c, _)| c == "kodak").count()
+                "CID22 corpus: {} images",
+                images.iter().filter(|(c, _)| c == "cid22").count()
             );
         } else {
-            eprintln!("Warning: Kodak corpus not found at {:?}", kodak_dir);
+            eprintln!("Warning: CID22 corpus not found at {:?}", cid22_dir);
         }
     }
 
-    if !kodak_only {
+    if !cid22_only {
         let clic_dir = corpus_path.join("clic2025").join("validation");
         if clic_dir.is_dir() {
             let clic_count_before = images.len();
@@ -277,7 +277,7 @@ fn print_usage() {
     println!("  --corpus PATH    Path to corpus directory (default: ./corpus)");
     println!("  --output PATH    Output CSV file (default: benchmark_results.csv)");
     println!("  --qualities Q    Comma-separated quality levels");
-    println!("  --kodak-only     Only use Kodak corpus");
+    println!("  --cid22-only     Only use CID22 corpus");
     println!("  --clic-only      Only use CLIC corpus");
     println!("  --xyb-roundtrip  Enable XYB roundtrip (isolates compression error)");
     println!("  --help, -h       Show this help");

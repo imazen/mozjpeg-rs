@@ -65,9 +65,9 @@ skip_test() {
 
 # Check for corpus
 has_corpus() {
-    [[ -d "$PROJECT_ROOT/corpus/kodak" ]] || \
-    [[ -n "$CODEC_CORPUS_DIR" && -d "$CODEC_CORPUS_DIR/kodak" ]] || \
-    [[ -n "$MOZJPEG_CORPUS_DIR" && -d "$MOZJPEG_CORPUS_DIR/kodak" ]]
+    [[ -d "$PROJECT_ROOT/corpus/CID22/CID22-512/training" ]] || \
+    [[ -n "$CODEC_CORPUS_DIR" && -d "$CODEC_CORPUS_DIR/CID22/CID22-512/training" ]] || \
+    [[ -n "$MOZJPEG_CORPUS_DIR" && -d "$MOZJPEG_CORPUS_DIR/CID22/CID22-512/training" ]]
 }
 
 # Parse args

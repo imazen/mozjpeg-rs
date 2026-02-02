@@ -208,16 +208,16 @@ fn main() {
         println!();
     }
 
-    // Now test with real Kodak images
-    println!("\n### Real Kodak images (progressive mode, Q85)\n");
+    // Now test with real CID22 images
+    println!("\n### Real CID22 images (progressive mode, Q85)\n");
 
     let corpus_dir = std::env::var("CODEC_CORPUS_DIR")
         .or_else(|_| std::env::var("MOZJPEG_CORPUS_DIR"))
         .unwrap_or_else(|_| "./corpus".to_string());
 
-    let kodak_dir = format!("{}/kodak", corpus_dir);
+    let cid22_dir = format!("{}/CID22/CID22-512/training", corpus_dir);
 
-    if std::path::Path::new(&kodak_dir).exists() {
+    if std::path::Path::new(&cid22_dir).exists() {
         println!("| Image | Trellis | Trellis+MP | Size Diff | Quality (no MP) | Quality (MP) | Q Diff |");
         println!("|-------|---------|------------|-----------|-----------------|--------------|--------|");
 
@@ -227,7 +227,7 @@ fn main() {
         let mut total_q_mp = 0.0f64;
         let mut count = 0;
 
-        for entry in std::fs::read_dir(&kodak_dir).unwrap() {
+        for entry in std::fs::read_dir(&cid22_dir).unwrap() {
             let entry = entry.unwrap();
             let path = entry.path();
             if path.extension().is_some_and(|e| e == "png") {
@@ -276,8 +276,8 @@ fn main() {
         }
     } else {
         println!(
-            "Kodak corpus not found at {}. Run ./scripts/fetch-corpus.sh first.",
-            kodak_dir
+            "CID22 corpus not found at {}. Run ./scripts/fetch-corpus.sh first.",
+            cid22_dir
         );
     }
 

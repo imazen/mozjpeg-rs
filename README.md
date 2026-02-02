@@ -41,7 +41,7 @@ For decoding, use one of these excellent crates:
 
 ## Compression Results vs C mozjpeg
 
-Tested on full [Kodak](http://r0k.us/graphics/kodak/) corpus (24 images), 4:2:0 subsampling, `fast-yuv` enabled. Six encoder configurations across four quality levels. Positive delta = Rust files are larger; negative = Rust files are smaller.
+Tested on CID22 corpus (209 images, 512x512), 4:2:0 subsampling, `fast-yuv` enabled. Six encoder configurations across four quality levels. Positive delta = Rust files are larger; negative = Rust files are smaller.
 
 Reproduce with: `cargo test --release --test parity_benchmark -- --nocapture`
 
@@ -165,7 +165,7 @@ All combinations of settings are supported and tested:
 | `Robidoux` | **Default.** Nicolas Robidoux's psychovisual tables (used by ImageMagick) |
 | `JpegAnnexK` | Standard JPEG tables (libjpeg default) |
 | `Flat` | Uniform quantization |
-| `MssimTuned` | MSSIM-optimized on Kodak corpus |
+| `MssimTuned` | MSSIM-optimized quantization tables |
 | `PsnrHvsM` | PSNR-HVS-M tuned |
 | `Klein` | Klein, Silverstein, Carney (1992) |
 | `Watson` | DCTune (Watson, Taylor, Borthwick 1997) |
@@ -230,7 +230,7 @@ mozjpeg-rs aims for compatibility with C mozjpeg but has some differences:
 
 ### Why multipass (`use_scans_in_trellis`) is not implemented
 
-C mozjpeg's multipass option makes trellis quantization "scan-aware" for progressive encoding by optimizing low and high frequency AC coefficients separately. Benchmarks on the Kodak corpus (Q85, progressive) show this is a poor tradeoff:
+C mozjpeg's multipass option makes trellis quantization "scan-aware" for progressive encoding by optimizing low and high frequency AC coefficients separately. Benchmarks on the test corpus (Q85, progressive) show this is a poor tradeoff:
 
 | Metric | Without Multipass | With Multipass | Difference |
 |--------|-------------------|----------------|------------|
@@ -282,7 +282,7 @@ cargo test --test ffi_validation
 ### Reproduce Benchmarks
 
 ```bash
-# Fetch test corpus (Kodak images, ~15MB)
+# Fetch test corpus (CID22 images)
 ./scripts/fetch-corpus.sh
 
 # Run full corpus comparison

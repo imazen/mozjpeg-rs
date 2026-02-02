@@ -16,9 +16,9 @@ fn main() {
     let output_dir = Path::new("comparison_outputs");
     fs::create_dir_all(output_dir).unwrap();
 
-    // Use Kodak image 1 if available, otherwise use tests/images/1.png
-    let image_path = if Path::new("corpus/kodak/1.png").exists() {
-        "corpus/kodak/1.png"
+    // Use CID22 image 1 if available, otherwise use tests/images/1.png
+    let image_path = if Path::new("corpus/CID22/CID22-512/training/1.png").exists() {
+        "corpus/CID22/CID22-512/training/1.png"
     } else if Path::new("tests/images/1.png").exists() {
         "tests/images/1.png"
     } else {
@@ -65,8 +65,8 @@ fn main() {
         );
 
         // Save both
-        let rust_path = output_dir.join(format!("kodak01_q{}_rust.jpg", q));
-        let c_path = output_dir.join(format!("kodak01_q{}_c.jpg", q));
+        let rust_path = output_dir.join(format!("test_q{}_rust.jpg", q));
+        let c_path = output_dir.join(format!("test_q{}_c.jpg", q));
 
         File::create(&rust_path)
             .unwrap()
@@ -81,7 +81,7 @@ fn main() {
     println!("Compare visually:");
     for q in qualities {
         println!(
-            "  feh {:?}/kodak01_q{}_rust.jpg {:?}/kodak01_q{}_c.jpg",
+            "  feh {:?}/test_q{}_rust.jpg {:?}/test_q{}_c.jpg",
             output_dir, q, output_dir, q
         );
     }

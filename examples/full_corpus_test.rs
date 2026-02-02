@@ -101,7 +101,7 @@ fn encode_c_simple_progressive(rgb: &[u8], width: u32, height: u32, quality: u8)
 }
 
 fn main() {
-    let corpus_path = Path::new("corpus/kodak");
+    let corpus_path = Path::new("corpus/CID22/CID22-512/training");
     if !corpus_path.exists() {
         eprintln!("Corpus not found");
         return;
@@ -109,7 +109,7 @@ fn main() {
 
     let qualities = [50, 75, 85, 90, 95, 97];
 
-    println!("FULL KODAK CORPUS - Simple Progressive (optimize_scans=false)");
+    println!("FULL CID22 CORPUS - Simple Progressive (optimize_scans=false)");
     println!("Both Rust and C use same settings: trellis + huffman opt + deringing + 4:2:0\n");
 
     for &quality in &qualities {

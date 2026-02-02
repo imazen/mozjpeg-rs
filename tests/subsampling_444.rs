@@ -1,23 +1,23 @@
 //! Test 4:4:4 subsampling comparison between Rust and C mozjpeg.
 //!
 //! This test compares file sizes at Q75 with 4:4:4 subsampling.
-//! Requires the Kodak corpus - run `./scripts/fetch-corpus.sh` first.
+//! Requires the CID22 corpus - run `./scripts/fetch-corpus.sh` first.
 
-use mozjpeg_rs::corpus::{kodak_dir, png_files_in_dir};
+use mozjpeg_rs::corpus::{cid22_dir, png_files_in_dir};
 use mozjpeg_rs::Subsampling;
 use std::fs::File;
 use std::path::Path;
 
-/// Test 4:4:4 subsampling comparison across Kodak corpus.
+/// Test 4:4:4 subsampling comparison across CID22 corpus.
 ///
 /// Requires external corpus. Run `./scripts/fetch-corpus.sh` first.
 #[test]
-#[ignore = "requires Kodak corpus - run ./scripts/fetch-corpus.sh"]
+#[ignore = "requires CID22 corpus - run ./scripts/fetch-corpus.sh"]
 fn test_444_subsampling_corpus() {
-    let corpus_dir = kodak_dir().expect("Kodak corpus not found");
+    let corpus_dir = cid22_dir().expect("CID22 corpus not found");
     let files = png_files_in_dir(&corpus_dir);
 
-    assert!(!files.is_empty(), "No PNG files found in Kodak corpus");
+    assert!(!files.is_empty(), "No PNG files found in CID22 corpus");
 
     let mut total_rust_bytes = 0u64;
     let mut total_c_bytes = 0u64;
