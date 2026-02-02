@@ -20,10 +20,9 @@ fn main() {
 
     #[cfg(target_arch = "x86_64")]
     {
-        use archmage::tokens::x86::Avx2Token;
-        use archmage::SimdToken;
+        use archmage::{SimdToken, X64V3Token};
 
-        if let Some(token) = Avx2Token::try_new() {
+        if let Some(token) = X64V3Token::try_new() {
             mozjpeg_rs::dct::avx2_archmage::forward_dct_8x8_i32(token, &samples, &mut coeffs_new);
             println!(
                 "\nNew (archmage) DCT output (first 8): {:?}",

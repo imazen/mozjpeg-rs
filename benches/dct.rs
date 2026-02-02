@@ -88,11 +88,10 @@ fn bench_dct_combined(c: &mut Criterion) {
 
 #[cfg(target_arch = "x86_64")]
 fn bench_dct_archmage(c: &mut Criterion) {
-    use archmage::tokens::x86::Avx2Token;
-    use archmage::SimdToken;
+    use archmage::{SimdToken, X64V3Token};
     use mozjpeg_rs::dct::avx2_archmage::forward_dct_8x8_i32;
 
-    let Some(token) = Avx2Token::try_new() else {
+    let Some(token) = X64V3Token::try_new() else {
         eprintln!("AVX2 not available, skipping benchmark");
         return;
     };
@@ -113,11 +112,10 @@ fn bench_dct_archmage(c: &mut Criterion) {
 
 #[cfg(target_arch = "x86_64")]
 fn bench_dct_archmage_i16(c: &mut Criterion) {
-    use archmage::tokens::x86::Avx2Token;
-    use archmage::SimdToken;
+    use archmage::{SimdToken, X64V3Token};
     use mozjpeg_rs::dct::avx2_archmage::forward_dct_8x8_i16;
 
-    let Some(token) = Avx2Token::try_new() else {
+    let Some(token) = X64V3Token::try_new() else {
         eprintln!("AVX2 not available, skipping benchmark");
         return;
     };
@@ -215,11 +213,10 @@ fn bench_dct_batch_1000(c: &mut Criterion) {
 
     #[cfg(target_arch = "x86_64")]
     {
-        use archmage::tokens::x86::Avx2Token;
-        use archmage::SimdToken;
+        use archmage::{SimdToken, X64V3Token};
         use mozjpeg_rs::dct::avx2_archmage::{forward_dct_8x8_i16, forward_dct_8x8_i32};
 
-        if let Some(token) = Avx2Token::try_new() {
+        if let Some(token) = X64V3Token::try_new() {
             group.bench_function("archmage_i32", |b| {
                 b.iter(|| {
                     let mut coeffs = [0i16; 64];

@@ -1,3 +1,4 @@
+#![allow(deprecated)] // Uses deprecated avx2_archmage module for overflow testing
 //! Detect i16 DCT overflow with synthetic worst-case patterns.
 //!
 //! Half-black/half-white blocks within a single 8x8 DCT block produce the largest
@@ -96,7 +97,7 @@ fn main() {
         }
 
         use archmage::SimdToken;
-        let token = archmage::Avx2Token::try_new().unwrap();
+        let token = archmage::X64V3Token::try_new().unwrap();
         let mut coeffs_i16 = [0i16; DCTSIZE2];
         let mut coeffs_i32 = [0i16; DCTSIZE2];
         #[allow(deprecated)]

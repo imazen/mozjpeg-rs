@@ -1,9 +1,9 @@
 //! Debug DCT by tracing intermediate values
 
 #[cfg(all(target_arch = "x86_64", target_feature = "avx2"))]
-use archmage::tokens::x86::Avx2Token;
-#[cfg(all(target_arch = "x86_64", target_feature = "avx2"))]
 use archmage::SimdToken;
+#[cfg(all(target_arch = "x86_64", target_feature = "avx2"))]
+use archmage::X64V3Token;
 
 const DCTSIZE: usize = 8;
 const DCTSIZE2: usize = 64;
@@ -212,7 +212,7 @@ fn scalar_dct(samples: &[i16; DCTSIZE2], coeffs: &mut [i16; DCTSIZE2]) {
 #[target_feature(enable = "avx2")]
 unsafe fn avx2_i16_dct_debug(samples: &[i16; DCTSIZE2], coeffs: &mut [i16; DCTSIZE2]) {
     // SAFETY: We're inside a #[target_feature(enable = "avx2")] function
-    let token = Avx2Token::new_unchecked();
+    let token = X64V3Token::try_new().unwrap();
     mozjpeg_rs::dct::avx2::forward_dct_8x8_avx2_i16(token, samples, coeffs);
 }
 

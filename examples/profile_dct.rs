@@ -80,10 +80,9 @@ fn main() {
     // Profile AVX2 archmage intrinsics
     #[cfg(all(target_arch = "x86_64", target_feature = "avx2"))]
     {
-        use archmage::tokens::x86::Avx2Token;
-        use archmage::SimdToken;
+        use archmage::{SimdToken, X64V3Token};
 
-        if let Some(token) = Avx2Token::try_new() {
+        if let Some(token) = X64V3Token::try_new() {
             let start = Instant::now();
             for _ in 0..ITERATIONS {
                 forward_dct_8x8_i32(token, black_box(&samples), black_box(&mut coeffs));

@@ -42,7 +42,7 @@ fn main() {
 
     let png_files = png_files_in_dir(&cid22_dir);
     for path in &png_files {
-        if let Some((rgb, w, h)) = load_png(&path) {
+        if let Some((rgb, w, h)) = load_png(path) {
             let name = path
                 .file_name()
                 .unwrap_or_default()

@@ -324,7 +324,11 @@ fn make_high_freq_checker(w: u32, h: u32) -> Vec<u8> {
     let mut rgb = vec![0u8; (w * h * 3) as usize];
     for y in 0..h {
         for x in 0..w {
-            let val = if (x + y) % 2 == 0 { 200u8 } else { 55u8 };
+            let val = if (x + y).is_multiple_of(2) {
+                200u8
+            } else {
+                55u8
+            };
             let i = (y * w + x) as usize * 3;
             rgb[i] = val;
             rgb[i + 1] = val;
@@ -382,7 +386,7 @@ fn make_salt_pepper(w: u32, h: u32, density: f64, seed: u64) -> Vec<u8> {
     for pixel in rgb.chunks_mut(3) {
         let r = lcg(&mut s);
         if r < threshold {
-            let val = if r % 2 == 0 { 0u8 } else { 255u8 };
+            let val = if r.is_multiple_of(2) { 0u8 } else { 255u8 };
             pixel[0] = val;
             pixel[1] = val;
             pixel[2] = val;
