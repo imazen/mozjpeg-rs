@@ -179,7 +179,7 @@ let jpeg_data = encoder.encode_rgb(&pixels, width, height)?;
 // Faster color conversion (opt into yuv crate)
 let encoder = Encoder::baseline_optimized()
     .quality(85)
-    .fast_color();  // ~40% faster color conversion, ±1 rounding
+    .fast_color(true);  // ~40% faster, ±1 rounding vs C mozjpeg
 let jpeg_data = encoder.encode_rgb(&pixels, width, height)?;
 ```
 
@@ -640,11 +640,11 @@ GitHub Actions workflow runs on push/PR:
 ### Published Features (safe to use)
 
 - **`fast-yuv`** (default feature) - Enables the `yuv` crate for optional faster color
-  conversion via `.fast_color()`. The yuv crate supports AVX-512, AVX2, SSE,
+  conversion via `.fast_color(true)`. The yuv crate supports AVX-512, AVX2, SSE,
   NEON, and WASM SIMD but has ±1 rounding differences from C mozjpeg.
 
-  **Note:** The encoder defaults to C-compatible color conversion (exact parity).
-  Use `.fast_color()` to opt into ~40% faster color conversion if exact parity isn't needed.
+  **Note:** The encoder defaults to exact C parity (`fast_color(false)`).
+  Use `.fast_color(true)` for ~40% faster color conversion when exact parity isn't needed.
 
 - **`mozjpeg-sys-config`** - Encode using C mozjpeg with Rust `Encoder` settings.
   Adds `Encoder::to_c_mozjpeg()` which returns a `CMozjpeg` encoder.

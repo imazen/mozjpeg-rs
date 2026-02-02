@@ -119,7 +119,7 @@ let jpeg = Encoder::new()
 // Faster color conversion (trades exact C parity for ~40% faster RGB→YCbCr)
 let jpeg = Encoder::new()
     .quality(85)
-    .fast_color()  // Uses yuv crate, ±1 rounding difference
+    .fast_color(true)  // Uses yuv crate, ±1 rounding difference
     .encode_rgb(&pixels, width, height)?;
 ```
 

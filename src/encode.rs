@@ -578,52 +578,35 @@ impl Encoder {
 
     /// Use faster color conversion with the `yuv` crate.
     ///
-    /// Enables ~40% faster RGB→YCbCr conversion using the `yuv` crate instead of
-    /// the default C mozjpeg-compatible conversion.
+    /// - `fast_color(true)` — ~40% faster RGB→YCbCr using the `yuv` crate (±1 rounding vs C mozjpeg)
+    /// - `fast_color(false)` — exact C mozjpeg parity, bytewise identical output (default)
     ///
-    /// **Trade-off:** The `yuv` crate has ±1 rounding differences from C mozjpeg.
-    /// These differences are invisible in decoded images but may cause slightly
-    /// different file sizes (typically <1% for baseline mode).
+    /// The ±1 rounding differences are invisible in decoded images but may cause
+    /// slightly different file sizes (typically <1% for baseline mode).
     ///
     /// # Example
     ///
     /// ```
     /// use mozjpeg_rs::Encoder;
     ///
-    /// let encoder = Encoder::new()
-    ///     .quality(85)
-    ///     .fast_color();  // ~40% faster color conversion
+    /// // Faster color conversion
+    /// let encoder = Encoder::new().quality(85).fast_color(true);
+    ///
+    /// // Exact C mozjpeg parity (default, explicit)
+    /// let encoder = Encoder::new().quality(85).fast_color(false);
     /// ```
-    ///
-    /// # When to Use
-    ///
-    /// - When encoding speed is more important than byte-exact C mozjpeg parity
-    /// - For progressive mode (successive approximation masks rounding differences)
-    /// - When you don't need to compare output with C mozjpeg
     #[cfg(feature = "fast-yuv")]
-    pub fn fast_color(mut self) -> Self {
-        self.c_compat_color = false;
-        self
-    }
-
-    /// Use C mozjpeg-compatible color conversion (default).
-    ///
-    /// This is the **default behavior** - you don't need to call this unless
-    /// you want to explicitly document the choice or override a previous
-    /// [`fast_color()`](Self::fast_color) call.
-    ///
-    /// Uses AVX2-accelerated conversion that exactly matches C mozjpeg's
-    /// `jccolor.c` implementation, producing bytewise-identical output.
-    pub fn exact_color_match(mut self) -> Self {
-        self.c_compat_color = true;
+    pub fn fast_color(mut self, enable: bool) -> Self {
+        self.c_compat_color = !enable;
         self
     }
 
     /// Legacy API for color conversion mode.
     ///
-    /// **Deprecated:** Use [`fast_color()`](Self::fast_color) or
-    /// [`exact_color_match()`](Self::exact_color_match) instead.
-    #[deprecated(since = "0.7.0", note = "Use fast_color() or exact_color_match() instead")]
+    /// **Deprecated:** Use [`fast_color()`](Self::fast_color) instead.
+    /// - `c_compat_color(true)` = `fast_color(false)` (exact C parity)
+    /// - `c_compat_color(false)` = `fast_color(true)` (faster yuv crate)
+    #[deprecated(since = "0.7.0", note = "Use fast_color() instead")]
     pub fn c_compat_color(mut self, enable: bool) -> Self {
         self.c_compat_color = enable;
         self
