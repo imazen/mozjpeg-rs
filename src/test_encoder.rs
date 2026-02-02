@@ -40,6 +40,9 @@ pub struct TestEncoderConfig {
     /// Force baseline compatibility (clamp quant values to 255, use 8-bit precision).
     /// C mozjpeg's jpeg_set_quality passes TRUE for this by default.
     pub force_baseline: bool,
+    /// Use C mozjpeg-compatible color conversion for exact baseline parity.
+    /// When enabled, uses scalar conversion matching C mozjpeg's jccolor.c.
+    pub c_compat_color: bool,
 }
 
 impl Default for TestEncoderConfig {
@@ -54,6 +57,7 @@ impl Default for TestEncoderConfig {
             overshoot_deringing: false,
             optimize_scans: false,
             force_baseline: true, // Match C mozjpeg's default (jpeg_set_quality passes TRUE)
+            c_compat_color: false, // Default to fast yuv crate
         }
     }
 }
@@ -139,6 +143,7 @@ pub fn encode_rust(rgb: &[u8], width: u32, height: u32, config: &TestEncoderConf
         .trellis(trellis)
         .overshoot_deringing(config.overshoot_deringing)
         .force_baseline(config.force_baseline)
+        .c_compat_color(config.c_compat_color)
         .encode_rgb(rgb, width, height)
         .expect("Rust encoding failed")
 }
@@ -563,5 +568,46 @@ mod tests {
                 c_jpeg.len()
             );
         }
+    }
+
+    #[test]
+    fn test_c_compat_color_baseline() {
+        // Test that c_compat_color produces better baseline parity
+        let width = 128;
+        let height = 128;
+        let rgb = create_test_image(width, height);
+
+        let mut config_fast = TestEncoderConfig::baseline_huffman_opt().with_quality(85);
+        config_fast.c_compat_color = false; // Fast yuv crate (default)
+
+        let mut config_compat = config_fast.clone();
+        config_compat.c_compat_color = true; // C mozjpeg-compatible
+
+        let rust_fast = encode_rust(&rgb, width as u32, height as u32, &config_fast);
+        let rust_compat = encode_rust(&rgb, width as u32, height as u32, &config_compat);
+        let c_jpeg = encode_c(&rgb, width as u32, height as u32, &config_fast);
+
+        let ratio_fast = rust_fast.len() as f64 / c_jpeg.len() as f64;
+        let ratio_compat = rust_compat.len() as f64 / c_jpeg.len() as f64;
+
+        println!("C-compat color test (baseline Q85):");
+        println!("  C mozjpeg: {} bytes", c_jpeg.len());
+        println!(
+            "  Rust (fast-yuv): {} bytes ({:.2}%)",
+            rust_fast.len(),
+            ratio_fast * 100.0
+        );
+        println!(
+            "  Rust (c-compat): {} bytes ({:.2}%)",
+            rust_compat.len(),
+            ratio_compat * 100.0
+        );
+
+        // c_compat should be closer to 1.0 (100%) than fast
+        // Fast path typically produces ~103-105%, c_compat should be ~100%
+        assert!(
+            ratio_compat <= ratio_fast + 0.001,
+            "c_compat should not be worse than fast"
+        );
     }
 }

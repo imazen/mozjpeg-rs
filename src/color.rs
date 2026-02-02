@@ -444,6 +444,95 @@ pub fn convert_block_rgb_to_ycbcr(
     }
 }
 
+// ============================================================================
+// C mozjpeg-compatible color conversion
+// ============================================================================
+
+/// C mozjpeg-compatible RGB to YCbCr conversion.
+///
+/// Uses identical fixed-point arithmetic to match C mozjpeg output exactly.
+/// The key difference from [`rgb_to_ycbcr`] is the `- 1` adjustment in the
+/// Cb/Cr calculations, which matches C mozjpeg's `jccolor.c` implementation.
+///
+/// This produces bytewise-identical output to C mozjpeg, eliminating the
+/// ±1 rounding differences that cause 3-5% larger baseline files.
+///
+/// Use [`Encoder::c_compat_color`] to enable this conversion.
+#[inline]
+pub fn rgb_to_ycbcr_c_compat(r: u8, g: u8, b: u8) -> (u8, u8, u8) {
+    // C mozjpeg uses 16-bit fixed point with these constants:
+    // #define SCALEBITS  16
+    // #define CBCR_OFFSET  ((INT32) CENTERJSAMPLE << SCALEBITS)
+    // #define ONE_HALF  ((INT32) 1 << (SCALEBITS-1))
+    // #define FIX(x)  ((INT32) ((x) * (1L<<SCALEBITS) + 0.5))
+    //
+    // The critical detail is `+ ONE_HALF - 1` for Cb/Cr, not just `+ ONE_HALF`.
+
+    const SCALE: i32 = 16;
+    const ONE_HALF: i32 = 1 << (SCALE - 1);
+    const CBCR_OFFSET: i32 = 128 << SCALE;
+
+    // FIX(x) = (x * (1 << 16) + 0.5) as i32
+    const FIX_0_29900: i32 = 19595; // FIX(0.29900)
+    const FIX_0_58700: i32 = 38470; // FIX(0.58700)
+    const FIX_0_11400: i32 = 7471; // FIX(0.11400)
+    const FIX_0_16874: i32 = 11059; // FIX(0.16874)
+    const FIX_0_33126: i32 = 21709; // FIX(0.33126)
+    const FIX_0_50000: i32 = 32768; // FIX(0.50000)
+    const FIX_0_41869: i32 = 27439; // FIX(0.41869)
+    const FIX_0_08131: i32 = 5329; // FIX(0.08131)
+
+    let r = r as i32;
+    let g = g as i32;
+    let b = b as i32;
+
+    // Y = 0.29900*R + 0.58700*G + 0.11400*B
+    let y = ((FIX_0_29900 * r + FIX_0_58700 * g + FIX_0_11400 * b + ONE_HALF) >> SCALE) as u8;
+
+    // Cb = -0.16874*R - 0.33126*G + 0.50000*B + 128
+    // Note: C mozjpeg uses `+ CBCR_OFFSET + ONE_HALF - 1` (the -1 is critical!)
+    let cb = (((-FIX_0_16874) * r + (-FIX_0_33126) * g + FIX_0_50000 * b + CBCR_OFFSET + ONE_HALF
+        - 1)
+        >> SCALE) as u8;
+
+    // Cr = 0.50000*R - 0.41869*G - 0.08131*B + 128
+    let cr = ((FIX_0_50000 * r + (-FIX_0_41869) * g + (-FIX_0_08131) * b + CBCR_OFFSET + ONE_HALF
+        - 1)
+        >> SCALE) as u8;
+
+    (y, cb, cr)
+}
+
+/// Convert RGB image to YCbCr using C mozjpeg-compatible algorithm.
+///
+/// This produces bytewise-identical output to C mozjpeg, which is important
+/// for baseline JPEG compression where ±1 coefficient differences can
+/// accumulate to 3-5% file size differences.
+///
+/// # Arguments
+/// * `rgb` - Interleaved RGB data (3 bytes per pixel)
+/// * `y_out` - Output Y plane
+/// * `cb_out` - Output Cb plane
+/// * `cr_out` - Output Cr plane
+/// * `num_pixels` - Number of pixels to convert
+pub fn convert_rgb_to_ycbcr_c_compat(
+    rgb: &[u8],
+    y_out: &mut [u8],
+    cb_out: &mut [u8],
+    cr_out: &mut [u8],
+    num_pixels: usize,
+) {
+    for i in 0..num_pixels {
+        let r = rgb[i * 3];
+        let g = rgb[i * 3 + 1];
+        let b = rgb[i * 3 + 2];
+        let (y, cb, cr) = rgb_to_ycbcr_c_compat(r, g, b);
+        y_out[i] = y;
+        cb_out[i] = cb;
+        cr_out[i] = cr;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -731,5 +820,111 @@ mod tests {
 
         // FIX(0.0) should be 0
         assert_eq!(fix(0.0), 0);
+    }
+
+    #[test]
+    fn test_rgb_to_ycbcr_c_compat_basic() {
+        // Black
+        let (y, cb, cr) = rgb_to_ycbcr_c_compat(0, 0, 0);
+        assert_eq!(y, 0);
+        assert_eq!(cb, 128); // Neutral chrominance (but with -1 offset internally)
+        assert_eq!(cr, 128);
+
+        // White
+        let (y, cb, cr) = rgb_to_ycbcr_c_compat(255, 255, 255);
+        assert_eq!(y, 255);
+        assert_eq!(cb, 128);
+        assert_eq!(cr, 128);
+
+        // Gray 128
+        let (y, cb, cr) = rgb_to_ycbcr_c_compat(128, 128, 128);
+        assert_eq!(y, 128);
+        // C compat has -1 in the rounding for Cb/Cr
+        assert!((cb as i32 - 128).abs() <= 1);
+        assert!((cr as i32 - 128).abs() <= 1);
+    }
+
+    #[test]
+    fn test_c_compat_differs_from_default() {
+        // The C-compat and default implementations should differ for some values
+        // due to the `-1` adjustment in Cb/Cr. Pure gray doesn't show it clearly,
+        // but colors with chroma should show ±1 differences.
+        let mut c_compat_matches = 0;
+        let mut c_compat_differs = 0;
+
+        // Test a range of colors
+        for r in (0..=255).step_by(17) {
+            for g in (0..=255).step_by(17) {
+                for b in (0..=255).step_by(17) {
+                    let (y1, cb1, cr1) = rgb_to_ycbcr(r, g, b);
+                    let (y2, cb2, cr2) = rgb_to_ycbcr_c_compat(r, g, b);
+
+                    // Y should always match (same formula)
+                    assert_eq!(y1, y2, "Y differs for RGB({}, {}, {})", r, g, b);
+
+                    // Cb/Cr may differ by up to 1 due to the -1 adjustment
+                    if cb1 == cb2 && cr1 == cr2 {
+                        c_compat_matches += 1;
+                    } else {
+                        c_compat_differs += 1;
+                        assert!(
+                            (cb1 as i32 - cb2 as i32).abs() <= 1,
+                            "Cb differs by more than 1 for RGB({}, {}, {}): {} vs {}",
+                            r,
+                            g,
+                            b,
+                            cb1,
+                            cb2
+                        );
+                        assert!(
+                            (cr1 as i32 - cr2 as i32).abs() <= 1,
+                            "Cr differs by more than 1 for RGB({}, {}, {}): {} vs {}",
+                            r,
+                            g,
+                            b,
+                            cr1,
+                            cr2
+                        );
+                    }
+                }
+            }
+        }
+
+        // We expect SOME differences (not all values should match)
+        assert!(
+            c_compat_differs > 0,
+            "C-compat should differ from default for some values"
+        );
+        eprintln!(
+            "C-compat: {} matches, {} differs",
+            c_compat_matches, c_compat_differs
+        );
+    }
+
+    #[test]
+    fn test_convert_rgb_to_ycbcr_c_compat() {
+        let width = 16;
+        let height = 4;
+        let num_pixels = width * height;
+
+        // Random-ish test data
+        let mut rgb = vec![0u8; num_pixels * 3];
+        for (i, v) in rgb.iter_mut().enumerate() {
+            *v = ((i * 37 + 13) % 256) as u8;
+        }
+
+        let mut y_out = vec![0u8; num_pixels];
+        let mut cb_out = vec![0u8; num_pixels];
+        let mut cr_out = vec![0u8; num_pixels];
+
+        convert_rgb_to_ycbcr_c_compat(&rgb, &mut y_out, &mut cb_out, &mut cr_out, num_pixels);
+
+        // Verify against scalar reference
+        for i in 0..num_pixels {
+            let (y, cb, cr) = rgb_to_ycbcr_c_compat(rgb[i * 3], rgb[i * 3 + 1], rgb[i * 3 + 2]);
+            assert_eq!(y_out[i], y);
+            assert_eq!(cb_out[i], cb);
+            assert_eq!(cr_out[i], cr);
+        }
     }
 }

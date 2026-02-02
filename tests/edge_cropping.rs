@@ -72,6 +72,7 @@ fn test_edge_cropping_all_remainders() {
                 overshoot_deringing: false,
                 optimize_scans: false,
                 force_baseline: true,
+                c_compat_color: false,
             };
 
             // Encode with Rust (using unified API)

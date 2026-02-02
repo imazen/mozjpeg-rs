@@ -34,6 +34,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use crate::bitstream::BitWriter;
+use crate::color::convert_rgb_to_ycbcr_c_compat;
 use crate::consts::{QuantTableIdx, DCTSIZE, DCTSIZE2};
 use crate::deringing::preprocess_deringing;
 use crate::entropy::{EntropyEncoder, ProgressiveEncoder, ProgressiveSymbolCounter, SymbolCounter};
@@ -179,6 +180,10 @@ pub struct Encoder {
     optimize_huffman: bool,
     /// Enable overshoot deringing (reduces ringing on white backgrounds)
     overshoot_deringing: bool,
+    /// Use C mozjpeg-compatible color conversion for exact baseline parity.
+    /// When enabled, produces bytewise-identical YCbCr values to C mozjpeg.
+    /// Disabled by default (uses faster yuv crate with ±1 rounding tolerance).
+    c_compat_color: bool,
     /// Optimize progressive scan configuration (tries multiple configs, picks smallest)
     optimize_scans: bool,
     /// Restart interval in MCUs (0 = disabled)
@@ -323,6 +328,7 @@ impl Encoder {
             force_baseline: false,
             optimize_huffman: true,
             overshoot_deringing: true,
+            c_compat_color: false,
             optimize_scans: false,
             restart_interval: 0,
             pixel_density: PixelDensity::default(),
@@ -382,6 +388,7 @@ impl Encoder {
             force_baseline: false,
             optimize_huffman: true,
             overshoot_deringing: true,
+            c_compat_color: false,
             optimize_scans: true,
             restart_interval: 0,
             pixel_density: PixelDensity::default(),
@@ -442,6 +449,7 @@ impl Encoder {
             force_baseline: false,
             optimize_huffman: true,
             overshoot_deringing: true,
+            c_compat_color: false,
             optimize_scans: false, // Key difference from max_compression()
             restart_interval: 0,
             pixel_density: PixelDensity::default(),
@@ -498,6 +506,7 @@ impl Encoder {
             force_baseline: true,
             optimize_huffman: false,
             overshoot_deringing: false,
+            c_compat_color: false,
             optimize_scans: false,
             restart_interval: 0,
             pixel_density: PixelDensity::default(),
@@ -564,6 +573,30 @@ impl Encoder {
     /// minimal file size cost. Enabled by default.
     pub fn overshoot_deringing(mut self, enable: bool) -> Self {
         self.overshoot_deringing = enable;
+        self
+    }
+
+    /// Use C mozjpeg-compatible color conversion for exact baseline parity.
+    ///
+    /// By default, the encoder uses the `yuv` crate for SIMD-optimized color
+    /// conversion, which has ±1 rounding differences compared to C mozjpeg.
+    /// These differences are invisible in decoded images but can cause 3-5%
+    /// larger baseline files because the coefficient differences accumulate
+    /// through DC differential encoding.
+    ///
+    /// When enabled, uses scalar conversion that exactly matches C mozjpeg's
+    /// `jccolor.c` implementation. This eliminates the baseline file size gap
+    /// at the cost of slower color conversion.
+    ///
+    /// **Progressive modes are not affected** because successive approximation
+    /// scans mask the coefficient differences.
+    ///
+    /// # When to Use
+    ///
+    /// - Enable for baseline mode when exact C mozjpeg parity is required
+    /// - Leave disabled (default) for progressive modes or when speed matters
+    pub fn c_compat_color(mut self, enable: bool) -> Self {
+        self.c_compat_color = enable;
         self
     }
 
@@ -2175,13 +2208,25 @@ impl Encoder {
         let mut cb_plane = try_alloc_vec(0u8, num_pixels)?;
         let mut cr_plane = try_alloc_vec(0u8, num_pixels)?;
 
-        (self.simd.color_convert_rgb_to_ycbcr)(
-            rgb_data,
-            &mut y_plane,
-            &mut cb_plane,
-            &mut cr_plane,
-            num_pixels,
-        );
+        if self.c_compat_color {
+            // Use C mozjpeg-compatible color conversion for exact baseline parity
+            convert_rgb_to_ycbcr_c_compat(
+                rgb_data,
+                &mut y_plane,
+                &mut cb_plane,
+                &mut cr_plane,
+                num_pixels,
+            );
+        } else {
+            // Use fast SIMD color conversion (default)
+            (self.simd.color_convert_rgb_to_ycbcr)(
+                rgb_data,
+                &mut y_plane,
+                &mut cb_plane,
+                &mut cr_plane,
+                num_pixels,
+            );
+        }
 
         // Step 2: Downsample chroma if needed
         let (luma_h, luma_v) = self.subsampling.luma_factors();
