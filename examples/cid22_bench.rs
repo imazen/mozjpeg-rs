@@ -189,11 +189,36 @@ struct Config {
 }
 
 const CONFIGS: &[Config] = &[
-    Config { name: "Baseline", progressive: false, trellis: false, optimize_scans: false },
-    Config { name: "Baseline+Trellis", progressive: false, trellis: true, optimize_scans: false },
-    Config { name: "Progressive", progressive: true, trellis: false, optimize_scans: false },
-    Config { name: "Progressive+Trellis", progressive: true, trellis: true, optimize_scans: false },
-    Config { name: "MaxCompression", progressive: true, trellis: true, optimize_scans: true },
+    Config {
+        name: "Baseline",
+        progressive: false,
+        trellis: false,
+        optimize_scans: false,
+    },
+    Config {
+        name: "Baseline+Trellis",
+        progressive: false,
+        trellis: true,
+        optimize_scans: false,
+    },
+    Config {
+        name: "Progressive",
+        progressive: true,
+        trellis: false,
+        optimize_scans: false,
+    },
+    Config {
+        name: "Progressive+Trellis",
+        progressive: true,
+        trellis: true,
+        optimize_scans: false,
+    },
+    Config {
+        name: "MaxCompression",
+        progressive: true,
+        trellis: true,
+        optimize_scans: true,
+    },
 ];
 
 const QUALITIES: &[u8] = &[75, 85, 90, 95];
@@ -202,17 +227,17 @@ fn main() {
     let corpus_dir = std::env::var("CODEC_CORPUS_DIR")
         .unwrap_or_else(|_| "/home/lilith/work/codec-corpus".to_string());
     let training_dir = format!("{}/CID22/CID22-512/training", corpus_dir);
-    
+
     let mut images: Vec<_> = std::fs::read_dir(&training_dir)
         .expect("CID22 training dir")
         .filter_map(|e| e.ok())
         .filter(|e| e.path().extension().map(|x| x == "png").unwrap_or(false))
         .collect();
     images.sort_by_key(|e| e.path());
-    
+
     let total = images.len();
     eprintln!("Processing {} images from CID22-512/training\n", total);
-    
+
     // Header
     println!("| Config | Q | Rust Size | C Size | Size Δ | DSSIM (R) | DSSIM (C) | Butteraugli (R) | Butteraugli (C) |");
     println!("|--------|---|-----------|--------|--------|-----------|-----------|-----------------|-----------------|");
@@ -270,7 +295,10 @@ fn main() {
                     eprint!("\r{} Q{}: {}/{}", config.name, quality, i + 1, total);
                 }
             }
-            eprintln!("\r{} Q{}: done ({} images)    ", config.name, quality, count);
+            eprintln!(
+                "\r{} Q{}: done ({} images)    ",
+                config.name, quality, count
+            );
 
             let size_delta = (rust_total_size as f64 / c_total_size as f64 - 1.0) * 100.0;
             let avg_rust_dssim = rust_dssim_sum / count as f64;

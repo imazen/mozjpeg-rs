@@ -199,7 +199,13 @@ mod tests {
     #[test]
     fn test_encode_imgref_rgb8() {
         let pixels: Vec<RGB8> = (0..64 * 48)
-            .map(|i| RGB8::new((i % 256) as u8, ((i * 2) % 256) as u8, ((i * 3) % 256) as u8))
+            .map(|i| {
+                RGB8::new(
+                    (i % 256) as u8,
+                    ((i * 2) % 256) as u8,
+                    ((i * 3) % 256) as u8,
+                )
+            })
             .collect();
         let img = ImgVec::new(pixels, 64, 48);
 
@@ -315,7 +321,13 @@ mod tests {
     #[test]
     fn test_encode_imgref_matches_encode_rgb() {
         let pixels: Vec<RGB8> = (0..64 * 48)
-            .map(|i| RGB8::new((i % 256) as u8, ((i * 2) % 256) as u8, ((i * 3) % 256) as u8))
+            .map(|i| {
+                RGB8::new(
+                    (i % 256) as u8,
+                    ((i * 2) % 256) as u8,
+                    ((i * 3) % 256) as u8,
+                )
+            })
             .collect();
         let img = ImgVec::new(pixels.clone(), 64, 48);
 

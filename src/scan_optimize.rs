@@ -460,8 +460,7 @@ impl ScanSelector {
         if DEBUG_SCAN_OPT {
             eprintln!(
                 "[SCAN_OPT] Freq split: full 1-63 (idx {}) = {} bytes",
-                full_1_63_idx,
-                best_freq_cost
+                full_1_63_idx, best_freq_cost
             );
         }
 
@@ -574,7 +573,9 @@ impl ScanSelector {
                 if DEBUG_SCAN_OPT {
                     eprintln!(
                         "[SCAN_OPT] Chroma Al=0: cost={} (sizes[{}..{}])",
-                        c, cb_base, cr_base + 1
+                        c,
+                        cb_base,
+                        cr_base + 1
                     );
                 }
                 c
@@ -621,7 +622,9 @@ impl ScanSelector {
         if DEBUG_SCAN_OPT {
             eprintln!(
                 "[SCAN_OPT] Chroma freq split: full 1-63 (idx {},{}) = {} bytes",
-                chroma_full_base, chroma_full_base + 1, best_freq_cost
+                chroma_full_base,
+                chroma_full_base + 1,
+                best_freq_cost
             );
         }
 
