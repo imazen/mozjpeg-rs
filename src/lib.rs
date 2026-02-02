@@ -247,6 +247,12 @@ pub mod test_encoder;
 #[doc(hidden)]
 pub mod corpus;
 
+/// Integration with the `imgref` crate for type-safe pixel formats.
+///
+/// Enable with `features = ["imgref"]` in Cargo.toml.
+#[cfg(feature = "imgref")]
+pub mod imgref_ext;
+
 // ============================================================================
 // Public API
 // ============================================================================
@@ -544,3 +550,9 @@ pub use compat::ConfigError;
 /// ```
 #[cfg(feature = "mozjpeg-sys-config")]
 pub use compat::CMozjpeg;
+
+/// Trait for pixel types that can be encoded with [`Encoder::encode_imgref`].
+///
+/// Enable with `features = ["imgref"]` in Cargo.toml.
+#[cfg(feature = "imgref")]
+pub use imgref_ext::EncodeablePixel;

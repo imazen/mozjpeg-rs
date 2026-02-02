@@ -200,12 +200,10 @@ pub struct ScanSearchResult {
 impl ScanSearchResult {
     /// Build the final optimized scan script from search results.
     ///
-    /// When best_freq_split is 0, we use full 1-63 AC scans (most efficient for simple images).
-    /// When best_freq_split > 0, we use the selected frequency split.
-    ///
-    /// When successive approximation (Al > 0) is selected, we also apply it to DC:
-    /// - Initial DC scan with point transform (al=1)
-    /// - DC refinement scan at the end (ah=1, al=0)
+    /// Matches C mozjpeg's JCP_MAX_COMPRESSION behavior:
+    /// - NO DC successive approximation (DC always at Al=0)
+    /// - Frequency split only applied when Al=0 (since splits were measured at Al=0)
+    /// - When Al > 0 is selected, use full 1-63 range for that component
     pub fn build_final_scans(
         &self,
         num_components: u8,
@@ -213,34 +211,26 @@ impl ScanSearchResult {
     ) -> Vec<ScanInfo> {
         let mut scans = Vec::new();
 
-        // Determine if we should use DC successive approximation
-        // Use it when either luma or chroma Al is > 0 (using successive approximation)
-        let use_dc_succ_approx = self.best_al_luma > 0 || self.best_al_chroma > 0;
-
-        // DC scan - use point transform if doing successive approximation
+        // DC scan - NO successive approximation (matching C mozjpeg JCP_MAX_COMPRESSION)
+        // C mozjpeg does NOT use DC point transform for optimize_scans
         if config.dc_scan_opt_mode == 0 {
-            let mut dc_scan = ScanInfo::dc_scan(num_components);
-            if use_dc_succ_approx {
-                dc_scan.al = 1; // Point transform for DC
-            }
-            scans.push(dc_scan);
+            scans.push(ScanInfo::dc_scan(num_components));
         } else {
-            let mut dc_scan = ScanInfo::dc_scan(1);
-            if use_dc_succ_approx {
-                dc_scan.al = 1;
-            }
-            scans.push(dc_scan);
+            scans.push(ScanInfo::dc_scan(1));
         }
 
         // Luma AC scans based on best Al and frequency split
+        // IMPORTANT: Frequency split only applies when Al=0
+        // The split scans were measured at Al=0, so applying them at Al>0 is incorrect
         let al = self.best_al_luma;
-        if self.best_freq_split_luma == 0 {
-            // Use full 1-63 range (no frequency split) - most efficient for simple images
-            scans.push(ScanInfo::ac_scan(0, 1, 63, 0, al));
-        } else {
+        if al == 0 && self.best_freq_split_luma > 0 {
+            // Al=0 with frequency split
             let split = config.frequency_splits[self.best_freq_split_luma - 1];
-            scans.push(ScanInfo::ac_scan(0, 1, split, 0, al));
-            scans.push(ScanInfo::ac_scan(0, split + 1, 63, 0, al));
+            scans.push(ScanInfo::ac_scan(0, 1, split, 0, 0));
+            scans.push(ScanInfo::ac_scan(0, split + 1, 63, 0, 0));
+        } else {
+            // Al>0 or no frequency split: use full 1-63 range
+            scans.push(ScanInfo::ac_scan(0, 1, 63, 0, al));
         }
 
         // Luma refinement scans if Al > 0
@@ -250,7 +240,6 @@ impl ScanSearchResult {
 
         if num_components >= 3 {
             // Chroma DC - only add if DC wasn't already included for all components
-            // When dc_scan_opt_mode == 0, DC for all components is in the first scan
             if config.dc_scan_opt_mode != 0 {
                 if self.interleave_chroma_dc {
                     scans.push(ScanInfo::dc_scan_pair(1, 2));
@@ -260,16 +249,17 @@ impl ScanSearchResult {
                 }
             }
 
-            // Chroma AC scans
+            // Chroma AC scans - same rule: freq split only at Al=0
             let al_c = self.best_al_chroma;
             for comp in 1..=2u8 {
-                if self.best_freq_split_chroma == 0 {
-                    // Use full 1-63 range (no frequency split)
-                    scans.push(ScanInfo::ac_scan(comp, 1, 63, 0, al_c));
-                } else {
+                if al_c == 0 && self.best_freq_split_chroma > 0 {
+                    // Al=0 with frequency split
                     let split = config.frequency_splits[self.best_freq_split_chroma - 1];
-                    scans.push(ScanInfo::ac_scan(comp, 1, split, 0, al_c));
-                    scans.push(ScanInfo::ac_scan(comp, split + 1, 63, 0, al_c));
+                    scans.push(ScanInfo::ac_scan(comp, 1, split, 0, 0));
+                    scans.push(ScanInfo::ac_scan(comp, split + 1, 63, 0, 0));
+                } else {
+                    // Al>0 or no frequency split: use full 1-63 range
+                    scans.push(ScanInfo::ac_scan(comp, 1, 63, 0, al_c));
                 }
             }
 
@@ -280,17 +270,7 @@ impl ScanSearchResult {
             }
         }
 
-        // DC refinement scan (if using successive approximation)
-        if use_dc_succ_approx {
-            let mut dc_refine = if config.dc_scan_opt_mode == 0 {
-                ScanInfo::dc_scan(num_components)
-            } else {
-                ScanInfo::dc_scan(1)
-            };
-            dc_refine.ah = 1;
-            dc_refine.al = 0;
-            scans.push(dc_refine);
-        }
+        // NO DC refinement scan (C mozjpeg JCP_MAX_COMPRESSION doesn't use DC SA)
 
         scans
     }
@@ -477,12 +457,32 @@ impl ScanSelector {
         let mut best_freq_split = 0usize; // 0 means use full 1-63 (no split)
         let mut best_freq_cost = scan_sizes.get(full_1_63_idx).copied().unwrap_or(usize::MAX);
 
+        if DEBUG_SCAN_OPT {
+            eprintln!(
+                "[SCAN_OPT] Freq split: full 1-63 (idx {}) = {} bytes",
+                full_1_63_idx,
+                best_freq_cost
+            );
+        }
+
         // Frequency split scans start at index 13
         let freq_start = full_1_63_idx + 1;
-        for (i, _split) in self.config.frequency_splits.iter().enumerate() {
+        for (i, split) in self.config.frequency_splits.iter().enumerate() {
             let idx = freq_start + 2 * i;
             let cost = scan_sizes.get(idx).copied().unwrap_or(0)
                 + scan_sizes.get(idx + 1).copied().unwrap_or(0);
+
+            if DEBUG_SCAN_OPT {
+                eprintln!(
+                    "[SCAN_OPT] Freq split at {}: (idx {},{}) = {} + {} = {} bytes",
+                    split,
+                    idx,
+                    idx + 1,
+                    scan_sizes.get(idx).copied().unwrap_or(0),
+                    scan_sizes.get(idx + 1).copied().unwrap_or(0),
+                    cost
+                );
+            }
 
             if cost < best_freq_cost {
                 best_freq_cost = cost;
@@ -501,6 +501,20 @@ impl ScanSelector {
             if i == 4 && best_freq_split != 4 {
                 break;
             }
+        }
+
+        // CRITICAL: If freq split at Al=0 is cheaper than the SA approach,
+        // use Al=0 with freq split instead of Al>0.
+        // This matches C mozjpeg behavior where freq split can beat SA for luma.
+        if best_al > 0 && best_freq_cost < best_cost {
+            if DEBUG_SCAN_OPT {
+                eprintln!(
+                    "[SCAN_OPT] Luma: freq split ({}) beats SA ({}) - using Al=0 with split",
+                    best_freq_cost, best_cost
+                );
+            }
+            best_al = 0;
+            // best_freq_split is already set correctly
         }
 
         (best_al, best_freq_split)
@@ -553,10 +567,17 @@ impl ScanSelector {
                 // Base scans for Cb and Cr at Al=0
                 let cb_base = base + dc_offset; // 26
                 let cr_base = base + dc_offset + 2; // 28
-                scan_sizes.get(cb_base).copied().unwrap_or(0)
+                let c = scan_sizes.get(cb_base).copied().unwrap_or(0)
                     + scan_sizes.get(cb_base + 1).copied().unwrap_or(0)
                     + scan_sizes.get(cr_base).copied().unwrap_or(0)
-                    + scan_sizes.get(cr_base + 1).copied().unwrap_or(0)
+                    + scan_sizes.get(cr_base + 1).copied().unwrap_or(0);
+                if DEBUG_SCAN_OPT {
+                    eprintln!(
+                        "[SCAN_OPT] Chroma Al=0: cost={} (sizes[{}..{}])",
+                        c, cb_base, cr_base + 1
+                    );
+                }
+                c
             } else {
                 // Band scans at this Al (6 scans per Al level: 2 refine + 4 bands)
                 // Bands for Al=k are at: base + dc_offset + 4 + 6*(k-1) + 2..6
@@ -571,6 +592,12 @@ impl ScanSelector {
                     let refine_base = base + dc_offset + 4 + 6 * i;
                     c += scan_sizes.get(refine_base).copied().unwrap_or(0); // Cb refine
                     c += scan_sizes.get(refine_base + 1).copied().unwrap_or(0); // Cr refine
+                }
+                if DEBUG_SCAN_OPT {
+                    eprintln!(
+                        "[SCAN_OPT] Chroma Al={}: cost={} (band_base={})",
+                        al, c, band_base
+                    );
                 }
                 c
             };
@@ -591,14 +618,28 @@ impl ScanSelector {
         let mut best_freq_cost = scan_sizes.get(chroma_full_base).copied().unwrap_or(0)
             + scan_sizes.get(chroma_full_base + 1).copied().unwrap_or(0);
 
+        if DEBUG_SCAN_OPT {
+            eprintln!(
+                "[SCAN_OPT] Chroma freq split: full 1-63 (idx {},{}) = {} bytes",
+                chroma_full_base, chroma_full_base + 1, best_freq_cost
+            );
+        }
+
         // Frequency splits start at chroma_freq_split_scan_start
         let freq_base = self.chroma_freq_split_scan_start;
-        for (i, _split) in self.config.frequency_splits.iter().enumerate() {
+        for (i, split) in self.config.frequency_splits.iter().enumerate() {
             let idx = freq_base + 4 * i;
             let cost = scan_sizes.get(idx).copied().unwrap_or(0)
                 + scan_sizes.get(idx + 1).copied().unwrap_or(0)
                 + scan_sizes.get(idx + 2).copied().unwrap_or(0)
                 + scan_sizes.get(idx + 3).copied().unwrap_or(0);
+
+            if DEBUG_SCAN_OPT {
+                eprintln!(
+                    "[SCAN_OPT] Chroma freq split at {}: (idx {}) = {} bytes",
+                    split, idx, cost
+                );
+            }
 
             if cost < best_freq_cost {
                 best_freq_cost = cost;
@@ -609,6 +650,24 @@ impl ScanSelector {
             if i == 2 && best_freq_split == 0 {
                 break;
             }
+        }
+
+        // CRITICAL: If freq split at Al=0 is cheaper than the SA approach,
+        // use Al=0 with freq split instead of Al>0.
+        // This matches C mozjpeg behavior where freq split can beat SA for chroma.
+        if best_al > 0 && best_freq_cost < best_cost {
+            if DEBUG_SCAN_OPT {
+                eprintln!(
+                    "[SCAN_OPT] Chroma: freq split ({}) beats SA ({}) - using Al=0 with split",
+                    best_freq_cost, best_cost
+                );
+            }
+            best_al = 0;
+            // best_freq_split is already set correctly
+        } else if best_al == 0 && best_freq_split > 0 {
+            // Al=0 was selected, but check if freq split is better than bands
+            // (freq split cost < Al=0 band cost)
+            // This is automatic since we compare against full 1-63, not bands
         }
 
         (best_al, best_freq_split, interleave_chroma_dc)
@@ -848,12 +907,16 @@ mod tests {
             "Should have 2 luma AC refinement scans for Al=2"
         );
 
-        // Also check for DC refinement scan
+        // NO DC refinement scan - matches C mozjpeg JCP_MAX_COMPRESSION behavior
         let dc_refinements: Vec<_> = scans
             .iter()
             .filter(|s| s.is_dc_scan() && s.ah > 0)
             .collect();
-        assert_eq!(dc_refinements.len(), 1, "Should have 1 DC refinement scan");
+        assert_eq!(
+            dc_refinements.len(),
+            0,
+            "Should have NO DC refinement scan (matches C mozjpeg)"
+        );
     }
 
     #[test]
