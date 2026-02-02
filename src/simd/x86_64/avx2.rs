@@ -12,8 +12,7 @@
 //! Uses archmage `#[arcane]` macro to generate safe wrappers around
 //! `#[target_feature]` functions - the token parameter proves CPU support.
 
-// Allow unsafe for helper functions called from #[arcane] wrappers
-#![allow(unsafe_code)]
+// All SIMD functions use #[arcane] for safe target_feature dispatch.
 
 use crate::consts::DCTSIZE2;
 use archmage::arcane;
@@ -68,65 +67,53 @@ const FIX_CR_B: i32 = -fix(0.08131);
 // ============================================================================
 
 /// Load 8 contiguous i16 values and sign-extend to 8 i32 values.
-///
-/// # Safety
-/// Must be called from a context where AVX2 is enabled.
+#[arcane]
 #[inline(always)]
-unsafe fn load_i16_to_i32(_token: X64V3Token, data: &[i16; 8]) -> __m256i {
+fn load_i16_to_i32(_token: X64V3Token, data: &[i16; 8]) -> __m256i {
     let row_i16 = mem_sse2::_mm_loadu_si128(data);
     _mm256_cvtepi16_epi32(row_i16)
 }
 
 /// Pack 8 i32 values to 8 i16 values with saturation.
-///
-/// # Safety
-/// Must be called from a context where AVX2 is enabled.
+#[arcane]
 #[inline(always)]
-unsafe fn pack_i32_to_i16(v: __m256i) -> __m128i {
+fn pack_i32_to_i16(_token: X64V3Token, v: __m256i) -> __m128i {
     let lo = _mm256_castsi256_si128(v);
     let hi = _mm256_extracti128_si256::<1>(v);
     _mm_packs_epi32(lo, hi)
 }
 
 /// Descale with rounding for pass 1 (CONST_BITS - PASS1_BITS = 11).
-///
-/// # Safety
-/// Must be called from a context where AVX2 is enabled.
+#[arcane]
 #[inline(always)]
-unsafe fn descale_pass1(x: __m256i) -> __m256i {
+fn descale_pass1(_token: X64V3Token, x: __m256i) -> __m256i {
     const N: i32 = CONST_BITS - PASS1_BITS;
     let round = _mm256_set1_epi32(1 << (N - 1));
     _mm256_srai_epi32::<N>(_mm256_add_epi32(x, round))
 }
 
 /// Descale with rounding for pass 2 (CONST_BITS + PASS1_BITS = 15).
-///
-/// # Safety
-/// Must be called from a context where AVX2 is enabled.
+#[arcane]
 #[inline(always)]
-unsafe fn descale_pass2(x: __m256i) -> __m256i {
+fn descale_pass2(_token: X64V3Token, x: __m256i) -> __m256i {
     const N: i32 = CONST_BITS + PASS1_BITS;
     let round = _mm256_set1_epi32(1 << (N - 1));
     _mm256_srai_epi32::<N>(_mm256_add_epi32(x, round))
 }
 
 /// Descale with rounding for PASS1_BITS = 2.
-///
-/// # Safety
-/// Must be called from a context where AVX2 is enabled.
+#[arcane]
 #[inline(always)]
-unsafe fn descale_pass1_bits(x: __m256i) -> __m256i {
+fn descale_pass1_bits(_token: X64V3Token, x: __m256i) -> __m256i {
     const N: i32 = PASS1_BITS;
     let round = _mm256_set1_epi32(1 << (N - 1));
     _mm256_srai_epi32::<N>(_mm256_add_epi32(x, round))
 }
 
 /// Transpose 8x8 matrix of i32 values stored in 8 ymm registers.
-///
-/// # Safety
-/// Must be called from a context where AVX2 is enabled.
+#[arcane]
 #[inline(always)]
-unsafe fn transpose_8x8_avx2(rows: &mut [__m256i; 8]) {
+fn transpose_8x8_avx2(_token: X64V3Token, rows: &mut [__m256i; 8]) {
     // Phase 1: Interleave 32-bit elements
     let t0 = _mm256_unpacklo_epi32(rows[0], rows[1]);
     let t1 = _mm256_unpackhi_epi32(rows[0], rows[1]);
@@ -159,11 +146,9 @@ unsafe fn transpose_8x8_avx2(rows: &mut [__m256i; 8]) {
 }
 
 /// Perform 1D DCT on 8 rows simultaneously using AVX2.
-///
-/// # Safety
-/// Must be called from a context where AVX2 is enabled.
+#[arcane]
 #[inline(always)]
-unsafe fn dct_1d_pass_avx2(data: &mut [__m256i; 8], pass1: bool) {
+fn dct_1d_pass_avx2(_token: X64V3Token, data: &mut [__m256i; 8], pass1: bool) {
     let fix_0_541196100 = _mm256_set1_epi32(FIX_0_541196100);
     let fix_0_765366865 = _mm256_set1_epi32(FIX_0_765366865);
     let fix_1_847759065 = _mm256_set1_epi32(FIX_1_847759065);
@@ -199,33 +184,33 @@ unsafe fn dct_1d_pass_avx2(data: &mut [__m256i; 8], pass1: bool) {
         )
     } else {
         (
-            descale_pass1_bits(_mm256_add_epi32(tmp10, tmp11)),
-            descale_pass1_bits(_mm256_sub_epi32(tmp10, tmp11)),
+            descale_pass1_bits(_token, _mm256_add_epi32(tmp10, tmp11)),
+            descale_pass1_bits(_token, _mm256_sub_epi32(tmp10, tmp11)),
         )
     };
 
     let z1 = _mm256_mullo_epi32(_mm256_add_epi32(tmp12, tmp13), fix_0_541196100);
     let (out2, out6) = if pass1 {
         (
-            descale_pass1(_mm256_add_epi32(
-                z1,
-                _mm256_mullo_epi32(tmp13, fix_0_765366865),
-            )),
-            descale_pass1(_mm256_sub_epi32(
-                z1,
-                _mm256_mullo_epi32(tmp12, fix_1_847759065),
-            )),
+            descale_pass1(
+                _token,
+                _mm256_add_epi32(z1, _mm256_mullo_epi32(tmp13, fix_0_765366865)),
+            ),
+            descale_pass1(
+                _token,
+                _mm256_sub_epi32(z1, _mm256_mullo_epi32(tmp12, fix_1_847759065)),
+            ),
         )
     } else {
         (
-            descale_pass2(_mm256_add_epi32(
-                z1,
-                _mm256_mullo_epi32(tmp13, fix_0_765366865),
-            )),
-            descale_pass2(_mm256_sub_epi32(
-                z1,
-                _mm256_mullo_epi32(tmp12, fix_1_847759065),
-            )),
+            descale_pass2(
+                _token,
+                _mm256_add_epi32(z1, _mm256_mullo_epi32(tmp13, fix_0_765366865)),
+            ),
+            descale_pass2(
+                _token,
+                _mm256_sub_epi32(z1, _mm256_mullo_epi32(tmp12, fix_1_847759065)),
+            ),
         )
     };
 
@@ -248,17 +233,17 @@ unsafe fn dct_1d_pass_avx2(data: &mut [__m256i; 8], pass1: bool) {
 
     let (out7, out5, out3, out1) = if pass1 {
         (
-            descale_pass1(_mm256_add_epi32(_mm256_add_epi32(tmp4, z1), z3)),
-            descale_pass1(_mm256_add_epi32(_mm256_add_epi32(tmp5, z2), z4)),
-            descale_pass1(_mm256_add_epi32(_mm256_add_epi32(tmp6, z2), z3)),
-            descale_pass1(_mm256_add_epi32(_mm256_add_epi32(tmp7, z1), z4)),
+            descale_pass1(_token, _mm256_add_epi32(_mm256_add_epi32(tmp4, z1), z3)),
+            descale_pass1(_token, _mm256_add_epi32(_mm256_add_epi32(tmp5, z2), z4)),
+            descale_pass1(_token, _mm256_add_epi32(_mm256_add_epi32(tmp6, z2), z3)),
+            descale_pass1(_token, _mm256_add_epi32(_mm256_add_epi32(tmp7, z1), z4)),
         )
     } else {
         (
-            descale_pass2(_mm256_add_epi32(_mm256_add_epi32(tmp4, z1), z3)),
-            descale_pass2(_mm256_add_epi32(_mm256_add_epi32(tmp5, z2), z4)),
-            descale_pass2(_mm256_add_epi32(_mm256_add_epi32(tmp6, z2), z3)),
-            descale_pass2(_mm256_add_epi32(_mm256_add_epi32(tmp7, z1), z4)),
+            descale_pass2(_token, _mm256_add_epi32(_mm256_add_epi32(tmp4, z1), z3)),
+            descale_pass2(_token, _mm256_add_epi32(_mm256_add_epi32(tmp5, z2), z4)),
+            descale_pass2(_token, _mm256_add_epi32(_mm256_add_epi32(tmp6, z2), z3)),
+            descale_pass2(_token, _mm256_add_epi32(_mm256_add_epi32(tmp7, z1), z4)),
         )
     };
 
@@ -293,43 +278,43 @@ fn forward_dct_8x8_i32_avx2_impl(
         load_i16_to_i32(token, samples[56..64].try_into().unwrap()),
     ];
 
-    transpose_8x8_avx2(&mut rows);
-    dct_1d_pass_avx2(&mut rows, true);
-    transpose_8x8_avx2(&mut rows);
-    dct_1d_pass_avx2(&mut rows, false);
+    transpose_8x8_avx2(token, &mut rows);
+    dct_1d_pass_avx2(token, &mut rows, true);
+    transpose_8x8_avx2(token, &mut rows);
+    dct_1d_pass_avx2(token, &mut rows, false);
 
     // Store results using safe_unaligned_simd stores
     mem_sse2::_mm_storeu_si128(
         <&mut [i16] as TryInto<&mut [i16; 8]>>::try_into(&mut coeffs[0..8]).unwrap(),
-        pack_i32_to_i16(rows[0]),
+        pack_i32_to_i16(token, rows[0]),
     );
     mem_sse2::_mm_storeu_si128(
         <&mut [i16] as TryInto<&mut [i16; 8]>>::try_into(&mut coeffs[8..16]).unwrap(),
-        pack_i32_to_i16(rows[1]),
+        pack_i32_to_i16(token, rows[1]),
     );
     mem_sse2::_mm_storeu_si128(
         <&mut [i16] as TryInto<&mut [i16; 8]>>::try_into(&mut coeffs[16..24]).unwrap(),
-        pack_i32_to_i16(rows[2]),
+        pack_i32_to_i16(token, rows[2]),
     );
     mem_sse2::_mm_storeu_si128(
         <&mut [i16] as TryInto<&mut [i16; 8]>>::try_into(&mut coeffs[24..32]).unwrap(),
-        pack_i32_to_i16(rows[3]),
+        pack_i32_to_i16(token, rows[3]),
     );
     mem_sse2::_mm_storeu_si128(
         <&mut [i16] as TryInto<&mut [i16; 8]>>::try_into(&mut coeffs[32..40]).unwrap(),
-        pack_i32_to_i16(rows[4]),
+        pack_i32_to_i16(token, rows[4]),
     );
     mem_sse2::_mm_storeu_si128(
         <&mut [i16] as TryInto<&mut [i16; 8]>>::try_into(&mut coeffs[40..48]).unwrap(),
-        pack_i32_to_i16(rows[5]),
+        pack_i32_to_i16(token, rows[5]),
     );
     mem_sse2::_mm_storeu_si128(
         <&mut [i16] as TryInto<&mut [i16; 8]>>::try_into(&mut coeffs[48..56]).unwrap(),
-        pack_i32_to_i16(rows[6]),
+        pack_i32_to_i16(token, rows[6]),
     );
     mem_sse2::_mm_storeu_si128(
         <&mut [i16] as TryInto<&mut [i16; 8]>>::try_into(&mut coeffs[56..64]).unwrap(),
-        pack_i32_to_i16(rows[7]),
+        pack_i32_to_i16(token, rows[7]),
     );
 }
 

@@ -19,8 +19,7 @@
 //! Uses archmage `#[arcane]` macro to generate safe wrappers around
 //! `#[target_feature]` functions - the token parameter proves CPU support.
 
-// Allow unsafe for helper functions called from #[arcane] wrappers
-#![allow(unsafe_code)]
+// All SIMD functions use #[arcane] for safe target_feature dispatch.
 #![allow(clippy::too_many_lines)]
 
 #[cfg(target_arch = "x86_64")]

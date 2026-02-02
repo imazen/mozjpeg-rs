@@ -10,15 +10,13 @@
 //!
 //! Reference: libjpeg-turbo/simd/x86_64/jchuff-sse2.asm
 
-// Note: unsafe code is needed for #[target_feature] functions which must be
-// declared unsafe in stable Rust. The actual SIMD operations use archmage's
-// safe wrappers where possible.
-#![allow(unsafe_code)]
+// SIMD functions use #[arcane] for safe target_feature dispatch or
+// safe #[target_feature] (Rust 1.86+) for methods.
 
 #[cfg(target_arch = "x86_64")]
 use std::arch::x86_64::*;
 
-use archmage::X64V3Token;
+use archmage::{arcane, X64V3Token};
 
 use crate::consts::{DCTSIZE2, JPEG_NATURAL_ORDER};
 use crate::huffman::DerivedTable;
@@ -143,11 +141,8 @@ impl SimdEntropyEncoder {
     ) {
         use archmage::SimdToken;
         // SSE2 is baseline on x86_64, so this should always succeed
-        if let Some(_token) = X64V3Token::try_new() {
-            // SAFETY: Token proves SSE2 is available
-            unsafe {
-                self.encode_block_sse2(block, component, dc_table, ac_table);
-            }
+        if let Some(token) = X64V3Token::try_new() {
+            Self::encode_block_sse2(token, self, block, component, dc_table, ac_table);
         } else {
             // Fallback for non-x86_64 or hypothetical no-SSE2 scenarios
             // (This branch is effectively dead code on x86_64)
@@ -195,12 +190,10 @@ impl SimdEntropyEncoder {
     }
 
     /// Encode a single 8x8 block of DCT coefficients using SIMD.
-    ///
-    /// # Safety
-    /// Requires SSE2 support.
-    #[target_feature(enable = "sse2")]
-    unsafe fn encode_block_sse2(
-        &mut self,
+    #[arcane]
+    fn encode_block_sse2(
+        _token: X64V3Token,
+        _self: &mut SimdEntropyEncoder,
         block: &[i16; DCTSIZE2],
         component: usize,
         dc_table: &DerivedTable,
@@ -211,15 +204,16 @@ impl SimdEntropyEncoder {
         // including DC at position 0, but we use block[0] for DC encoding since
         // encode_dc_fast handles sign adjustment internally.
         let mut temp = [0i16; DCTSIZE2];
-        let nonzero_mask = self.zigzag_reorder_and_sign_sse2(block, &mut temp);
+        let nonzero_mask =
+            SimdEntropyEncoder::zigzag_reorder_and_sign_sse2(_token, block, &mut temp);
 
         // Step 2: Encode DC coefficient (use original block[0], not sign-adjusted temp[0])
         // encode_dc_fast handles sign adjustment for negative DC differentials
-        self.encode_dc_fast(block[0], component, dc_table);
+        _self.encode_dc_fast(block[0], component, dc_table);
 
         // Step 3: Encode AC coefficients using tzcnt-based iteration
         // temp[1..63] are already sign-adjusted for AC encoding
-        self.encode_ac_tzcnt(&temp, nonzero_mask, ac_table);
+        _self.encode_ac_tzcnt(&temp, nonzero_mask, ac_table);
     }
 
     /// Reorder coefficients to zigzag order with sign handling using SSE2.
@@ -229,9 +223,9 @@ impl SimdEntropyEncoder {
     /// Sign handling: for negative values, we compute `value - 1` which gives
     /// the JPEG-format encoding where negative values are represented as
     /// (value - 1) & mask.
-    #[target_feature(enable = "sse2")]
-    unsafe fn zigzag_reorder_and_sign_sse2(
-        &self,
+    #[arcane]
+    fn zigzag_reorder_and_sign_sse2(
+        _token: X64V3Token,
         block: &[i16; DCTSIZE2],
         temp: &mut [i16; DCTSIZE2],
     ) -> u64 {
@@ -574,11 +568,10 @@ mod tests {
             block[i] = i as i16;
         }
 
-        let encoder = SimdEntropyEncoder::new();
+        use archmage::SimdToken;
+        let token = X64V3Token::try_new().unwrap();
         let mut temp = [0i16; 64];
-        unsafe {
-            let _mask = encoder.zigzag_reorder_and_sign_sse2(&block, &mut temp);
-        }
+        let _mask = SimdEntropyEncoder::zigzag_reorder_and_sign_sse2(token, &block, &mut temp);
 
         // After zigzag reorder, temp[zigzag_pos] should contain block[JPEG_NATURAL_ORDER[zigzag_pos]]
         // Position 0 in zigzag = natural position 0, so temp[0] = block[0] = 0
@@ -601,21 +594,20 @@ mod tests {
         block[1] = -5; // natural pos 1 = zigzag pos 1
         block[8] = -1; // natural pos 8 = zigzag pos 2
 
-        let encoder = SimdEntropyEncoder::new();
+        use archmage::SimdToken;
+        let token = X64V3Token::try_new().unwrap();
         let mut temp = [0i16; 64];
-        unsafe {
-            let mask = encoder.zigzag_reorder_and_sign_sse2(&block, &mut temp);
+        let mask = SimdEntropyEncoder::zigzag_reorder_and_sign_sse2(token, &block, &mut temp);
 
-            // Position 0: value 5, should be unchanged
-            assert_eq!(temp[0], 5);
-            // Position 1: value -5, should be -6 (x + (x < 0 ? -1 : 0))
-            assert_eq!(temp[1], -6);
-            // Position 2: value -1 (from natural pos 8), should be -2
-            assert_eq!(temp[2], -2);
+        // Position 0: value 5, should be unchanged
+        assert_eq!(temp[0], 5);
+        // Position 1: value -5, should be -6 (x + (x < 0 ? -1 : 0))
+        assert_eq!(temp[1], -6);
+        // Position 2: value -1 (from natural pos 8), should be -2
+        assert_eq!(temp[2], -2);
 
-            // Check mask: positions 0, 1, 2 should be non-zero
-            assert_eq!(mask & 0b111, 0b111);
-        }
+        // Check mask: positions 0, 1, 2 should be non-zero
+        assert_eq!(mask & 0b111, 0b111);
     }
 
     #[test]
@@ -657,10 +649,10 @@ mod tests {
         block[1] = 10; // AC at natural pos 1 (zigzag pos 1)
         block[8] = -5; // AC at natural pos 8 (zigzag pos 2)
 
+        use archmage::SimdToken;
+        let token = X64V3Token::try_new().unwrap();
         let mut encoder = SimdEntropyEncoder::new();
-        unsafe {
-            encoder.encode_block_sse2(&block, 0, &dc_table, &ac_table);
-        }
+        SimdEntropyEncoder::encode_block_sse2(token, &mut encoder, &block, 0, &dc_table, &ac_table);
         let output = encoder.finish();
 
         // Verify output is non-empty and reasonable size
@@ -735,10 +727,17 @@ mod tests {
             let std_output = writer.into_bytes();
 
             // Encode with SIMD encoder
+            use archmage::SimdToken;
+            let token = X64V3Token::try_new().unwrap();
             let mut simd_encoder = SimdEntropyEncoder::new();
-            unsafe {
-                simd_encoder.encode_block_sse2(block, 0, &dc_table, &ac_table);
-            }
+            SimdEntropyEncoder::encode_block_sse2(
+                token,
+                &mut simd_encoder,
+                block,
+                0,
+                &dc_table,
+                &ac_table,
+            );
             let simd_output = simd_encoder.finish();
 
             // Compare outputs
