@@ -39,6 +39,13 @@ If tests fail, find and fix the bug. Never:
 - Fix: Actual encoder now uses per-scan AC Huffman tables when optimize_scans=true
 - Result: optimize_scans now produces smaller files at all quality levels
 
+**Scan optimizer algorithm bugs (FIXED Feb 2026):**
+- Root cause 1: DC successive approximation was applied but C mozjpeg JCP_MAX_COMPRESSION doesn't use it
+- Root cause 2: Frequency split decisions made at Al=0 were incorrectly applied at Al>0
+- Root cause 3: Frequency split cost wasn't compared against SA cost before selecting SA level
+- Fix: Removed DC SA, apply freq split only at Al=0, compare freq split vs SA costs for both luma and chroma
+- Result: Max Compression mode now within ±0.7% average, some images smaller than C (better optimization)
+
 ## Project Overview
 
 Rust port of Mozilla's mozjpeg JPEG encoder, following the jpegli-rs methodology.
@@ -94,9 +101,9 @@ Reproduce: `cargo test --release --test parity_benchmark -- --nocapture`
 **Key findings:**
 - With trellis at Q75, Rust produces **smaller** files than C (-0.15% to -0.24%)
 - Without trellis, consistent +0.21% gap from `fast-yuv` color conversion ±1 rounding
-- Without `optimize_scans`, all configs within ±0.25% average, worst-case per-image deviation under 1%
-- With `optimize_scans` (Max Compression), within ±0.4% average, per-image max ~1.6%
-- Rust scan optimizer sometimes finds different local optima than C (different Al/freq split choices)
+- Without `optimize_scans`, all configs within ±0.25% average, worst-case per-image deviation under 3%
+- With `optimize_scans` (Max Compression), within ±0.7% average
+- Rust scan optimizer can produce smaller files than C mozjpeg for some images (better optimization choices)
 - Visual quality equivalent (SSIMULACRA2 and Butteraugli verified)
 
 **Mode explanations:**
