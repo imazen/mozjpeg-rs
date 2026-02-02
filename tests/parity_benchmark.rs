@@ -271,7 +271,10 @@ fn parity_benchmark() {
 
     let png_paths = corpus::png_files_in_dir(&kodak);
     if png_paths.is_empty() {
-        eprintln!("Skipping parity_benchmark: no PNG files in {}", kodak.display());
+        eprintln!(
+            "Skipping parity_benchmark: no PNG files in {}",
+            kodak.display()
+        );
         return;
     }
 
