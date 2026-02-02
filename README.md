@@ -1,6 +1,6 @@
 # mozjpeg-rs
 
-Pure Rust JPEG encoder based on Mozilla's [mozjpeg](https://github.com/mozilla/mozjpeg), featuring trellis quantization for optimal compression.
+Pure Rust JPEG encoder with **byte-exact C mozjpeg parity** and trellis quantization for optimal compression. With trellis enabled, produces **smaller files** than C mozjpeg while being **7% faster**.
 
 [![Crates.io](https://img.shields.io/crates/v/mozjpeg-rs.svg)](https://crates.io/crates/mozjpeg-rs)
 [![Documentation](https://docs.rs/mozjpeg-rs/badge.svg)](https://docs.rs/mozjpeg-rs)
@@ -32,16 +32,18 @@ Call these methods *first*, then set quality, subsampling, and other options.
 |--|---------------|-----------|---------------|
 | **Language** | Pure Rust | C | C/asm |
 | **Memory safety** | Compile-time guaranteed | Manual | Manual |
-| **Trellis quantization** | Yes | Yes | No |
+| **Trellis quantization** | Yes (7% faster than C) | Yes | No |
 | **Build complexity** | `cargo add` | cmake + nasm + C toolchain | cmake + nasm |
+| **Output parity** | Byte-exact with C mozjpeg | — | Different output |
 
 **Choose mozjpeg-rs when you want:**
 - Memory-safe JPEG encoding without C dependencies
-- Smaller files than libjpeg-turbo (trellis quantization)
+- Byte-exact parity with C mozjpeg (or opt into faster color conversion)
+- Smaller files than libjpeg-turbo via trellis quantization
 - Simple integration via Cargo
 
 **Choose C mozjpeg when you need:**
-- Maximum baseline encoding speed (SIMD-optimized entropy coding)
+- Maximum baseline encoding speed (hand-tuned SIMD entropy coding)
 - Established C ABI for FFI
 - Arithmetic coding (rarely used)
 
@@ -76,11 +78,10 @@ Reproduce with: `cargo test --release --test parity_benchmark -- --nocapture`
 
 **Configs:** Baseline = huffman opt only. +Trellis = AC+DC trellis + deringing. MaxCompression = Progressive + Trellis + optimize_scans.
 
-**Key findings:**
-- **Byte-exact parity** for Baseline and Progressive modes (0.00% delta)
-- With trellis, Rust produces **smaller** files than C (-0.05% to -0.47%)
-- MaxCompression within ±0.21% average, max deviation 1.24%
-- Visual quality equivalent (SSIMULACRA2 and Butteraugli verified)
+**Highlights:**
+- **Byte-exact parity** — Baseline and Progressive modes produce identical output to C mozjpeg
+- **Smaller files with trellis** — Rust produces 0.05–0.47% smaller files than C mozjpeg
+- **MaxCompression** — Within ±0.21% of C, with per-image variance due to different scan optimization choices
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="benchmark/pareto_ssimulacra2.svg">
@@ -234,16 +235,16 @@ For CLI-style naming (compatible with rimage conventions):
 
 ## Performance
 
-Benchmarked on 2048x2048 image, 30 iterations, release mode:
+Benchmarked on 2048x2048 image (4 megapixels), 30 iterations, release mode:
 
-| Configuration | Rust | C mozjpeg | Ratio |
-|---------------|------|-----------|-------|
-| Baseline (huffman opt) | 47.88 ms | 9.65 ms | 4.96x slower |
-| Trellis (AC + DC) | 202.84 ms | 217.29 ms | **7% faster** |
+| Configuration | Rust | C mozjpeg | |
+|---------------|------|-----------|---|
+| Trellis (AC + DC) | 202 ms | 217 ms | **7% faster** |
+| Baseline (huffman opt) | 48 ms | 10 ms | 5x slower |
 
 Reproduce: `cargo test --release --test bench_2k -- --nocapture`
 
-**Note**: Baseline encoding is slower due to entropy coding differences. With trellis quantization enabled (the recommended mode for quality), Rust is **faster** than C mozjpeg.
+**With trellis quantization (recommended for quality), Rust is faster than C mozjpeg.** Baseline-only encoding is slower due to entropy coding; future releases will address this gap.
 
 ### SIMD Support
 
@@ -251,7 +252,7 @@ mozjpeg-rs uses `multiversion` for automatic vectorization by default. Optional 
 
 ```toml
 [dependencies]
-mozjpeg-rs = { version = "0.6", features = ["simd-intrinsics"] }
+mozjpeg-rs = { version = "0.7", features = ["simd-intrinsics"] }
 ```
 
 In benchmarks, the difference is minimal (~2%) as `multiversion` autovectorization works well for DCT and color conversion.

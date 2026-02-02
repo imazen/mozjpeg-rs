@@ -5,6 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.0] - 2026-02-02
+
+### Added
+- **`fast_color(bool)`** - Ergonomic API for color conversion mode
+  - `fast_color(true)` — ~40% faster RGB→YCbCr using `yuv` crate (±1 rounding vs C)
+  - `fast_color(false)` — exact C mozjpeg parity, bytewise identical output (default)
+- **Byte-exact C mozjpeg parity** — Baseline and Progressive modes now produce identical output to C mozjpeg (0.00% file size delta)
+- **AVX2-accelerated C-compatible color conversion** — 3.6 Gpix/s, exact match to C mozjpeg's `jccolor.c`
+
+### Changed
+- Default color conversion now produces **byte-exact** output matching C mozjpeg
+- `kodak_dir()` now returns the actual Kodak corpus directory (was aliasing `cid22_dir()`)
+- With trellis enabled, Rust produces **smaller files** than C mozjpeg (-0.05% to -0.47%)
+- Trellis encoding is now **7% faster** than C mozjpeg
+
+### Deprecated
+- `c_compat_color(bool)` — use `fast_color(bool)` instead (clearer semantics)
+
 ## [0.6.0] - 2026-02-02
 
 ### Added
