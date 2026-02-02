@@ -180,9 +180,9 @@ pub struct Encoder {
     optimize_huffman: bool,
     /// Enable overshoot deringing (reduces ringing on white backgrounds)
     overshoot_deringing: bool,
-    /// Use C mozjpeg-compatible color conversion for exact baseline parity.
-    /// When enabled, produces bytewise-identical YCbCr values to C mozjpeg.
-    /// Disabled by default (uses faster yuv crate with ±1 rounding tolerance).
+    /// Use C mozjpeg-compatible color conversion for exact parity.
+    /// Produces bytewise-identical YCbCr values to C mozjpeg.
+    /// Enabled by default; disable with `.c_compat_color(false)` for faster yuv crate.
     c_compat_color: bool,
     /// Optimize progressive scan configuration (tries multiple configs, picks smallest)
     optimize_scans: bool,
@@ -328,7 +328,7 @@ impl Encoder {
             force_baseline: false,
             optimize_huffman: true,
             overshoot_deringing: true,
-            c_compat_color: false,
+            c_compat_color: true,
             optimize_scans: false,
             restart_interval: 0,
             pixel_density: PixelDensity::default(),
@@ -388,7 +388,7 @@ impl Encoder {
             force_baseline: false,
             optimize_huffman: true,
             overshoot_deringing: true,
-            c_compat_color: false,
+            c_compat_color: true,
             optimize_scans: true,
             restart_interval: 0,
             pixel_density: PixelDensity::default(),
@@ -449,7 +449,7 @@ impl Encoder {
             force_baseline: false,
             optimize_huffman: true,
             overshoot_deringing: true,
-            c_compat_color: false,
+            c_compat_color: true,
             optimize_scans: false, // Key difference from max_compression()
             restart_interval: 0,
             pixel_density: PixelDensity::default(),
@@ -506,7 +506,7 @@ impl Encoder {
             force_baseline: true,
             optimize_huffman: false,
             overshoot_deringing: false,
-            c_compat_color: false,
+            c_compat_color: true,
             optimize_scans: false,
             restart_interval: 0,
             pixel_density: PixelDensity::default(),
@@ -576,25 +576,21 @@ impl Encoder {
         self
     }
 
-    /// Use C mozjpeg-compatible color conversion for exact baseline parity.
+    /// Use C mozjpeg-compatible color conversion for exact parity.
     ///
-    /// By default, the encoder uses the `yuv` crate for SIMD-optimized color
-    /// conversion, which has ±1 rounding differences compared to C mozjpeg.
+    /// **Enabled by default.** Uses AVX2-accelerated conversion that exactly
+    /// matches C mozjpeg's `jccolor.c` implementation, producing bytewise-identical
+    /// YCbCr values.
+    ///
+    /// When disabled, uses the `yuv` crate which has ±1 rounding differences.
     /// These differences are invisible in decoded images but can cause 3-5%
     /// larger baseline files because the coefficient differences accumulate
     /// through DC differential encoding.
     ///
-    /// When enabled, uses scalar conversion that exactly matches C mozjpeg's
-    /// `jccolor.c` implementation. This eliminates the baseline file size gap
-    /// at the cost of slower color conversion.
+    /// # When to Disable
     ///
-    /// **Progressive modes are not affected** because successive approximation
-    /// scans mask the coefficient differences.
-    ///
-    /// # When to Use
-    ///
-    /// - Enable for baseline mode when exact C mozjpeg parity is required
-    /// - Leave disabled (default) for progressive modes or when speed matters
+    /// - For maximum speed when exact parity isn't required
+    /// - Progressive modes are less affected (successive approximation masks differences)
     pub fn c_compat_color(mut self, enable: bool) -> Self {
         self.c_compat_color = enable;
         self

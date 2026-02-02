@@ -57,7 +57,7 @@ impl Default for TestEncoderConfig {
             overshoot_deringing: false,
             optimize_scans: false,
             force_baseline: true, // Match C mozjpeg's default (jpeg_set_quality passes TRUE)
-            c_compat_color: false, // Default to fast yuv crate
+            c_compat_color: true, // C-compatible for exact parity (default)
         }
     }
 }
@@ -578,7 +578,7 @@ mod tests {
         let rgb = create_test_image(width, height);
 
         let mut config_fast = TestEncoderConfig::baseline_huffman_opt().with_quality(85);
-        config_fast.c_compat_color = false; // Fast yuv crate (default)
+        config_fast.c_compat_color = false; // Fast yuv crate (opt-in)
 
         let mut config_compat = config_fast.clone();
         config_compat.c_compat_color = true; // C mozjpeg-compatible
