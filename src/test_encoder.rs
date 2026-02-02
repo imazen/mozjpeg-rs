@@ -121,6 +121,7 @@ impl TestEncoderConfig {
 }
 
 /// Encode using Rust implementation.
+#[allow(deprecated)] // Uses c_compat_color for test compatibility
 pub fn encode_rust(rgb: &[u8], width: u32, height: u32, config: &TestEncoderConfig) -> Vec<u8> {
     use crate::{Encoder, TrellisConfig};
 

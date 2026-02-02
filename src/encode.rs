@@ -182,7 +182,7 @@ pub struct Encoder {
     overshoot_deringing: bool,
     /// Use C mozjpeg-compatible color conversion for exact parity.
     /// Produces bytewise-identical YCbCr values to C mozjpeg.
-    /// Enabled by default; disable with `.c_compat_color(false)` for faster yuv crate.
+    /// Enabled by default; use `.fast_color()` for faster yuv crate (~40% faster, ±1 rounding).
     c_compat_color: bool,
     /// Optimize progressive scan configuration (tries multiple configs, picks smallest)
     optimize_scans: bool,
@@ -576,21 +576,54 @@ impl Encoder {
         self
     }
 
-    /// Use C mozjpeg-compatible color conversion for exact parity.
+    /// Use faster color conversion with the `yuv` crate.
     ///
-    /// **Enabled by default.** Uses AVX2-accelerated conversion that exactly
-    /// matches C mozjpeg's `jccolor.c` implementation, producing bytewise-identical
-    /// YCbCr values.
+    /// Enables ~40% faster RGB→YCbCr conversion using the `yuv` crate instead of
+    /// the default C mozjpeg-compatible conversion.
     ///
-    /// When disabled, uses the `yuv` crate which has ±1 rounding differences.
-    /// These differences are invisible in decoded images but can cause 3-5%
-    /// larger baseline files because the coefficient differences accumulate
-    /// through DC differential encoding.
+    /// **Trade-off:** The `yuv` crate has ±1 rounding differences from C mozjpeg.
+    /// These differences are invisible in decoded images but may cause slightly
+    /// different file sizes (typically <1% for baseline mode).
     ///
-    /// # When to Disable
+    /// # Example
     ///
-    /// - For maximum speed when exact parity isn't required
-    /// - Progressive modes are less affected (successive approximation masks differences)
+    /// ```
+    /// use mozjpeg_rs::Encoder;
+    ///
+    /// let encoder = Encoder::new()
+    ///     .quality(85)
+    ///     .fast_color();  // ~40% faster color conversion
+    /// ```
+    ///
+    /// # When to Use
+    ///
+    /// - When encoding speed is more important than byte-exact C mozjpeg parity
+    /// - For progressive mode (successive approximation masks rounding differences)
+    /// - When you don't need to compare output with C mozjpeg
+    #[cfg(feature = "fast-yuv")]
+    pub fn fast_color(mut self) -> Self {
+        self.c_compat_color = false;
+        self
+    }
+
+    /// Use C mozjpeg-compatible color conversion (default).
+    ///
+    /// This is the **default behavior** - you don't need to call this unless
+    /// you want to explicitly document the choice or override a previous
+    /// [`fast_color()`](Self::fast_color) call.
+    ///
+    /// Uses AVX2-accelerated conversion that exactly matches C mozjpeg's
+    /// `jccolor.c` implementation, producing bytewise-identical output.
+    pub fn exact_color_match(mut self) -> Self {
+        self.c_compat_color = true;
+        self
+    }
+
+    /// Legacy API for color conversion mode.
+    ///
+    /// **Deprecated:** Use [`fast_color()`](Self::fast_color) or
+    /// [`exact_color_match()`](Self::exact_color_match) instead.
+    #[deprecated(since = "0.7.0", note = "Use fast_color() or exact_color_match() instead")]
     pub fn c_compat_color(mut self, enable: bool) -> Self {
         self.c_compat_color = enable;
         self

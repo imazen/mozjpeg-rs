@@ -47,7 +47,7 @@ Call these methods *first*, then set quality, subsampling, and other options.
 
 ## Compression Results vs C mozjpeg
 
-Tested on Kodak corpus (24 images), 4:2:0 subsampling, c_compat_color enabled (default). Positive delta = Rust files are larger.
+Tested on Kodak corpus (24 images), 4:2:0 subsampling, exact color match (default). Positive delta = Rust files are larger.
 
 Reproduce with: `cargo test --release --test parity_benchmark -- --nocapture`
 
@@ -114,6 +114,12 @@ let jpeg = Encoder::new()
     .progressive(true)
     .subsampling(Subsampling::S420)
     .optimize_huffman(true)
+    .encode_rgb(&pixels, width, height)?;
+
+// Faster color conversion (trades exact C parity for ~40% faster RGB→YCbCr)
+let jpeg = Encoder::new()
+    .quality(85)
+    .fast_color()  // Uses yuv crate, ±1 rounding difference
     .encode_rgb(&pixels, width, height)?;
 ```
 

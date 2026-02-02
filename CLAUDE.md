@@ -60,7 +60,7 @@ Rust port of Mozilla's mozjpeg JPEG encoder, following the jpegli-rs methodology
 
 ### Compression Results vs C mozjpeg
 
-**Kodak corpus (24 images), 4:2:0, c_compat_color enabled (default). 6 configs × 6 quality levels.**
+**Kodak corpus (24 images), 4:2:0, exact color match (default). 6 configs × 6 quality levels.**
 Reproduce: `cargo test --release --test parity_benchmark -- --nocapture`
 
 | Config                   |  Q |   Delta | Max Dev |
@@ -111,7 +111,7 @@ Reproduce: `cargo test --release --test parity_benchmark -- --nocapture`
 **Configs:** Baseline = huffman opt only. +Trellis = AC trellis. Full = AC trellis + DC trellis + deringing. Max Compression = Full + `optimize_scans: true`. All others use `optimize_scans: false`. All use `force_baseline: true`.
 
 **Key findings:**
-- **Byte-exact parity** for Baseline and Progressive modes (0.00% delta) with `c_compat_color` (default)
+- **Byte-exact parity** for Baseline and Progressive modes (0.00% delta) with default color conversion
 - With trellis, Rust produces **smaller** files than C (-0.05% to -0.80%)
 - Max Compression within ±0.72% average, max deviation 1.70%
 - Visual quality equivalent (SSIMULACRA2 and Butteraugli verified)
@@ -176,10 +176,10 @@ let encoder = Encoder::new()
     .optimize_huffman(true);
 let jpeg_data = encoder.encode_rgb(&pixels, width, height)?;
 
-// Faster encoding (opt out of C-compat color conversion)
+// Faster color conversion (opt into yuv crate)
 let encoder = Encoder::baseline_optimized()
     .quality(85)
-    .c_compat_color(false);  // Use yuv crate (faster, ±1 rounding)
+    .fast_color();  // ~40% faster color conversion, ±1 rounding
 let jpeg_data = encoder.encode_rgb(&pixels, width, height)?;
 ```
 
@@ -640,11 +640,11 @@ GitHub Actions workflow runs on push/PR:
 ### Published Features (safe to use)
 
 - **`fast-yuv`** (default feature) - Enables the `yuv` crate for optional faster color
-  conversion via `.c_compat_color(false)`. The yuv crate supports AVX-512, AVX2, SSE,
+  conversion via `.fast_color()`. The yuv crate supports AVX-512, AVX2, SSE,
   NEON, and WASM SIMD but has ±1 rounding differences from C mozjpeg.
 
-  **Note:** The encoder now defaults to C-compatible color conversion (exact parity).
-  Use `.c_compat_color(false)` to opt into the faster yuv crate if needed.
+  **Note:** The encoder defaults to C-compatible color conversion (exact parity).
+  Use `.fast_color()` to opt into ~40% faster color conversion if exact parity isn't needed.
 
 - **`mozjpeg-sys-config`** - Encode using C mozjpeg with Rust `Encoder` settings.
   Adds `Encoder::to_c_mozjpeg()` which returns a `CMozjpeg` encoder.

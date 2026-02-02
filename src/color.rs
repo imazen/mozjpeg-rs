@@ -455,9 +455,10 @@ pub fn convert_block_rgb_to_ycbcr(
 /// Cb/Cr calculations, which matches C mozjpeg's `jccolor.c` implementation.
 ///
 /// This produces bytewise-identical output to C mozjpeg, eliminating the
-/// ±1 rounding differences that cause 3-5% larger baseline files.
+/// ±1 rounding differences that cause slightly larger baseline files.
 ///
-/// Use [`Encoder::c_compat_color`] to enable this conversion.
+/// This is the **default** color conversion. Use [`Encoder::fast_color`] to
+/// opt into faster (but not byte-exact) conversion with the `yuv` crate.
 #[inline]
 pub fn rgb_to_ycbcr_c_compat(r: u8, g: u8, b: u8) -> (u8, u8, u8) {
     // C mozjpeg uses 16-bit fixed point with these constants:

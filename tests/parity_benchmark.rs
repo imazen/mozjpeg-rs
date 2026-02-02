@@ -299,7 +299,7 @@ fn parity_benchmark() {
     println!("## File Size Parity: mozjpeg-rs vs C mozjpeg");
     println!();
     println!(
-        "Kodak corpus ({} images), 4:2:0, c_compat_color enabled (default).",
+        "Kodak corpus ({} images), 4:2:0, exact color match (default).",
         n_images
     );
     println!();
