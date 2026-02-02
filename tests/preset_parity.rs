@@ -37,6 +37,7 @@
 //! intentionally use better tables. The mozjpeg crate doesn't expose table selection.
 
 use mozjpeg_rs::{Encoder, Preset, Subsampling};
+use ssimulacra2::{compute_frame_ssimulacra2, ColorPrimaries, Rgb, TransferCharacteristic};
 
 /// Image sizes to test (small, medium, large)
 const TEST_SIZES: [(u32, u32); 3] = [
@@ -191,6 +192,60 @@ fn count_scans(data: &[u8]) -> usize {
     count
 }
 
+/// Decode a JPEG and return RGB pixels
+fn decode_jpeg(data: &[u8]) -> Vec<u8> {
+    let mut decoder = jpeg_decoder::Decoder::new(data);
+    decoder.decode().expect("decode failed")
+}
+
+/// Compute SSIMULACRA2 score between original RGB and decoded JPEG
+/// Returns score where 100 = identical, higher is better
+fn compute_ssim2(original: &[u8], decoded: &[u8], width: u32, height: u32) -> f64 {
+    // Convert u8 RGB to f32 RGB for ssimulacra2
+    let orig_f32: Vec<[f32; 3]> = original
+        .chunks_exact(3)
+        .map(|c| {
+            [
+                c[0] as f32 / 255.0,
+                c[1] as f32 / 255.0,
+                c[2] as f32 / 255.0,
+            ]
+        })
+        .collect();
+
+    let dec_f32: Vec<[f32; 3]> = decoded
+        .chunks_exact(3)
+        .map(|c| {
+            [
+                c[0] as f32 / 255.0,
+                c[1] as f32 / 255.0,
+                c[2] as f32 / 255.0,
+            ]
+        })
+        .collect();
+
+    // Create Rgb images with sRGB transfer characteristics
+    let orig_rgb = Rgb::new(
+        orig_f32,
+        width as usize,
+        height as usize,
+        TransferCharacteristic::SRGB,
+        ColorPrimaries::BT709,
+    )
+    .expect("create orig rgb");
+
+    let dec_rgb = Rgb::new(
+        dec_f32,
+        width as usize,
+        height as usize,
+        TransferCharacteristic::SRGB,
+        ColorPrimaries::BT709,
+    )
+    .expect("create dec rgb");
+
+    compute_frame_ssimulacra2(orig_rgb, dec_rgb).expect("compute ssimulacra2")
+}
+
 /// Create a gradient test image
 fn create_test_image(width: u32, height: u32) -> Vec<u8> {
     let mut rgb = vec![0u8; (width * height * 3) as usize];
@@ -304,11 +359,21 @@ fn test_preset_parity_all_sizes() {
 }
 
 /// Test that ProgressiveSmallest closely matches mozjpeg crate with optimize_scans
+/// Also verifies that when Rust produces smaller files, quality is not degraded
 #[test]
 fn test_progressive_smallest_parity() {
     let config = preset_to_matchable_config(Preset::ProgressiveSmallest).unwrap();
 
+    println!("\n=== ProgressiveSmallest Parity with SSIMULACRA2 ===\n");
+    println!(
+        "| {:>4}x{:<4} | {:>3} | {:>8} | {:>8} | {:>7} | {:>6} | {:>6} | {:>7} |",
+        "W", "H", "Q", "Rust(B)", "C(B)", "Size%", "R_S2", "C_S2", "S2_Δ"
+    );
+    println!("|----------|-----|----------|----------|---------|--------|--------|---------|");
+
     for &(width, height) in &TEST_SIZES {
+        // Skip quality check for images smaller than 8x8 (ssimulacra2 minimum)
+        let can_check_quality = width >= 8 && height >= 8;
         let rgb = create_test_image(width, height);
 
         for quality in [50, 75, 85, 95] {
@@ -323,10 +388,40 @@ fn test_progressive_smallest_parity() {
             let diff_pct =
                 ((rust_jpeg.len() as f64 - c_jpeg.len() as f64) / c_jpeg.len() as f64) * 100.0;
 
+            // Compute SSIMULACRA2 for all cases where we can
+            let (rust_ssim2, c_ssim2, quality_diff) = if can_check_quality {
+                let rust_decoded = decode_jpeg(&rust_jpeg);
+                let c_decoded = decode_jpeg(&c_jpeg);
+                let r = compute_ssim2(&rgb, &rust_decoded, width, height);
+                let c = compute_ssim2(&rgb, &c_decoded, width, height);
+                (r, c, r - c)
+            } else {
+                (0.0, 0.0, 0.0)
+            };
+
+            println!(
+                "| {:>4}x{:<4} | {:>3} | {:>8} | {:>8} | {:>+6.2}% | {:>6.2} | {:>6.2} | {:>+6.2} |",
+                width, height, quality,
+                rust_jpeg.len(), c_jpeg.len(),
+                diff_pct, rust_ssim2, c_ssim2, quality_diff
+            );
+
+            // When Rust produces significantly smaller files (>2% smaller),
+            // verify quality is not degraded significantly using SSIMULACRA2
+            // Allow up to 3 points worse at low quality (Q50) since algorithms differ
+            if can_check_quality && diff_pct < -2.0 {
+                // Scale tolerance by quality - low Q has more algorithmic variance
+                let ssim2_tolerance = if quality <= 50 { 3.0 } else { 1.5 };
+                assert!(
+                    quality_diff > -ssim2_tolerance,
+                    "ProgressiveSmallest at {}x{} Q{}: Rust is {:.2}% smaller but SSIM2 is {:.2} worse (R={:.2}, C={:.2})",
+                    width, height, quality, -diff_pct, -quality_diff, rust_ssim2, c_ssim2
+                );
+            }
+
             // optimize_scans algorithms differ, so allow wider tolerance
             // Small images have more variance due to scan selection overhead
             // Rust sometimes produces smaller files (better scan selection)
-            // Note: Quality parity is verified in cid22_bench.rs with full DSSIM/Butteraugli metrics
             let threshold = if width * height < 10000 { 20.0 } else { 6.0 };
             assert!(
                 diff_pct.abs() < threshold,
@@ -339,6 +434,7 @@ fn test_progressive_smallest_parity() {
             );
         }
     }
+    println!();
 }
 
 /// Test that all presets produce decodable output at all sizes
