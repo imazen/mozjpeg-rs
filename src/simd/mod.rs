@@ -34,7 +34,7 @@ pub mod x86_64;
 use crate::consts::DCTSIZE2;
 
 #[cfg(target_arch = "x86_64")]
-use archmage::{tokens::x86::Avx2Token, SimdToken};
+use archmage::{SimdToken, X64V3Token};
 
 // ============================================================================
 // Fast YUV color conversion using the yuv crate (when feature enabled)
@@ -127,7 +127,7 @@ pub struct SimdOps {
     dct_variant: DctVariant,
     /// Cached AVX2 token for archmage-based DCT (x86_64 only)
     #[cfg(target_arch = "x86_64")]
-    avx2_token: Option<Avx2Token>,
+    avx2_token: Option<X64V3Token>,
 }
 
 impl SimdOps {
@@ -163,7 +163,7 @@ impl SimdOps {
 
         // DCT: Try archmage first (cached token), then intrinsics, then multiversion
         #[cfg(target_arch = "x86_64")]
-        let (dct_fn, dct_variant, avx2_token) = if let Some(token) = Avx2Token::try_new() {
+        let (dct_fn, dct_variant, avx2_token) = if let Some(token) = X64V3Token::try_new() {
             // Archmage with cached token - use multiversion as the function pointer
             // but actual dispatch will use the token-based method
             (
@@ -253,7 +253,7 @@ impl SimdOps {
                 forward_dct: x86_64::avx2::forward_dct_8x8_i32_avx2_intrinsics,
                 color_convert_rgb_to_ycbcr: x86_64::avx2::convert_rgb_to_ycbcr,
                 dct_variant: DctVariant::Avx2Intrinsics,
-                avx2_token: Avx2Token::try_new(),
+                avx2_token: X64V3Token::try_new(),
             })
         } else {
             None
@@ -265,7 +265,7 @@ impl SimdOps {
     #[cfg(target_arch = "x86_64")]
     #[must_use]
     pub fn avx2_archmage() -> Option<Self> {
-        Avx2Token::try_new().map(|token| Self {
+        X64V3Token::try_new().map(|token| Self {
             forward_dct: scalar::forward_dct_8x8,
             color_convert_rgb_to_ycbcr: scalar::convert_rgb_to_ycbcr,
             dct_variant: DctVariant::Avx2Archmage,
@@ -291,7 +291,7 @@ impl SimdOps {
     #[cfg(target_arch = "x86_64")]
     #[must_use]
     pub fn avx2_i16() -> Option<Self> {
-        Avx2Token::try_new().map(|token| Self {
+        X64V3Token::try_new().map(|token| Self {
             forward_dct: scalar::forward_dct_8x8,
             color_convert_rgb_to_ycbcr: scalar::convert_rgb_to_ycbcr,
             dct_variant: DctVariant::Avx2I16,

@@ -17,9 +17,9 @@
 
 use crate::consts::DCTSIZE2;
 use archmage::arcane;
-use archmage::mem::sse2 as mem_sse2;
-use archmage::tokens::x86::Avx2Token;
+use archmage::X64V3Token;
 use core::arch::x86_64::*;
+use safe_unaligned_simd::x86_64 as mem_sse2;
 
 // ============================================================================
 // DCT Constants
@@ -72,8 +72,8 @@ const FIX_CR_B: i32 = -fix(0.08131);
 /// # Safety
 /// Must be called from a context where AVX2 is enabled.
 #[inline(always)]
-unsafe fn load_i16_to_i32(token: Avx2Token, data: &[i16; 8]) -> __m256i {
-    let row_i16 = mem_sse2::_mm_loadu_si128(token, data);
+unsafe fn load_i16_to_i32(_token: X64V3Token, data: &[i16; 8]) -> __m256i {
+    let row_i16 = mem_sse2::_mm_loadu_si128(data);
     _mm256_cvtepi16_epi32(row_i16)
 }
 
@@ -277,7 +277,7 @@ unsafe fn dct_1d_pass_avx2(data: &mut [__m256i; 8], pass1: bool) {
 /// Uses archmage `#[arcane]` for safe SIMD - token proves AVX2 is available.
 #[arcane]
 fn forward_dct_8x8_i32_avx2_impl(
-    token: Avx2Token,
+    token: X64V3Token,
     samples: &[i16; DCTSIZE2],
     coeffs: &mut [i16; DCTSIZE2],
 ) {
@@ -298,44 +298,36 @@ fn forward_dct_8x8_i32_avx2_impl(
     transpose_8x8_avx2(&mut rows);
     dct_1d_pass_avx2(&mut rows, false);
 
-    // Store results using archmage safe stores
+    // Store results using safe_unaligned_simd stores
     mem_sse2::_mm_storeu_si128(
-        token,
         <&mut [i16] as TryInto<&mut [i16; 8]>>::try_into(&mut coeffs[0..8]).unwrap(),
         pack_i32_to_i16(rows[0]),
     );
     mem_sse2::_mm_storeu_si128(
-        token,
         <&mut [i16] as TryInto<&mut [i16; 8]>>::try_into(&mut coeffs[8..16]).unwrap(),
         pack_i32_to_i16(rows[1]),
     );
     mem_sse2::_mm_storeu_si128(
-        token,
         <&mut [i16] as TryInto<&mut [i16; 8]>>::try_into(&mut coeffs[16..24]).unwrap(),
         pack_i32_to_i16(rows[2]),
     );
     mem_sse2::_mm_storeu_si128(
-        token,
         <&mut [i16] as TryInto<&mut [i16; 8]>>::try_into(&mut coeffs[24..32]).unwrap(),
         pack_i32_to_i16(rows[3]),
     );
     mem_sse2::_mm_storeu_si128(
-        token,
         <&mut [i16] as TryInto<&mut [i16; 8]>>::try_into(&mut coeffs[32..40]).unwrap(),
         pack_i32_to_i16(rows[4]),
     );
     mem_sse2::_mm_storeu_si128(
-        token,
         <&mut [i16] as TryInto<&mut [i16; 8]>>::try_into(&mut coeffs[40..48]).unwrap(),
         pack_i32_to_i16(rows[5]),
     );
     mem_sse2::_mm_storeu_si128(
-        token,
         <&mut [i16] as TryInto<&mut [i16; 8]>>::try_into(&mut coeffs[48..56]).unwrap(),
         pack_i32_to_i16(rows[6]),
     );
     mem_sse2::_mm_storeu_si128(
-        token,
         <&mut [i16] as TryInto<&mut [i16; 8]>>::try_into(&mut coeffs[56..64]).unwrap(),
         pack_i32_to_i16(rows[7]),
     );
@@ -348,7 +340,7 @@ pub fn forward_dct_8x8_i32_avx2_intrinsics(
     coeffs: &mut [i16; DCTSIZE2],
 ) {
     use archmage::SimdToken;
-    if let Some(token) = Avx2Token::try_new() {
+    if let Some(token) = X64V3Token::try_new() {
         forward_dct_8x8_i32_avx2_impl(token, samples, coeffs);
     } else {
         // Fallback to scalar (shouldn't happen if this module is only used with AVX2)
@@ -366,7 +358,7 @@ pub fn forward_dct_8x8_i32_avx2_intrinsics(
 /// Uses archmage `#[arcane]` for safe SIMD - token proves AVX2 is available.
 #[arcane]
 fn convert_rgb_to_ycbcr_avx2_inner(
-    _token: Avx2Token,
+    _token: X64V3Token,
     rgb: &[u8],
     y_out: &mut [u8],
     cb_out: &mut [u8],
@@ -532,7 +524,7 @@ pub fn convert_rgb_to_ycbcr(
     num_pixels: usize,
 ) {
     use archmage::SimdToken;
-    if let Some(token) = Avx2Token::try_new() {
+    if let Some(token) = X64V3Token::try_new() {
         convert_rgb_to_ycbcr_avx2_inner(token, rgb, y_out, cb_out, cr_out, num_pixels);
     } else {
         // Fallback to scalar

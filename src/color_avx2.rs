@@ -26,9 +26,9 @@
 #[cfg(target_arch = "x86_64")]
 use archmage::arcane;
 #[cfg(target_arch = "x86_64")]
-use archmage::mem::avx as mem_avx;
+use archmage::X64V3Token;
 #[cfg(target_arch = "x86_64")]
-use archmage::tokens::x86::Avx2Token;
+use safe_unaligned_simd::x86_64 as mem_avx;
 #[cfg(target_arch = "x86_64")]
 use std::arch::x86_64::*;
 
@@ -68,7 +68,7 @@ const fn pack_i16_pair(lo: i32, hi: i32) -> i32 {
 #[cfg(target_arch = "x86_64")]
 #[arcane]
 fn convert_rgb_to_ycbcr_avx2_impl(
-    token: Avx2Token,
+    _token: X64V3Token,
     rgb: &[u8],
     y_out: &mut [u8],
     cb_out: &mut [u8],
@@ -103,15 +103,12 @@ fn convert_rgb_to_ycbcr_avx2_impl(
 
         // Load 96 bytes (32 RGB pixels) using 3 YMM loads with archmage safe wrappers
         let ymm_a = mem_avx::_mm256_loadu_si256(
-            token,
             <&[u8] as TryInto<&[u8; 32]>>::try_into(&rgb[rgb_base..rgb_base + 32]).unwrap(),
         );
         let ymm_f = mem_avx::_mm256_loadu_si256(
-            token,
             <&[u8] as TryInto<&[u8; 32]>>::try_into(&rgb[rgb_base + 32..rgb_base + 64]).unwrap(),
         );
         let ymm_b = mem_avx::_mm256_loadu_si256(
-            token,
             <&[u8] as TryInto<&[u8; 32]>>::try_into(&rgb[rgb_base + 64..rgb_base + 96]).unwrap(),
         );
 
@@ -260,7 +257,6 @@ fn convert_rgb_to_ycbcr_avx2_impl(
         let cb_7 = _mm256_slli_epi16(cb_odd, 8);
         let cb_5 = _mm256_or_si256(cb_even, cb_7);
         mem_avx::_mm256_storeu_si256(
-            token,
             <&mut [u8] as TryInto<&mut [u8; 32]>>::try_into(&mut cb_out[out_base..out_base + 32])
                 .unwrap(),
             cb_5,
@@ -334,7 +330,6 @@ fn convert_rgb_to_ycbcr_avx2_impl(
         let y_0 = _mm256_slli_epi16(y_odd, 8);
         let y_6 = _mm256_or_si256(y_even, y_0);
         mem_avx::_mm256_storeu_si256(
-            token,
             <&mut [u8] as TryInto<&mut [u8; 32]>>::try_into(&mut y_out[out_base..out_base + 32])
                 .unwrap(),
             y_6,
@@ -360,7 +355,6 @@ fn convert_rgb_to_ycbcr_avx2_impl(
         let cr_7 = _mm256_slli_epi16(cr_odd, 8);
         let cr_1 = _mm256_or_si256(cr_even, cr_7);
         mem_avx::_mm256_storeu_si256(
-            token,
             <&mut [u8] as TryInto<&mut [u8; 32]>>::try_into(&mut cr_out[out_base..out_base + 32])
                 .unwrap(),
             cr_1,
@@ -401,7 +395,7 @@ fn convert_rgb_to_ycbcr_avx2_impl(
 /// Token proves AVX2 is available.
 #[cfg(target_arch = "x86_64")]
 pub fn convert_rgb_to_ycbcr_avx2(
-    token: Avx2Token,
+    token: X64V3Token,
     rgb: &[u8],
     y_out: &mut [u8],
     cb_out: &mut [u8],
@@ -423,7 +417,7 @@ pub fn convert_rgb_to_ycbcr_dispatch(
     num_pixels: usize,
 ) {
     use archmage::SimdToken;
-    if let Some(token) = Avx2Token::try_new() {
+    if let Some(token) = X64V3Token::try_new() {
         convert_rgb_to_ycbcr_avx2_impl(token, rgb, y_out, cb_out, cr_out, num_pixels);
     } else {
         // Fallback to scalar
@@ -444,7 +438,7 @@ mod tests {
     #[test]
     fn test_avx2_matches_scalar() {
         use archmage::SimdToken;
-        let Some(token) = Avx2Token::try_new() else {
+        let Some(token) = X64V3Token::try_new() else {
             eprintln!("AVX2 not available, skipping test");
             return;
         };
@@ -509,7 +503,7 @@ mod tests {
     #[test]
     fn test_avx2_remainder_handling() {
         use archmage::SimdToken;
-        if Avx2Token::try_new().is_none() {
+        if X64V3Token::try_new().is_none() {
             eprintln!("AVX2 not available, skipping test");
             return;
         }
@@ -526,7 +520,7 @@ mod tests {
         let mut cb_scalar = vec![0u8; num_pixels];
         let mut cr_scalar = vec![0u8; num_pixels];
 
-        let token = Avx2Token::try_new().unwrap();
+        let token = X64V3Token::try_new().unwrap();
         convert_rgb_to_ycbcr_avx2(
             token,
             &rgb,

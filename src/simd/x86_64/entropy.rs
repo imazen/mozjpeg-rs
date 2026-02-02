@@ -18,7 +18,7 @@
 #[cfg(target_arch = "x86_64")]
 use std::arch::x86_64::*;
 
-use archmage::tokens::x86::Sse2Token;
+use archmage::X64V3Token;
 
 use crate::consts::{DCTSIZE2, JPEG_NATURAL_ORDER};
 use crate::huffman::DerivedTable;
@@ -143,7 +143,7 @@ impl SimdEntropyEncoder {
     ) {
         use archmage::SimdToken;
         // SSE2 is baseline on x86_64, so this should always succeed
-        if let Some(_token) = Sse2Token::try_new() {
+        if let Some(_token) = X64V3Token::try_new() {
             // SAFETY: Token proves SSE2 is available
             unsafe {
                 self.encode_block_sse2(block, component, dc_table, ac_table);

@@ -43,7 +43,8 @@ fn main() {
         );
     }
 
-    let (rgb, width, height) = load_png(Path::new("corpus/CID22/CID22-512/training/10.png")).unwrap();
+    let (rgb, width, height) =
+        load_png(Path::new("corpus/CID22/CID22-512/training/10.png")).unwrap();
 
     println!("\n=== Encoding comparison (CID22/10.png) ===");
 

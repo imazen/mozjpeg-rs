@@ -21,7 +21,8 @@ fn load_png(path: &Path) -> Option<(Vec<u8>, u32, u32)> {
 }
 
 fn main() {
-    let (rgb, width, height) = load_png(Path::new("corpus/CID22/CID22-512/training/10.png")).unwrap();
+    let (rgb, width, height) =
+        load_png(Path::new("corpus/CID22/CID22-512/training/10.png")).unwrap();
     let quality = 85;
 
     // Print the scan script

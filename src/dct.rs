@@ -898,9 +898,9 @@ pub fn forward_dct_u8_i32_multiversion(samples: &[u8; DCTSIZE2], coeffs: &mut [i
 
     #[cfg(target_arch = "x86_64")]
     {
-        use archmage::tokens::x86::Avx2Token;
         use archmage::SimdToken;
-        if let Some(token) = Avx2Token::try_new() {
+        use archmage::X64V3Token;
+        if let Some(token) = X64V3Token::try_new() {
             return avx2_archmage::forward_dct_8x8_i32(token, &shifted, coeffs);
         }
     }
@@ -943,9 +943,9 @@ pub fn forward_dct_u8_i32_multiversion_deringing(
 
     #[cfg(target_arch = "x86_64")]
     {
-        use archmage::tokens::x86::Avx2Token;
         use archmage::SimdToken;
-        if let Some(token) = Avx2Token::try_new() {
+        use archmage::X64V3Token;
+        if let Some(token) = X64V3Token::try_new() {
             return avx2_archmage::forward_dct_8x8_i32(token, &shifted, coeffs);
         }
     }
@@ -980,27 +980,28 @@ pub mod avx2_archmage {
     //!
     //! **Note:** This module is not used by the encoder. It exists for experimentation
     //! with archmage-based safe SIMD patterns. The encoder uses `src/simd/x86_64/avx2.rs`.
-    //! Runtime feature detection via `Avx2Token::try_new()` ensures safety.
+    //! Runtime feature detection via `X64V3Token::try_new()` ensures safety.
 
     use super::*;
     use archmage::arcane;
-    use archmage::mem::{avx, sse2};
-    use archmage::tokens::x86::Avx2Token;
+    use archmage::X64V3Token;
     use core::arch::x86_64::*;
+    use safe_unaligned_simd::x86_64 as sse2_mem;
+    use safe_unaligned_simd::x86_64 as avx_mem;
 
     /// Load 8 contiguous i16 values and sign-extend to 8 i32 values in a ymm register.
     /// This is the key optimization - uses a single 128-bit load + vpmovsxwd.
     #[arcane]
     #[inline(always)]
-    fn load_i16_to_i32(token: Avx2Token, data: &[i16; 8]) -> __m256i {
-        let row_i16 = sse2::_mm_loadu_si128(token.sse2(), data);
+    fn load_i16_to_i32(_token: X64V3Token, data: &[i16; 8]) -> __m256i {
+        let row_i16 = sse2_mem::_mm_loadu_si128(data);
         _mm256_cvtepi16_epi32(row_i16)
     }
 
     /// Pack 8 i32 values to 8 i16 values (with saturation).
     #[arcane]
     #[inline(always)]
-    fn pack_i32_to_i16(_token: Avx2Token, v: __m256i) -> __m128i {
+    fn pack_i32_to_i16(_token: X64V3Token, v: __m256i) -> __m128i {
         // Extract low and high 128-bit lanes
         let lo = _mm256_castsi256_si128(v);
         let hi = _mm256_extracti128_si256::<1>(v);
@@ -1011,7 +1012,7 @@ pub mod avx2_archmage {
     /// Descale with rounding for pass 1 (CONST_BITS - PASS1_BITS = 11).
     #[arcane]
     #[inline(always)]
-    fn descale_pass1(_token: Avx2Token, x: __m256i) -> __m256i {
+    fn descale_pass1(_token: X64V3Token, x: __m256i) -> __m256i {
         const N: i32 = CONST_BITS - PASS1_BITS; // 11
         let round = _mm256_set1_epi32(1 << (N - 1));
         _mm256_srai_epi32::<N>(_mm256_add_epi32(x, round))
@@ -1020,7 +1021,7 @@ pub mod avx2_archmage {
     /// Descale with rounding for pass 2 (CONST_BITS + PASS1_BITS = 15).
     #[arcane]
     #[inline(always)]
-    fn descale_pass2(_token: Avx2Token, x: __m256i) -> __m256i {
+    fn descale_pass2(_token: X64V3Token, x: __m256i) -> __m256i {
         const N: i32 = CONST_BITS + PASS1_BITS; // 15
         let round = _mm256_set1_epi32(1 << (N - 1));
         _mm256_srai_epi32::<N>(_mm256_add_epi32(x, round))
@@ -1029,7 +1030,7 @@ pub mod avx2_archmage {
     /// Descale with rounding for PASS1_BITS = 2.
     #[arcane]
     #[inline(always)]
-    fn descale_pass1_bits(_token: Avx2Token, x: __m256i) -> __m256i {
+    fn descale_pass1_bits(_token: X64V3Token, x: __m256i) -> __m256i {
         const N: i32 = PASS1_BITS; // 2
         let round = _mm256_set1_epi32(1 << (N - 1));
         _mm256_srai_epi32::<N>(_mm256_add_epi32(x, round))
@@ -1043,7 +1044,7 @@ pub mod avx2_archmage {
     /// The token proves AVX2 is available. Memory operations use safe archmage wrappers.
     #[arcane]
     pub fn forward_dct_8x8_i32(
-        token: Avx2Token,
+        token: X64V3Token,
         samples: &[i16; DCTSIZE2],
         coeffs: &mut [i16; DCTSIZE2],
     ) {
@@ -1079,7 +1080,6 @@ pub mod avx2_archmage {
         dct_1d_pass_avx2(token, &mut rows, false);
 
         // Store results - pack i32 back to i16 using safe memory operations
-        let sse2_token = token.sse2();
 
         // Helper to get a mutable row reference
         #[inline(always)]
@@ -1087,53 +1087,21 @@ pub mod avx2_archmage {
             (&mut coeffs[idx * 8..][..8]).try_into().unwrap()
         }
 
-        sse2::_mm_storeu_si128(
-            sse2_token,
-            row_mut(coeffs, 0),
-            pack_i32_to_i16(token, rows[0]),
-        );
-        sse2::_mm_storeu_si128(
-            sse2_token,
-            row_mut(coeffs, 1),
-            pack_i32_to_i16(token, rows[1]),
-        );
-        sse2::_mm_storeu_si128(
-            sse2_token,
-            row_mut(coeffs, 2),
-            pack_i32_to_i16(token, rows[2]),
-        );
-        sse2::_mm_storeu_si128(
-            sse2_token,
-            row_mut(coeffs, 3),
-            pack_i32_to_i16(token, rows[3]),
-        );
-        sse2::_mm_storeu_si128(
-            sse2_token,
-            row_mut(coeffs, 4),
-            pack_i32_to_i16(token, rows[4]),
-        );
-        sse2::_mm_storeu_si128(
-            sse2_token,
-            row_mut(coeffs, 5),
-            pack_i32_to_i16(token, rows[5]),
-        );
-        sse2::_mm_storeu_si128(
-            sse2_token,
-            row_mut(coeffs, 6),
-            pack_i32_to_i16(token, rows[6]),
-        );
-        sse2::_mm_storeu_si128(
-            sse2_token,
-            row_mut(coeffs, 7),
-            pack_i32_to_i16(token, rows[7]),
-        );
+        sse2_mem::_mm_storeu_si128(row_mut(coeffs, 0), pack_i32_to_i16(token, rows[0]));
+        sse2_mem::_mm_storeu_si128(row_mut(coeffs, 1), pack_i32_to_i16(token, rows[1]));
+        sse2_mem::_mm_storeu_si128(row_mut(coeffs, 2), pack_i32_to_i16(token, rows[2]));
+        sse2_mem::_mm_storeu_si128(row_mut(coeffs, 3), pack_i32_to_i16(token, rows[3]));
+        sse2_mem::_mm_storeu_si128(row_mut(coeffs, 4), pack_i32_to_i16(token, rows[4]));
+        sse2_mem::_mm_storeu_si128(row_mut(coeffs, 5), pack_i32_to_i16(token, rows[5]));
+        sse2_mem::_mm_storeu_si128(row_mut(coeffs, 6), pack_i32_to_i16(token, rows[6]));
+        sse2_mem::_mm_storeu_si128(row_mut(coeffs, 7), pack_i32_to_i16(token, rows[7]));
     }
 
     /// Transpose 8x8 matrix of i32 values stored in 8 ymm registers.
     /// Uses AVX2 unpack and permute instructions.
     #[arcane]
     #[inline(always)]
-    fn transpose_8x8_avx2(token: Avx2Token, rows: &mut [__m256i; 8]) {
+    fn transpose_8x8_avx2(token: X64V3Token, rows: &mut [__m256i; 8]) {
         // Phase 1: Interleave 32-bit elements
         let t0 = _mm256_unpacklo_epi32(rows[0], rows[1]);
         let t1 = _mm256_unpackhi_epi32(rows[0], rows[1]);
@@ -1169,7 +1137,7 @@ pub mod avx2_archmage {
     /// Perform 1D DCT on 8 rows simultaneously using AVX2.
     #[arcane]
     #[inline(always)]
-    fn dct_1d_pass_avx2(token: Avx2Token, data: &mut [__m256i; 8], pass1: bool) {
+    fn dct_1d_pass_avx2(token: X64V3Token, data: &mut [__m256i; 8], pass1: bool) {
         // Load constants
         let fix_0_541196100 = _mm256_set1_epi32(FIX_0_541196100);
         let fix_0_765366865 = _mm256_set1_epi32(FIX_0_765366865);
@@ -1331,7 +1299,7 @@ pub mod avx2_archmage {
     /// The token proves AVX2 is available. Memory operations use safe archmage wrappers.
     #[arcane]
     pub fn forward_dct_8x8_i16(
-        token: Avx2Token,
+        token: X64V3Token,
         samples: &[i16; DCTSIZE2],
         coeffs: &mut [i16; DCTSIZE2],
     ) {
@@ -1346,15 +1314,13 @@ pub mod avx2_archmage {
             (&mut coeffs[idx * 16..][..16]).try_into().unwrap()
         }
 
-        let avx_token = token.avx();
-
         // ---- Pass 1: process rows ----
 
         // Load: ymm4=(rows 0-1), ymm5=(rows 2-3), ymm6=(rows 4-5), ymm7=(rows 6-7)
-        let ymm4 = avx::_mm256_loadu_si256(avx_token, chunk(samples, 0));
-        let ymm5 = avx::_mm256_loadu_si256(avx_token, chunk(samples, 1));
-        let ymm6 = avx::_mm256_loadu_si256(avx_token, chunk(samples, 2));
-        let ymm7 = avx::_mm256_loadu_si256(avx_token, chunk(samples, 3));
+        let ymm4 = avx_mem::_mm256_loadu_si256(chunk(samples, 0));
+        let ymm5 = avx_mem::_mm256_loadu_si256(chunk(samples, 1));
+        let ymm6 = avx_mem::_mm256_loadu_si256(chunk(samples, 2));
+        let ymm7 = avx_mem::_mm256_loadu_si256(chunk(samples, 3));
 
         // Reorganize to (row0|row4), (row1|row5), (row2|row6), (row3|row7)
         let ymm0 = _mm256_permute2x128_si256(ymm4, ymm6, 0x20);
@@ -1389,17 +1355,17 @@ pub mod avx2_archmage {
         let out67 = _mm256_permute2x128_si256(ymm2, ymm4, 0x21); // data6_7
 
         // Store results using safe memory operations
-        avx::_mm256_storeu_si256(avx_token, chunk_mut(coeffs, 0), out01);
-        avx::_mm256_storeu_si256(avx_token, chunk_mut(coeffs, 1), out23);
-        avx::_mm256_storeu_si256(avx_token, chunk_mut(coeffs, 2), out45);
-        avx::_mm256_storeu_si256(avx_token, chunk_mut(coeffs, 3), out67);
+        avx_mem::_mm256_storeu_si256(chunk_mut(coeffs, 0), out01);
+        avx_mem::_mm256_storeu_si256(chunk_mut(coeffs, 1), out23);
+        avx_mem::_mm256_storeu_si256(chunk_mut(coeffs, 2), out45);
+        avx_mem::_mm256_storeu_si256(chunk_mut(coeffs, 3), out67);
     }
 
     /// 8x8x16-bit matrix transpose - exact translation of libjpeg-turbo's dotranspose macro
     #[arcane]
     #[inline(always)]
     fn dotranspose(
-        token: Avx2Token,
+        token: X64V3Token,
         ymm0: __m256i,
         ymm1: __m256i,
         ymm2: __m256i,
@@ -1431,7 +1397,7 @@ pub mod avx2_archmage {
     #[arcane]
     #[inline(always)]
     fn dodct(
-        token: Avx2Token,
+        token: X64V3Token,
         ymm0: __m256i,
         ymm1: __m256i,
         ymm2: __m256i,
@@ -1959,12 +1925,12 @@ mod tests {
     #[cfg(all(target_arch = "x86_64", target_feature = "avx2"))]
     #[test]
     fn test_avx2_matches_scalar_all_patterns() {
-        use super::avx2::forward_dct_8x8_avx2;
-        use archmage::tokens::x86::Avx2Token;
+        #[allow(deprecated)]
+        use super::avx2_archmage::forward_dct_8x8_i32 as forward_dct_8x8_avx2;
         use archmage::SimdToken;
+        use archmage::X64V3Token;
 
-        // SAFETY: Test runs only on x86_64 with AVX2 support
-        let token = unsafe { Avx2Token::forge_token_dangerously() };
+        let token = X64V3Token::try_new().unwrap();
 
         // Exhaustive test with many patterns
         for seed in 0..20 {
@@ -1990,12 +1956,12 @@ mod tests {
     #[cfg(all(target_arch = "x86_64", target_feature = "avx2"))]
     #[test]
     fn test_avx2_i16_matches_scalar_all_patterns() {
-        use super::avx2::forward_dct_8x8_avx2_i16;
-        use archmage::tokens::x86::Avx2Token;
+        #[allow(deprecated)]
+        use super::avx2_archmage::forward_dct_8x8_i16 as forward_dct_8x8_avx2_i16;
         use archmage::SimdToken;
+        use archmage::X64V3Token;
 
-        // SAFETY: Test runs only on x86_64 with AVX2 support
-        let token = unsafe { Avx2Token::forge_token_dangerously() };
+        let token = X64V3Token::try_new().unwrap();
 
         // Exhaustive test with many patterns
         for seed in 0..20 {
