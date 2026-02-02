@@ -360,31 +360,15 @@ fn convert_rgb_to_ycbcr_avx2_impl(
         );
     }
 
-    // Handle remaining pixels with scalar code
+    // Handle remaining pixels with scalar code (C-compat formula)
     let remaining_start = chunks * 32;
     for i in remaining_start..num_pixels {
         let rgb_idx = i * 3;
-        let r = rgb[rgb_idx] as i32;
-        let g = rgb[rgb_idx + 1] as i32;
-        let b = rgb[rgb_idx + 2] as i32;
-
-        const FIX_0_29900: i32 = 19595;
-        const FIX_0_58700: i32 = 38470;
-        const FIX_0_11400: i32 = 7471;
-        const FIX_0_16874: i32 = 11059;
-        const FIX_0_33126: i32 = 21709;
-        const FIX_0_50000: i32 = 32768;
-        const FIX_0_41869: i32 = 27439;
-        const FIX_0_08131: i32 = 5329;
-        const ONE_HALF: i32 = 1 << 15;
-
-        let y = (FIX_0_29900 * r + FIX_0_58700 * g + FIX_0_11400 * b + ONE_HALF) >> 16;
-        let cb = ((-FIX_0_16874 * r - FIX_0_33126 * g + FIX_0_50000 * b + ONE_HALF) >> 16) + 128;
-        let cr = ((FIX_0_50000 * r - FIX_0_41869 * g - FIX_0_08131 * b + ONE_HALF) >> 16) + 128;
-
-        y_out[i] = y.clamp(0, 255) as u8;
-        cb_out[i] = cb.clamp(0, 255) as u8;
-        cr_out[i] = cr.clamp(0, 255) as u8;
+        let (y, cb, cr) =
+            crate::color::rgb_to_ycbcr_c_compat(rgb[rgb_idx], rgb[rgb_idx + 1], rgb[rgb_idx + 2]);
+        y_out[i] = y;
+        cb_out[i] = cb;
+        cr_out[i] = cr;
     }
 }
 
@@ -406,7 +390,8 @@ pub fn convert_rgb_to_ycbcr_avx2(
 
 /// Runtime dispatch wrapper for AVX2 color conversion.
 ///
-/// Falls back to the scalar implementation if AVX2 is not available.
+/// Uses C mozjpeg-compatible rounding for exact parity.
+/// Falls back to the scalar c_compat implementation if AVX2 is not available.
 #[cfg(target_arch = "x86_64")]
 pub fn convert_rgb_to_ycbcr_dispatch(
     rgb: &[u8],
@@ -419,10 +404,10 @@ pub fn convert_rgb_to_ycbcr_dispatch(
     if let Some(token) = X64V3Token::try_new() {
         convert_rgb_to_ycbcr_avx2_impl(token, rgb, y_out, cb_out, cr_out, num_pixels);
     } else {
-        // Fallback to scalar
+        // Fallback to scalar C-compat
         for i in 0..num_pixels {
             let (y, cb, cr) =
-                crate::color::rgb_to_ycbcr(rgb[i * 3], rgb[i * 3 + 1], rgb[i * 3 + 2]);
+                crate::color::rgb_to_ycbcr_c_compat(rgb[i * 3], rgb[i * 3 + 1], rgb[i * 3 + 2]);
             y_out[i] = y;
             cb_out[i] = cb;
             cr_out[i] = cr;
@@ -435,7 +420,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_avx2_matches_scalar() {
+    fn test_avx2_matches_c_compat() {
         use archmage::SimdToken;
         let Some(token) = X64V3Token::try_new() else {
             eprintln!("AVX2 not available, skipping test");
@@ -464,37 +449,31 @@ mod tests {
             num_pixels,
         );
 
-        // Run scalar version
+        // Run C-compat scalar version
         for i in 0..num_pixels {
             let (y, cb, cr) =
-                crate::color::rgb_to_ycbcr(rgb[i * 3], rgb[i * 3 + 1], rgb[i * 3 + 2]);
+                crate::color::rgb_to_ycbcr_c_compat(rgb[i * 3], rgb[i * 3 + 1], rgb[i * 3 + 2]);
             y_scalar[i] = y;
             cb_scalar[i] = cb;
             cr_scalar[i] = cr;
         }
 
-        // Compare - allow ±1 for rounding differences
+        // Compare - must be exact match for C-compat
         for i in 0..num_pixels {
-            assert!(
-                (y_avx2[i] as i16 - y_scalar[i] as i16).abs() <= 1,
-                "Y mismatch at {}: AVX2={}, scalar={}",
-                i,
-                y_avx2[i],
-                y_scalar[i]
+            assert_eq!(
+                y_avx2[i], y_scalar[i],
+                "Y mismatch at {}: AVX2={}, c_compat={}",
+                i, y_avx2[i], y_scalar[i]
             );
-            assert!(
-                (cb_avx2[i] as i16 - cb_scalar[i] as i16).abs() <= 1,
-                "Cb mismatch at {}: AVX2={}, scalar={}",
-                i,
-                cb_avx2[i],
-                cb_scalar[i]
+            assert_eq!(
+                cb_avx2[i], cb_scalar[i],
+                "Cb mismatch at {}: AVX2={}, c_compat={}",
+                i, cb_avx2[i], cb_scalar[i]
             );
-            assert!(
-                (cr_avx2[i] as i16 - cr_scalar[i] as i16).abs() <= 1,
-                "Cr mismatch at {}: AVX2={}, scalar={}",
-                i,
-                cr_avx2[i],
-                cr_scalar[i]
+            assert_eq!(
+                cr_avx2[i], cr_scalar[i],
+                "Cr mismatch at {}: AVX2={}, c_compat={}",
+                i, cr_avx2[i], cr_scalar[i]
             );
         }
     }
@@ -507,7 +486,7 @@ mod tests {
             return;
         }
 
-        // Test with non-multiple of 32 pixels
+        // Test with non-multiple of 32 pixels (50 = 32 + 18 remainder)
         let num_pixels = 50;
         let rgb: Vec<u8> = (0..num_pixels * 3).map(|i| (i * 11) as u8).collect();
 
@@ -529,35 +508,31 @@ mod tests {
             num_pixels,
         );
 
+        // Use c_compat for comparison
         for i in 0..num_pixels {
             let (y, cb, cr) =
-                crate::color::rgb_to_ycbcr(rgb[i * 3], rgb[i * 3 + 1], rgb[i * 3 + 2]);
+                crate::color::rgb_to_ycbcr_c_compat(rgb[i * 3], rgb[i * 3 + 1], rgb[i * 3 + 2]);
             y_scalar[i] = y;
             cb_scalar[i] = cb;
             cr_scalar[i] = cr;
         }
 
+        // Must be exact match for C-compat
         for i in 0..num_pixels {
-            assert!(
-                (y_avx2[i] as i16 - y_scalar[i] as i16).abs() <= 1,
-                "Y mismatch at {}: AVX2={}, scalar={}",
-                i,
-                y_avx2[i],
-                y_scalar[i]
+            assert_eq!(
+                y_avx2[i], y_scalar[i],
+                "Y mismatch at {}: AVX2={}, c_compat={}",
+                i, y_avx2[i], y_scalar[i]
             );
-            assert!(
-                (cb_avx2[i] as i16 - cb_scalar[i] as i16).abs() <= 1,
-                "Cb mismatch at {}: AVX2={}, scalar={}",
-                i,
-                cb_avx2[i],
-                cb_scalar[i]
+            assert_eq!(
+                cb_avx2[i], cb_scalar[i],
+                "Cb mismatch at {}: AVX2={}, c_compat={}",
+                i, cb_avx2[i], cb_scalar[i]
             );
-            assert!(
-                (cr_avx2[i] as i16 - cr_scalar[i] as i16).abs() <= 1,
-                "Cr mismatch at {}: AVX2={}, scalar={}",
-                i,
-                cr_avx2[i],
-                cr_scalar[i]
+            assert_eq!(
+                cr_avx2[i], cr_scalar[i],
+                "Cr mismatch at {}: AVX2={}, c_compat={}",
+                i, cr_avx2[i], cr_scalar[i]
             );
         }
     }

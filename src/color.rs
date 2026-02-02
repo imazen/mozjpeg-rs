@@ -548,136 +548,10 @@ fn convert_rgb_to_ycbcr_c_compat_scalar(
 // AVX2-accelerated C-compat color conversion (archmage)
 // ============================================================================
 
-#[cfg(target_arch = "x86_64")]
-#[allow(unsafe_code)] // Required for SIMD intrinsics
-mod avx2_c_compat {
-    use archmage::{arcane, X64V3Token};
-    use std::arch::x86_64::*;
-
-    const SCALEBITS: i32 = 16;
-
-    // C mozjpeg coefficients (FIX(x) = (x * 65536 + 0.5) as i32)
-    const FIX_0_29900: i32 = 19595;
-    const FIX_0_58700: i32 = 38470;
-    const FIX_0_11400: i32 = 7471;
-    const FIX_0_16874: i32 = 11059;
-    const FIX_0_33126: i32 = 21709;
-    const FIX_0_50000: i32 = 32768;
-    const FIX_0_41869: i32 = 27439;
-    const FIX_0_08131: i32 = 5329;
-
-    /// AVX2 C-compat RGB→YCbCr conversion.
-    /// Processes 8 pixels per iteration using i32 arithmetic for exact C parity.
-    #[arcane]
-    pub fn convert_avx2(
-        _token: X64V3Token,
-        rgb: &[u8],
-        y_out: &mut [u8],
-        cb_out: &mut [u8],
-        cr_out: &mut [u8],
-        num_pixels: usize,
-    ) {
-        // Coefficient vectors (8 x i32)
-        let coef_y_r = _mm256_set1_epi32(FIX_0_29900);
-        let coef_y_g = _mm256_set1_epi32(FIX_0_58700);
-        let coef_y_b = _mm256_set1_epi32(FIX_0_11400);
-
-        let coef_cb_r = _mm256_set1_epi32(-FIX_0_16874);
-        let coef_cb_g = _mm256_set1_epi32(-FIX_0_33126);
-        let coef_cb_b = _mm256_set1_epi32(FIX_0_50000);
-
-        let coef_cr_r = _mm256_set1_epi32(FIX_0_50000);
-        let coef_cr_g = _mm256_set1_epi32(-FIX_0_41869);
-        let coef_cr_b = _mm256_set1_epi32(-FIX_0_08131);
-
-        // Rounding: Y uses ONE_HALF, Cb/Cr use CBCR_OFFSET + ONE_HALF - 1
-        let y_round = _mm256_set1_epi32(1 << (SCALEBITS - 1));
-        let cbcr_round = _mm256_set1_epi32((128 << SCALEBITS) + (1 << (SCALEBITS - 1)) - 1);
-
-        // Process 8 pixels at a time
-        let chunks = num_pixels / 8;
-        let remainder = num_pixels % 8;
-
-        for chunk in 0..chunks {
-            let rgb_base = chunk * 24;
-            let out_base = chunk * 8;
-
-            // Load and de-interleave 8 pixels of RGB data
-            // Using scalar gather is simpler and correct; LLVM can optimize
-            let mut r_arr = [0i32; 8];
-            let mut g_arr = [0i32; 8];
-            let mut b_arr = [0i32; 8];
-
-            for i in 0..8 {
-                r_arr[i] = rgb[rgb_base + i * 3] as i32;
-                g_arr[i] = rgb[rgb_base + i * 3 + 1] as i32;
-                b_arr[i] = rgb[rgb_base + i * 3 + 2] as i32;
-            }
-
-            let r = _mm256_loadu_si256(r_arr.as_ptr() as *const __m256i);
-            let g = _mm256_loadu_si256(g_arr.as_ptr() as *const __m256i);
-            let b = _mm256_loadu_si256(b_arr.as_ptr() as *const __m256i);
-
-            // Y = (0.29900*R + 0.58700*G + 0.11400*B + ONE_HALF) >> 16
-            let y_r = _mm256_mullo_epi32(r, coef_y_r);
-            let y_g = _mm256_mullo_epi32(g, coef_y_g);
-            let y_b = _mm256_mullo_epi32(b, coef_y_b);
-            let y_sum =
-                _mm256_add_epi32(_mm256_add_epi32(y_r, y_g), _mm256_add_epi32(y_b, y_round));
-            let y_32 = _mm256_srai_epi32(y_sum, SCALEBITS);
-
-            // Cb = (-0.16874*R - 0.33126*G + 0.50000*B + CBCR_OFFSET + ONE_HALF - 1) >> 16
-            let cb_r = _mm256_mullo_epi32(r, coef_cb_r);
-            let cb_g = _mm256_mullo_epi32(g, coef_cb_g);
-            let cb_b = _mm256_mullo_epi32(b, coef_cb_b);
-            let cb_sum = _mm256_add_epi32(
-                _mm256_add_epi32(cb_r, cb_g),
-                _mm256_add_epi32(cb_b, cbcr_round),
-            );
-            let cb_32 = _mm256_srai_epi32(cb_sum, SCALEBITS);
-
-            // Cr = (0.50000*R - 0.41869*G - 0.08131*B + CBCR_OFFSET + ONE_HALF - 1) >> 16
-            let cr_r = _mm256_mullo_epi32(r, coef_cr_r);
-            let cr_g = _mm256_mullo_epi32(g, coef_cr_g);
-            let cr_b = _mm256_mullo_epi32(b, coef_cr_b);
-            let cr_sum = _mm256_add_epi32(
-                _mm256_add_epi32(cr_r, cr_g),
-                _mm256_add_epi32(cr_b, cbcr_round),
-            );
-            let cr_32 = _mm256_srai_epi32(cr_sum, SCALEBITS);
-
-            // Store results
-            let mut y_arr = [0i32; 8];
-            let mut cb_arr = [0i32; 8];
-            let mut cr_arr = [0i32; 8];
-
-            _mm256_storeu_si256(y_arr.as_mut_ptr() as *mut __m256i, y_32);
-            _mm256_storeu_si256(cb_arr.as_mut_ptr() as *mut __m256i, cb_32);
-            _mm256_storeu_si256(cr_arr.as_mut_ptr() as *mut __m256i, cr_32);
-
-            for i in 0..8 {
-                y_out[out_base + i] = y_arr[i] as u8;
-                cb_out[out_base + i] = cb_arr[i] as u8;
-                cr_out[out_base + i] = cr_arr[i] as u8;
-            }
-        }
-
-        // Handle remaining pixels with scalar
-        let scalar_start = chunks * 8;
-        for i in 0..remainder {
-            let idx = scalar_start + i;
-            let r = rgb[idx * 3];
-            let g = rgb[idx * 3 + 1];
-            let b = rgb[idx * 3 + 2];
-            let (y, cb, cr) = super::rgb_to_ycbcr_c_compat(r, g, b);
-            y_out[idx] = y;
-            cb_out[idx] = cb;
-            cr_out[idx] = cr;
-        }
-    }
-}
-
 /// Dispatch C-compat color conversion to best available implementation.
+///
+/// On x86_64 with AVX2, uses the optimized `color_avx2` module which processes
+/// 32 pixels per iteration. Falls back to scalar on other platforms.
 #[cfg(target_arch = "x86_64")]
 fn convert_rgb_to_ycbcr_c_compat_dispatch(
     rgb: &[u8],
@@ -686,13 +560,9 @@ fn convert_rgb_to_ycbcr_c_compat_dispatch(
     cr_out: &mut [u8],
     num_pixels: usize,
 ) {
-    use archmage::{SimdToken, X64V3Token};
-
-    if let Some(token) = X64V3Token::try_new() {
-        avx2_c_compat::convert_avx2(token, rgb, y_out, cb_out, cr_out, num_pixels);
-    } else {
-        convert_rgb_to_ycbcr_c_compat_scalar(rgb, y_out, cb_out, cr_out, num_pixels);
-    }
+    // Use the fast color_avx2 implementation which processes 32 pixels/iteration
+    // and uses C-compat rounding (pd_onehalfm1_cj for Cb/Cr)
+    crate::color_avx2::convert_rgb_to_ycbcr_dispatch(rgb, y_out, cb_out, cr_out, num_pixels);
 }
 
 /// Dispatch C-compat color conversion (non-x86_64 fallback).
@@ -1100,5 +970,64 @@ mod tests {
             assert_eq!(cb_out[i], cb);
             assert_eq!(cr_out[i], cr);
         }
+    }
+}
+
+#[cfg(test)]
+mod bench {
+    use super::*;
+    use std::time::Instant;
+
+    #[test]
+    #[ignore] // Run with: cargo test --lib bench_color_conversion --release -- --ignored --nocapture
+    fn bench_color_conversion() {
+        let width = 1920;
+        let height = 1080;
+        let num_pixels = width * height;
+        let rgb: Vec<u8> = (0..num_pixels * 3).map(|i| (i % 256) as u8).collect();
+        let mut y = vec![0u8; num_pixels];
+        let mut cb = vec![0u8; num_pixels];
+        let mut cr = vec![0u8; num_pixels];
+
+        let iterations = 100;
+
+        // Warmup c_compat
+        for _ in 0..10 {
+            convert_rgb_to_ycbcr_c_compat(&rgb, &mut y, &mut cb, &mut cr, num_pixels);
+        }
+
+        // Benchmark c_compat
+        let start = Instant::now();
+        for _ in 0..iterations {
+            convert_rgb_to_ycbcr_c_compat(&rgb, &mut y, &mut cb, &mut cr, num_pixels);
+        }
+        let c_compat_time = start.elapsed() / iterations;
+        let c_compat_mpix = (num_pixels as f64 / 1_000_000.0) / c_compat_time.as_secs_f64();
+
+        // Warmup convert_rgb_to_ycbcr (default/fast-yuv)
+        for _ in 0..10 {
+            convert_rgb_to_ycbcr(&rgb, &mut y, &mut cb, &mut cr, width, height);
+        }
+
+        // Benchmark convert_rgb_to_ycbcr
+        let start = Instant::now();
+        for _ in 0..iterations {
+            convert_rgb_to_ycbcr(&rgb, &mut y, &mut cb, &mut cr, width, height);
+        }
+        let yuv_time = start.elapsed() / iterations;
+        let yuv_mpix = (num_pixels as f64 / 1_000_000.0) / yuv_time.as_secs_f64();
+
+        println!("\n1080p RGB→YCbCr color conversion:");
+        println!(
+            "  c_compat (AVX2): {:.2}ms, {:.1} Mpix/s",
+            c_compat_time.as_secs_f64() * 1000.0,
+            c_compat_mpix
+        );
+        println!(
+            "  yuv crate:       {:.2}ms, {:.1} Mpix/s",
+            yuv_time.as_secs_f64() * 1000.0,
+            yuv_mpix
+        );
+        println!("  Ratio:           {:.2}x", yuv_mpix / c_compat_mpix);
     }
 }
