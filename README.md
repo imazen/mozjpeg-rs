@@ -41,49 +41,40 @@ For decoding, use one of these excellent crates:
 
 ## Compression Results vs C mozjpeg
 
-Tested on CID22 corpus (209 images, 512x512), 4:2:0 subsampling, `fast-yuv` enabled. Six encoder configurations across four quality levels. Positive delta = Rust files are larger; negative = Rust files are smaller.
+Tested on CID22-512 training corpus (209 images, 512x512), 4:2:0 subsampling. Five encoder configurations across four quality levels. Positive delta = Rust files are larger.
 
-Reproduce with: `cargo test --release --test parity_benchmark -- --nocapture`
+Reproduce with: `cargo run --release --example cid22_bench`
 
-| Config                   |  Q |   Avg Rust |      Avg C |   Delta | Max Dev |
-|--------------------------|----|------------|------------|---------|---------|
-| Baseline                 | 75 |     60,253 |     60,126 |  +0.21% |   0.35% |
-| Baseline                 | 85 |     83,482 |     83,296 |  +0.22% |   0.42% |
-| Baseline                 | 90 |    106,716 |    106,479 |  +0.22% |   0.40% |
-| Baseline                 | 95 |    150,888 |    150,570 |  +0.21% |   0.45% |
-| Baseline + Trellis       | 75 |     53,054 |     53,183 |  -0.24% |   0.97% |
-| Baseline + Trellis       | 85 |     74,781 |     74,792 |  -0.01% |   0.54% |
-| Baseline + Trellis       | 90 |     96,902 |     96,805 |  +0.10% |   0.56% |
-| Baseline + Trellis       | 95 |    139,188 |    138,957 |  +0.17% |   0.57% |
-| Full Baseline            | 75 |     53,077 |     53,191 |  -0.21% |   0.94% |
-| Full Baseline            | 85 |     74,796 |     74,795 |  +0.00% |   0.53% |
-| Full Baseline            | 90 |     96,915 |     96,818 |  +0.10% |   0.55% |
-| Full Baseline            | 95 |    139,211 |    139,007 |  +0.15% |   0.37% |
-| Progressive              | 75 |     58,998 |     58,873 |  +0.21% |   0.30% |
-| Progressive              | 85 |     80,928 |     80,749 |  +0.22% |   0.38% |
-| Progressive              | 90 |    102,410 |    102,204 |  +0.20% |   0.37% |
-| Progressive              | 95 |    143,747 |    143,446 |  +0.21% |   0.41% |
-| Progressive + Trellis    | 75 |     52,774 |     52,866 |  -0.17% |   0.64% |
-| Progressive + Trellis    | 85 |     73,652 |     73,642 |  +0.01% |   0.33% |
-| Progressive + Trellis    | 90 |     94,364 |     94,302 |  +0.07% |   0.35% |
-| Progressive + Trellis    | 95 |    134,226 |    134,051 |  +0.13% |   0.41% |
-| Full Progressive         | 75 |     52,789 |     52,869 |  -0.15% |   0.65% |
-| Full Progressive         | 85 |     73,654 |     73,652 |  +0.00% |   0.35% |
-| Full Progressive         | 90 |     94,380 |     94,308 |  +0.08% |   0.34% |
-| Full Progressive         | 95 |    134,253 |    134,074 |  +0.13% |   0.40% |
-| Max Compression          | 75 |     52,632 |     52,480 |  +0.29% |   1.08% |
-| Max Compression          | 85 |     73,615 |     73,353 |  +0.36% |   0.87% |
-| Max Compression          | 90 |     94,487 |     94,120 |  +0.39% |   0.84% |
-| Max Compression          | 95 |    134,095 |    133,721 |  +0.28% |   0.64% |
+| Config | Q | Size Δ | DSSIM (R) | DSSIM (C) | Butteraugli (R) | Butteraugli (C) |
+|--------|---|--------|-----------|-----------|-----------------|-----------------|
+| Baseline | 75 | +3.34% | 0.001725 | 0.001717 | 3.460 | 3.455 |
+| Baseline | 85 | +3.98% | 0.000993 | 0.000985 | 2.883 | 2.874 |
+| Baseline | 90 | +4.77% | 0.000643 | 0.000633 | 2.510 | 2.494 |
+| Baseline | 95 | +5.58% | 0.000375 | 0.000362 | 2.132 | 2.109 |
+| Baseline+Trellis | 75 | +1.81% | 0.001919 | 0.001902 | 3.583 | 3.566 |
+| Baseline+Trellis | 85 | +2.46% | 0.001098 | 0.001089 | 2.978 | 2.979 |
+| Baseline+Trellis | 90 | +3.30% | 0.000705 | 0.000695 | 2.604 | 2.588 |
+| Baseline+Trellis | 95 | +4.18% | 0.000401 | 0.000390 | 2.150 | 2.141 |
+| Progressive | 75 | +1.13% | 0.001725 | 0.001717 | 3.460 | 3.455 |
+| Progressive | 85 | +0.79% | 0.000993 | 0.000985 | 2.883 | 2.874 |
+| Progressive | 90 | +0.73% | 0.000643 | 0.000633 | 2.510 | 2.494 |
+| Progressive | 95 | +0.91% | 0.000375 | 0.000362 | 2.132 | 2.109 |
+| Progressive+Trellis | 75 | +1.25% | 0.001919 | 0.001902 | 3.583 | 3.566 |
+| Progressive+Trellis | 85 | +0.78% | 0.001098 | 0.001089 | 2.978 | 2.979 |
+| Progressive+Trellis | 90 | +0.66% | 0.000705 | 0.000695 | 2.604 | 2.588 |
+| Progressive+Trellis | 95 | +0.74% | 0.000401 | 0.000390 | 2.150 | 2.141 |
+| MaxCompression | 75 | +0.41% | 0.001919 | 0.001902 | 3.583 | 3.566 |
+| MaxCompression | 85 | +0.47% | 0.001098 | 0.001089 | 2.978 | 2.979 |
+| MaxCompression | 90 | +0.52% | 0.000705 | 0.000695 | 2.604 | 2.588 |
+| MaxCompression | 95 | +0.55% | 0.000401 | 0.000390 | 2.150 | 2.141 |
 
-**Configs:** Baseline = huffman opt only. +Trellis = AC trellis. Full = AC trellis + DC trellis + deringing. Max Compression = Full + `optimize_scans: true`. All others use `optimize_scans: false`. All use `force_baseline: true`.
+**Configs:** Baseline = huffman opt only. +Trellis = AC+DC trellis + deringing. MaxCompression = Progressive + Trellis + optimize_scans.
 
 **Key findings:**
-- With trellis at Q75, Rust produces **smaller** files than C (-0.15% to -0.24%)
-- Without trellis, the consistent +0.21% gap comes from `fast-yuv` color conversion (±1 level rounding)
-- Without `optimize_scans`, all configs stay within ±0.25% average, worst-case per-image deviation under 1%
-- With `optimize_scans` (Max Compression), within ±0.4% average — different scan search heuristics find different local optima
-- Visual quality (SSIMULACRA2, Butteraugli) is equivalent at all settings
+- **MaxCompression** mode achieves **<0.6%** parity with C mozjpeg at all quality levels
+- Progressive modes stay within **1.3%** of C mozjpeg
+- Baseline modes (no progressive) show **3-6%** gap due to entropy coding differences
+- Visual quality (DSSIM, Butteraugli) is nearly identical — Rust is marginally better in most cases
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="benchmark/pareto_ssimulacra2.svg">

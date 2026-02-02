@@ -249,6 +249,12 @@ Rust produces files with quality matching C mozjpeg across all image sizes and s
 The entropy divergence is caused by minor coefficient rounding differences that
 cascade through DC differential encoding. Both produce visually identical images.
 
+### TODO / Planned Investigations
+
+- **Run image delta diffs with C mozjpeg:** Detect if variance in compression is due
+  to a few bad blocks or distributed across all blocks. This will help identify if the
+  size gap is from systematic coefficient differences or localized issues.
+
 ### Known Issues / Active Investigations
 
 #### File Size Gap with optimize_scans - FIXED ✅ (Feb 2026)

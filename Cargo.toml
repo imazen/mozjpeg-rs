@@ -67,6 +67,7 @@ yuv = { version = "0.8", optional = true }
 dssim = "3.2"
 yuv = "0.8"
 rgb = "0.8"
+imgref = "1.10"
 ssimulacra2 = "0.5"
 png = "0.17"
 proptest = "1.4"
