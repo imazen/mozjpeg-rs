@@ -260,10 +260,10 @@ const QUALITIES: &[u8] = &[55, 65, 75, 85, 90, 95];
 #[test]
 fn parity_benchmark() {
     // Locate test corpus
-    let corpus = match corpus::cid22_dir() {
+    let corpus = match corpus::kodak_dir() {
         Some(d) => d,
         None => {
-            eprintln!("Skipping parity_benchmark: CID22 corpus not found.");
+            eprintln!("Skipping parity_benchmark: Kodak corpus not found.");
             eprintln!("Run ./scripts/fetch-corpus.sh to download it.");
             return;
         }
@@ -294,19 +294,13 @@ fn parity_benchmark() {
         return;
     }
 
-    let fast_yuv_status = if cfg!(feature = "fast-yuv") {
-        "enabled"
-    } else {
-        "disabled"
-    };
-
     // Header
     println!();
     println!("## File Size Parity: mozjpeg-rs vs C mozjpeg");
     println!();
     println!(
-        "CID22 corpus ({} images), 4:2:0, fast-yuv {}.",
-        n_images, fast_yuv_status
+        "Kodak corpus ({} images), 4:2:0, c_compat_color enabled (default).",
+        n_images
     );
     println!();
     println!(

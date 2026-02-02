@@ -60,50 +60,60 @@ Rust port of Mozilla's mozjpeg JPEG encoder, following the jpegli-rs methodology
 
 ### Compression Results vs C mozjpeg
 
-**Kodak corpus (24 images), 4:2:0, c_compat_color enabled (default). 6 configs × 4 quality levels.**
+**Kodak corpus (24 images), 4:2:0, c_compat_color enabled (default). 6 configs × 6 quality levels.**
 Reproduce: `cargo test --release --test parity_benchmark -- --nocapture`
 
 | Config                   |  Q |   Delta | Max Dev |
 |--------------------------|----|---------|---------|
-| Baseline                 | 75 |  +0.21% |   0.35% |
-| Baseline                 | 85 |  +0.22% |   0.42% |
-| Baseline                 | 90 |  +0.22% |   0.40% |
-| Baseline                 | 95 |  +0.21% |   0.45% |
-| Baseline + Trellis       | 75 |  -0.24% |   0.97% |
-| Baseline + Trellis       | 85 |  -0.01% |   0.54% |
-| Baseline + Trellis       | 90 |  +0.10% |   0.56% |
-| Baseline + Trellis       | 95 |  +0.17% |   0.57% |
-| Full Baseline            | 75 |  -0.21% |   0.94% |
-| Full Baseline            | 85 |  +0.00% |   0.53% |
-| Full Baseline            | 90 |  +0.10% |   0.55% |
-| Full Baseline            | 95 |  +0.15% |   0.37% |
-| Progressive              | 75 |  +0.21% |   0.30% |
-| Progressive              | 85 |  +0.22% |   0.38% |
-| Progressive              | 90 |  +0.20% |   0.37% |
-| Progressive              | 95 |  +0.21% |   0.41% |
-| Progressive + Trellis    | 75 |  -0.17% |   0.64% |
-| Progressive + Trellis    | 85 |  +0.01% |   0.33% |
-| Progressive + Trellis    | 90 |  +0.07% |   0.35% |
-| Progressive + Trellis    | 95 |  +0.13% |   0.41% |
-| Full Progressive         | 75 |  -0.15% |   0.65% |
-| Full Progressive         | 85 |  +0.00% |   0.35% |
-| Full Progressive         | 90 |  +0.08% |   0.34% |
-| Full Progressive         | 95 |  +0.13% |   0.40% |
-| Max Compression          | 55 |  -0.04% |   1.64% |
-| Max Compression          | 65 |  +0.14% |   0.97% |
-| Max Compression          | 75 |  +0.29% |   1.08% |
-| Max Compression          | 85 |  +0.36% |   0.87% |
-| Max Compression          | 90 |  +0.39% |   0.84% |
-| Max Compression          | 95 |  +0.28% |   0.64% |
+| Baseline                 | 55 |  +0.00% |   0.00% |
+| Baseline                 | 65 |  +0.00% |   0.00% |
+| Baseline                 | 75 |  +0.00% |   0.00% |
+| Baseline                 | 85 |  +0.00% |   0.00% |
+| Baseline                 | 90 |  +0.00% |   0.00% |
+| Baseline                 | 95 |  +0.00% |   0.00% |
+| Baseline + Trellis       | 55 |  -0.76% |   1.35% |
+| Baseline + Trellis       | 65 |  -0.59% |   1.22% |
+| Baseline + Trellis       | 75 |  -0.47% |   1.26% |
+| Baseline + Trellis       | 85 |  -0.22% |   0.74% |
+| Baseline + Trellis       | 90 |  -0.12% |   0.75% |
+| Baseline + Trellis       | 95 |  -0.05% |   0.64% |
+| Full Baseline            | 55 |  -0.71% |   1.25% |
+| Full Baseline            | 65 |  -0.56% |   1.18% |
+| Full Baseline            | 75 |  -0.47% |   1.24% |
+| Full Baseline            | 85 |  -0.22% |   0.73% |
+| Full Baseline            | 90 |  -0.13% |   0.73% |
+| Full Baseline            | 95 |  -0.07% |   0.64% |
+| Progressive              | 55 |  +0.00% |   0.00% |
+| Progressive              | 65 |  +0.00% |   0.00% |
+| Progressive              | 75 |  +0.00% |   0.00% |
+| Progressive              | 85 |  +0.00% |   0.00% |
+| Progressive              | 90 |  +0.00% |   0.00% |
+| Progressive              | 95 |  +0.00% |   0.00% |
+| Progressive + Trellis    | 55 |  -0.80% |   1.33% |
+| Progressive + Trellis    | 65 |  -0.58% |   1.23% |
+| Progressive + Trellis    | 75 |  -0.41% |   1.10% |
+| Progressive + Trellis    | 85 |  -0.21% |   0.76% |
+| Progressive + Trellis    | 90 |  -0.15% |   0.48% |
+| Progressive + Trellis    | 95 |  -0.08% |   0.61% |
+| Full Progressive         | 55 |  -0.78% |   1.35% |
+| Full Progressive         | 65 |  -0.58% |   1.21% |
+| Full Progressive         | 75 |  -0.40% |   1.07% |
+| Full Progressive         | 85 |  -0.21% |   0.72% |
+| Full Progressive         | 90 |  -0.14% |   0.51% |
+| Full Progressive         | 95 |  -0.08% |   0.63% |
+| Max Compression          | 55 |  -0.72% |   1.70% |
+| Max Compression          | 65 |  -0.45% |   0.86% |
+| Max Compression          | 75 |  +0.01% |   0.96% |
+| Max Compression          | 85 |  +0.15% |   1.24% |
+| Max Compression          | 90 |  +0.21% |   0.85% |
+| Max Compression          | 95 |  +0.17% |   1.15% |
 
 **Configs:** Baseline = huffman opt only. +Trellis = AC trellis. Full = AC trellis + DC trellis + deringing. Max Compression = Full + `optimize_scans: true`. All others use `optimize_scans: false`. All use `force_baseline: true`.
 
 **Key findings:**
-- With trellis at Q75, Rust produces **smaller** files than C (-0.15% to -0.24%)
-- **Exact baseline parity** with `c_compat_color` (default). Disable for faster yuv crate (+0.21% size)
-- Without `optimize_scans`, all configs within ±0.25% average, worst-case per-image deviation under 3%
-- With `optimize_scans` (Max Compression), within ±0.7% average
-- Rust scan optimizer can produce smaller files than C mozjpeg for some images (better optimization choices)
+- **Byte-exact parity** for Baseline and Progressive modes (0.00% delta) with `c_compat_color` (default)
+- With trellis, Rust produces **smaller** files than C (-0.05% to -0.80%)
+- Max Compression within ±0.72% average, max deviation 1.70%
 - Visual quality equivalent (SSIMULACRA2 and Butteraugli verified)
 
 **Mode explanations:**

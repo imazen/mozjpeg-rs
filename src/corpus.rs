@@ -62,9 +62,14 @@ pub fn cid22_dir() -> Option<PathBuf> {
     None
 }
 
-/// Legacy alias for `cid22_dir()`.
-#[deprecated(note = "Use cid22_dir() instead")]
+/// Returns the path to the Kodak test images.
 pub fn kodak_dir() -> Option<PathBuf> {
+    let corpus = corpus_dir()?;
+    let kodak = corpus.join("kodak");
+    if kodak.is_dir() {
+        return Some(kodak);
+    }
+    // Fallback to CID22 for compatibility
     cid22_dir()
 }
 

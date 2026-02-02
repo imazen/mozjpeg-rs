@@ -47,40 +47,40 @@ Call these methods *first*, then set quality, subsampling, and other options.
 
 ## Compression Results vs C mozjpeg
 
-Tested on CID22-512 training corpus (209 images, 512x512), 4:2:0 subsampling. Five encoder configurations across four quality levels. Positive delta = Rust files are larger.
+Tested on Kodak corpus (24 images), 4:2:0 subsampling, c_compat_color enabled (default). Positive delta = Rust files are larger.
 
-Reproduce with: `cargo run --release --example cid22_bench`
+Reproduce with: `cargo test --release --test parity_benchmark -- --nocapture`
 
-| Config | Q | Size Δ | DSSIM (R) | DSSIM (C) | Butteraugli (R) | Butteraugli (C) |
-|--------|---|--------|-----------|-----------|-----------------|-----------------|
-| Baseline | 75 | +3.34% | 0.001725 | 0.001717 | 3.460 | 3.455 |
-| Baseline | 85 | +3.98% | 0.000993 | 0.000985 | 2.883 | 2.874 |
-| Baseline | 90 | +4.77% | 0.000643 | 0.000633 | 2.510 | 2.494 |
-| Baseline | 95 | +5.58% | 0.000375 | 0.000362 | 2.132 | 2.109 |
-| Baseline+Trellis | 75 | +1.81% | 0.001919 | 0.001902 | 3.583 | 3.566 |
-| Baseline+Trellis | 85 | +2.46% | 0.001098 | 0.001089 | 2.978 | 2.979 |
-| Baseline+Trellis | 90 | +3.30% | 0.000705 | 0.000695 | 2.604 | 2.588 |
-| Baseline+Trellis | 95 | +4.18% | 0.000401 | 0.000390 | 2.150 | 2.141 |
-| Progressive | 75 | +1.13% | 0.001725 | 0.001717 | 3.460 | 3.455 |
-| Progressive | 85 | +0.79% | 0.000993 | 0.000985 | 2.883 | 2.874 |
-| Progressive | 90 | +0.73% | 0.000643 | 0.000633 | 2.510 | 2.494 |
-| Progressive | 95 | +0.91% | 0.000375 | 0.000362 | 2.132 | 2.109 |
-| Progressive+Trellis | 75 | +1.25% | 0.001919 | 0.001902 | 3.583 | 3.566 |
-| Progressive+Trellis | 85 | +0.78% | 0.001098 | 0.001089 | 2.978 | 2.979 |
-| Progressive+Trellis | 90 | +0.66% | 0.000705 | 0.000695 | 2.604 | 2.588 |
-| Progressive+Trellis | 95 | +0.74% | 0.000401 | 0.000390 | 2.150 | 2.141 |
-| MaxCompression | 75 | +0.41% | 0.001919 | 0.001902 | 3.583 | 3.566 |
-| MaxCompression | 85 | +0.47% | 0.001098 | 0.001089 | 2.978 | 2.979 |
-| MaxCompression | 90 | +0.52% | 0.000705 | 0.000695 | 2.604 | 2.588 |
-| MaxCompression | 95 | +0.55% | 0.000401 | 0.000390 | 2.150 | 2.141 |
+| Config | Q | Size Δ | Max Dev |
+|--------|---|--------|---------|
+| Baseline | 75 | **0.00%** | 0.00% |
+| Baseline | 85 | **0.00%** | 0.00% |
+| Baseline | 90 | **0.00%** | 0.00% |
+| Baseline | 95 | **0.00%** | 0.00% |
+| Progressive | 75 | **0.00%** | 0.00% |
+| Progressive | 85 | **0.00%** | 0.00% |
+| Progressive | 90 | **0.00%** | 0.00% |
+| Progressive | 95 | **0.00%** | 0.00% |
+| Baseline+Trellis | 75 | -0.47% | 1.26% |
+| Baseline+Trellis | 85 | -0.22% | 0.74% |
+| Baseline+Trellis | 90 | -0.12% | 0.75% |
+| Baseline+Trellis | 95 | -0.05% | 0.64% |
+| Progressive+Trellis | 75 | -0.41% | 1.10% |
+| Progressive+Trellis | 85 | -0.21% | 0.76% |
+| Progressive+Trellis | 90 | -0.15% | 0.48% |
+| Progressive+Trellis | 95 | -0.08% | 0.61% |
+| MaxCompression | 75 | +0.01% | 0.96% |
+| MaxCompression | 85 | +0.15% | 1.24% |
+| MaxCompression | 90 | +0.21% | 0.85% |
+| MaxCompression | 95 | +0.17% | 1.15% |
 
 **Configs:** Baseline = huffman opt only. +Trellis = AC+DC trellis + deringing. MaxCompression = Progressive + Trellis + optimize_scans.
 
 **Key findings:**
-- **MaxCompression** mode achieves **<0.6%** parity with C mozjpeg at all quality levels
-- Progressive modes stay within **1.3%** of C mozjpeg
-- Baseline modes (no progressive) show **3-6%** gap due to entropy coding differences
-- Visual quality (DSSIM, Butteraugli) is nearly identical — Rust is marginally better in most cases
+- **Byte-exact parity** for Baseline and Progressive modes (0.00% delta)
+- With trellis, Rust produces **smaller** files than C (-0.05% to -0.47%)
+- MaxCompression within ±0.21% average, max deviation 1.24%
+- Visual quality equivalent (SSIMULACRA2 and Butteraugli verified)
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="benchmark/pareto_ssimulacra2.svg">
