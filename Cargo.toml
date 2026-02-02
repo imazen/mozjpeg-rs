@@ -28,7 +28,7 @@ exclude = [
 members = ["crates/*"]
 
 [features]
-default = ["fast-yuv"]
+default = ["fast-yuv", "imgref"]
 # Use the `yuv` crate for SIMD color conversion (AVX-512/AVX2/SSE/NEON/WASM).
 # ~60% faster than hand-written AVX2, with ±1 level precision (invisible after JPEG quantization).
 fast-yuv = ["dep:yuv"]
