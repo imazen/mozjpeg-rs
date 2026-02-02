@@ -93,6 +93,13 @@ pub enum Error {
         /// Maximum allowed size in bytes
         limit: usize,
     },
+    /// Row stride is too small for the image width
+    InvalidStride {
+        /// Provided stride in bytes
+        stride: usize,
+        /// Minimum required stride in bytes
+        minimum: usize,
+    },
 }
 
 impl fmt::Display for Error {
@@ -180,6 +187,13 @@ impl fmt::Display for Error {
                     f,
                     "ICC profile size {} bytes exceeds limit {} bytes",
                     size, limit
+                )
+            }
+            Error::InvalidStride { stride, minimum } => {
+                write!(
+                    f,
+                    "Invalid stride: {} bytes is less than minimum {} bytes",
+                    stride, minimum
                 )
             }
         }
@@ -284,6 +298,13 @@ mod tests {
                     limit: 50_000_000,
                 },
                 "Estimated memory 100000000 bytes exceeds limit 50000000 bytes",
+            ),
+            (
+                Error::InvalidStride {
+                    stride: 100,
+                    minimum: 300,
+                },
+                "Invalid stride: 100 bytes is less than minimum 300 bytes",
             ),
         ];
 

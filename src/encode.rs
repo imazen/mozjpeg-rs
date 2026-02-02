@@ -1163,6 +1163,147 @@ impl Encoder {
         Ok(output)
     }
 
+    /// Encode RGB image data with row stride to JPEG.
+    ///
+    /// Use this when your pixel buffer has padding between rows (e.g., memory-aligned
+    /// buffers, cropped regions without copying, GPU textures).
+    ///
+    /// # Arguments
+    /// * `rgb_data` - RGB pixel data with optional row padding
+    /// * `width` - Image width in pixels
+    /// * `height` - Image height in pixels
+    /// * `stride` - Number of bytes between the start of consecutive rows.
+    ///   Must be >= `width * 3`. A stride of `width * 3` means tightly packed rows.
+    ///
+    /// # Returns
+    /// JPEG-encoded data as a `Vec<u8>`.
+    ///
+    /// # Example
+    /// ```no_run
+    /// use mozjpeg_rs::{Encoder, Preset};
+    ///
+    /// // 100x100 image with rows padded to 320 bytes (for 64-byte alignment)
+    /// let stride = 320;
+    /// let buffer: Vec<u8> = vec![128; stride * 100];
+    ///
+    /// let jpeg = Encoder::new(Preset::default())
+    ///     .quality(85)
+    ///     .encode_rgb_strided(&buffer, 100, 100, stride)?;
+    /// # Ok::<(), mozjpeg_rs::Error>(())
+    /// ```
+    pub fn encode_rgb_strided(
+        &self,
+        rgb_data: &[u8],
+        width: u32,
+        height: u32,
+        stride: usize,
+    ) -> Result<Vec<u8>> {
+        let width_usize = width as usize;
+        let height_usize = height as usize;
+        let row_bytes = width_usize
+            .checked_mul(3)
+            .ok_or(Error::InvalidDimensions { width, height })?;
+
+        // Validate stride
+        if stride < row_bytes {
+            return Err(Error::InvalidStride {
+                stride,
+                minimum: row_bytes,
+            });
+        }
+
+        // If stride equals row_bytes, use the fast path
+        if stride == row_bytes {
+            return self.encode_rgb(rgb_data, width, height);
+        }
+
+        // Validate buffer size
+        let expected_len = stride
+            .checked_mul(height_usize.saturating_sub(1))
+            .and_then(|n| n.checked_add(row_bytes))
+            .ok_or(Error::InvalidDimensions { width, height })?;
+
+        if rgb_data.len() < expected_len {
+            return Err(Error::BufferSizeMismatch {
+                expected: expected_len,
+                actual: rgb_data.len(),
+            });
+        }
+
+        // Copy to contiguous buffer
+        let mut contiguous = try_alloc_vec(0u8, row_bytes * height_usize)?;
+        for y in 0..height_usize {
+            let src_start = y * stride;
+            let dst_start = y * row_bytes;
+            contiguous[dst_start..dst_start + row_bytes]
+                .copy_from_slice(&rgb_data[src_start..src_start + row_bytes]);
+        }
+
+        self.encode_rgb(&contiguous, width, height)
+    }
+
+    /// Encode grayscale image data with row stride to JPEG.
+    ///
+    /// Use this when your pixel buffer has padding between rows (e.g., memory-aligned
+    /// buffers, cropped regions without copying).
+    ///
+    /// # Arguments
+    /// * `gray_data` - Grayscale pixel data with optional row padding
+    /// * `width` - Image width in pixels
+    /// * `height` - Image height in pixels
+    /// * `stride` - Number of bytes between the start of consecutive rows.
+    ///   Must be >= `width`. A stride of `width` means tightly packed rows.
+    ///
+    /// # Returns
+    /// JPEG-encoded data as a `Vec<u8>`.
+    pub fn encode_gray_strided(
+        &self,
+        gray_data: &[u8],
+        width: u32,
+        height: u32,
+        stride: usize,
+    ) -> Result<Vec<u8>> {
+        let width_usize = width as usize;
+        let height_usize = height as usize;
+
+        // Validate stride
+        if stride < width_usize {
+            return Err(Error::InvalidStride {
+                stride,
+                minimum: width_usize,
+            });
+        }
+
+        // If stride equals width, use the fast path
+        if stride == width_usize {
+            return self.encode_gray(gray_data, width, height);
+        }
+
+        // Validate buffer size
+        let expected_len = stride
+            .checked_mul(height_usize.saturating_sub(1))
+            .and_then(|n| n.checked_add(width_usize))
+            .ok_or(Error::InvalidDimensions { width, height })?;
+
+        if gray_data.len() < expected_len {
+            return Err(Error::BufferSizeMismatch {
+                expected: expected_len,
+                actual: gray_data.len(),
+            });
+        }
+
+        // Copy to contiguous buffer
+        let mut contiguous = try_alloc_vec(0u8, width_usize * height_usize)?;
+        for y in 0..height_usize {
+            let src_start = y * stride;
+            let dst_start = y * width_usize;
+            contiguous[dst_start..dst_start + width_usize]
+                .copy_from_slice(&gray_data[src_start..src_start + width_usize]);
+        }
+
+        self.encode_gray(&contiguous, width, height)
+    }
+
     /// Encode RGB image data to JPEG with cancellation and timeout support.
     ///
     /// This method allows encoding to be cancelled mid-operation via an atomic flag,

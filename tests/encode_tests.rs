@@ -1430,3 +1430,212 @@ fn test_issue444_across_quality_range() {
         );
     }
 }
+
+// =============================================================================
+// Strided encoding tests
+// =============================================================================
+
+/// Test that encode_rgb_strided produces identical output to encode_rgb
+/// when stride equals row_bytes (tight packing).
+#[test]
+fn test_strided_rgb_tight_packing() {
+    let width = 64u32;
+    let height = 48u32;
+    let row_bytes = (width * 3) as usize;
+
+    // Create test image
+    let mut rgb_data = vec![0u8; row_bytes * height as usize];
+    for (i, byte) in rgb_data.iter_mut().enumerate() {
+        *byte = (i % 256) as u8;
+    }
+
+    let encoder = Encoder::baseline_optimized().quality(85);
+
+    let jpeg_normal = encoder.encode_rgb(&rgb_data, width, height).unwrap();
+    let jpeg_strided = encoder
+        .encode_rgb_strided(&rgb_data, width, height, row_bytes)
+        .unwrap();
+
+    // Should be byte-identical
+    assert_eq!(jpeg_normal, jpeg_strided);
+}
+
+/// Test that encode_rgb_strided correctly handles padded rows.
+#[test]
+fn test_strided_rgb_with_padding() {
+    let width = 64u32;
+    let height = 48u32;
+    let row_bytes = (width * 3) as usize; // 192 bytes
+    let stride = 256; // Padded to 256 bytes per row (64-byte aligned)
+
+    // Create tight buffer
+    let mut tight_rgb = vec![0u8; row_bytes * height as usize];
+    for (i, byte) in tight_rgb.iter_mut().enumerate() {
+        *byte = (i % 256) as u8;
+    }
+
+    // Create padded buffer
+    let mut padded_rgb = vec![0xFFu8; stride * height as usize]; // Fill padding with 0xFF
+    for y in 0..height as usize {
+        let src_start = y * row_bytes;
+        let dst_start = y * stride;
+        padded_rgb[dst_start..dst_start + row_bytes]
+            .copy_from_slice(&tight_rgb[src_start..src_start + row_bytes]);
+    }
+
+    let encoder = Encoder::baseline_optimized().quality(85);
+
+    let jpeg_tight = encoder.encode_rgb(&tight_rgb, width, height).unwrap();
+    let jpeg_strided = encoder
+        .encode_rgb_strided(&padded_rgb, width, height, stride)
+        .unwrap();
+
+    // Should produce identical output (padding is ignored)
+    assert_eq!(jpeg_tight, jpeg_strided);
+}
+
+/// Test that encode_gray_strided produces identical output to encode_gray
+/// when stride equals width (tight packing).
+#[test]
+fn test_strided_gray_tight_packing() {
+    let width = 64u32;
+    let height = 48u32;
+
+    let mut gray_data = vec![0u8; (width * height) as usize];
+    for (i, byte) in gray_data.iter_mut().enumerate() {
+        *byte = (i % 256) as u8;
+    }
+
+    let encoder = Encoder::baseline_optimized().quality(85);
+
+    let jpeg_normal = encoder.encode_gray(&gray_data, width, height).unwrap();
+    let jpeg_strided = encoder
+        .encode_gray_strided(&gray_data, width, height, width as usize)
+        .unwrap();
+
+    assert_eq!(jpeg_normal, jpeg_strided);
+}
+
+/// Test that encode_gray_strided correctly handles padded rows.
+#[test]
+fn test_strided_gray_with_padding() {
+    let width = 64u32;
+    let height = 48u32;
+    let stride = 128; // Padded to 128 bytes per row
+
+    // Create tight buffer
+    let mut tight_gray = vec![0u8; (width * height) as usize];
+    for (i, byte) in tight_gray.iter_mut().enumerate() {
+        *byte = (i % 256) as u8;
+    }
+
+    // Create padded buffer
+    let mut padded_gray = vec![0xFFu8; stride * height as usize];
+    for y in 0..height as usize {
+        let src_start = y * width as usize;
+        let dst_start = y * stride;
+        padded_gray[dst_start..dst_start + width as usize]
+            .copy_from_slice(&tight_gray[src_start..src_start + width as usize]);
+    }
+
+    let encoder = Encoder::baseline_optimized().quality(85);
+
+    let jpeg_tight = encoder.encode_gray(&tight_gray, width, height).unwrap();
+    let jpeg_strided = encoder
+        .encode_gray_strided(&padded_gray, width, height, stride)
+        .unwrap();
+
+    assert_eq!(jpeg_tight, jpeg_strided);
+}
+
+/// Test that encode_rgb_strided rejects stride smaller than row bytes.
+#[test]
+fn test_strided_rgb_invalid_stride() {
+    let width = 64u32;
+    let height = 48u32;
+    let row_bytes = (width * 3) as usize;
+    let rgb_data = vec![0u8; row_bytes * height as usize];
+
+    let encoder = Encoder::baseline_optimized();
+    let result = encoder.encode_rgb_strided(&rgb_data, width, height, row_bytes - 1);
+
+    assert!(matches!(
+        result,
+        Err(mozjpeg_rs::Error::InvalidStride { stride, minimum })
+            if stride == row_bytes - 1 && minimum == row_bytes
+    ));
+}
+
+/// Test that encode_gray_strided rejects stride smaller than width.
+#[test]
+fn test_strided_gray_invalid_stride() {
+    let width = 64u32;
+    let height = 48u32;
+    let gray_data = vec![0u8; (width * height) as usize];
+
+    let encoder = Encoder::baseline_optimized();
+    let result = encoder.encode_gray_strided(&gray_data, width, height, (width - 1) as usize);
+
+    assert!(matches!(
+        result,
+        Err(mozjpeg_rs::Error::InvalidStride { stride, minimum })
+            if stride == (width - 1) as usize && minimum == width as usize
+    ));
+}
+
+/// Test strided encoding with a subregion (simulates cropping).
+#[test]
+fn test_strided_crop_simulation() {
+    // Simulate encoding a 32x32 crop from a 128x96 image starting at (16, 8)
+    let full_width = 128usize;
+    let full_height = 96usize;
+    let crop_x = 16usize;
+    let crop_y = 8usize;
+    let crop_width = 32u32;
+    let crop_height = 32u32;
+
+    // Create full image
+    let mut full_rgb = vec![0u8; full_width * full_height * 3];
+    for y in 0..full_height {
+        for x in 0..full_width {
+            let i = (y * full_width + x) * 3;
+            full_rgb[i] = (x % 256) as u8;
+            full_rgb[i + 1] = (y % 256) as u8;
+            full_rgb[i + 2] = ((x + y) % 256) as u8;
+        }
+    }
+
+    // Point to crop region (stride = full width * 3)
+    let crop_offset = (crop_y * full_width + crop_x) * 3;
+    let crop_data = &full_rgb[crop_offset..];
+    let stride = full_width * 3;
+
+    let encoder = Encoder::baseline_optimized().quality(85);
+    let jpeg = encoder
+        .encode_rgb_strided(crop_data, crop_width, crop_height, stride)
+        .unwrap();
+
+    // Decode and verify we got the crop region
+    let mut decoder = jpeg_decoder::Decoder::new(&jpeg[..]);
+    let decoded = decoder.decode().unwrap();
+    let info = decoder.info().unwrap();
+    assert_eq!(info.width, crop_width as u16);
+    assert_eq!(info.height, crop_height as u16);
+
+    // Verify a few pixels match the expected crop
+    // Top-left of crop (16, 8) in full image
+    let expected_r = (crop_x % 256) as u8;
+    let expected_g = (crop_y % 256) as u8;
+    assert!(
+        (decoded[0] as i16 - expected_r as i16).abs() < 5,
+        "Top-left R mismatch: {} vs {}",
+        decoded[0],
+        expected_r
+    );
+    assert!(
+        (decoded[1] as i16 - expected_g as i16).abs() < 5,
+        "Top-left G mismatch: {} vs {}",
+        decoded[1],
+        expected_g
+    );
+}
