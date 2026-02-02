@@ -133,7 +133,7 @@ Reproduce: `cargo test --release --test parity_benchmark -- --nocapture`
 - **Trellis mode: Rust is 10% faster than C mozjpeg** (at 2048x2048)
 - Baseline gap is ~4.7x - entropy encoding is the remaining bottleneck
 - AVX2 DCT intrinsics provide 26% speedup for baseline encoding
-- Color conversion uses yuv crate (5.15 Gelem/s, AVX-512/AVX2/SSE/NEON/WASM)
+- Color conversion: c_compat default (~3.7 Gpix/s AVX2), yuv crate opt-in (~5.1 Gpix/s)
 
 **\* Progressive mode note:** Both Rust and C support `optimize_scans` which tries multiple
 scan configurations to find the smallest output. Progressive encoding now works correctly
