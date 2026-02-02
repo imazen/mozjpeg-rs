@@ -2,6 +2,14 @@
 
 Analysis of [mozjpeg-rust PR #49](https://github.com/ImageOptim/mozjpeg-rust/pull/49) for potential mozjpeg-rs improvements.
 
+## Implementation Status
+
+| Feature | Status | Commit |
+|---------|--------|--------|
+| Strided pixel data support | ✅ Done | `feat: add strided encoding support` |
+| imgref integration | ✅ Done | `feat: add imgref integration` |
+| Generic pixel types | ⏳ Deferred | Covered by imgref feature |
+
 ## What mozjpeg-rs already has (good)
 
 - **Preset enum** - `BaselineFastest`, `BaselineBalanced`, `ProgressiveBalanced`, `ProgressiveSmallest`
@@ -9,74 +17,59 @@ Analysis of [mozjpeg-rust PR #49](https://github.com/ImageOptim/mozjpeg-rust/pul
 - **Type-safe enums** - `Subsampling`, `QuantTableIdx`
 - **No stateful API gotchas** - We don't wrap C's stateful `jpeg_compress_struct`, so no parameter ordering issues
 
-## Improvements to consider
+## Implemented Improvements
 
-### 1. Strided pixel data support (HIGH VALUE)
+### 1. Strided pixel data support ✅
 
-**Current:** No stride support - assumes tightly packed rows
+Added `encode_rgb_strided()` and `encode_gray_strided()` methods:
+
 ```rust
-encoder.encode_rgb(&pixels, width, height)?;
+// Memory-aligned buffer (rows padded to 256 bytes)
+let stride = 256;
+let buffer: Vec<u8> = vec![128; stride * 100];
+let jpeg = encoder.encode_rgb_strided(&buffer, 100, 100, stride)?;
+
+// Crop without copy - point into larger buffer
+let crop_data = &full_image[crop_offset..];
+let jpeg = encoder.encode_rgb_strided(crop_data, crop_w, crop_h, full_stride)?;
 ```
 
-**Proposed:** Add strided variants
-```rust
-encoder.encode_rgb_strided(&pixels, width, height, stride)?;
-encoder.encode_rgb_to_writer_strided(&pixels, width, height, stride, &mut writer)?;
+**Features:**
+- Fast path when stride == row_bytes (zero overhead)
+- Validates stride >= minimum required
+- New `Error::InvalidStride` variant for validation errors
+
+### 2. imgref integration ✅
+
+Added optional `imgref` feature with `encode_imgref()` method:
+
+```toml
+[dependencies]
+mozjpeg-rs = { version = "0.5", features = ["imgref"] }
 ```
 
-**Use case:** Memory-aligned buffers, cropping without copy, GPU textures
-
-### 2. imgref integration (HIGH VALUE, feature-gated)
-
-**Current:** Separate width/height params, easy to swap
 ```rust
-encoder.encode_rgb(&pixels, width, height)?;  // which is which?
+use imgref::ImgVec;
+use rgb::RGB8;
+
+let img = ImgVec::new(pixels, 640, 480);
+let jpeg = encoder.encode_imgref(img.as_ref())?;
 ```
 
-**Proposed:** Accept `ImgRef` directly
-```rust
-// Feature: imgref
-encoder.encode(img.as_ref())?;  // dimensions baked in, can't mess up
-```
+**Supported pixel types:**
+- `RGB<u8>` / `[u8; 3]` → Color JPEG
+- `RGBA<u8>` / `[u8; 4]` → Color JPEG (alpha discarded)
+- `Gray<u8>` / `u8` → Grayscale JPEG
 
-Benefits:
-- Type safety (`ImgRef<RGB8>` vs `ImgRef<u8>`)
-- Stride support built-in (subimages work automatically)
-- No dimension mix-ups
+**Benefits:**
+- Type-safe pixel formats (compile-time distinction)
+- Automatic stride handling (subimages work automatically)
+- No dimension mix-ups (width/height baked into type)
 
-### 3. Generic pixel type support (MEDIUM VALUE)
+### 3. Generic pixel types (covered by imgref)
 
-**Current:** Only `&[u8]`
-```rust
-fn encode_rgb(&self, rgb_data: &[u8], width: u32, height: u32) -> Result<Vec<u8>>;
-```
-
-**Proposed:** Accept various pixel types via trait
-```rust
-fn encode<P: RgbPixels>(&self, pixels: P, width: u32, height: u32) -> Result<Vec<u8>>;
-
-// Supports:
-encoder.encode(&rgb8_slice, w, h)?;           // &[RGB8]
-encoder.encode(&array_slice, w, h)?;          // &[[u8; 3]]
-encoder.encode(&flat_bytes, w, h)?;           // &[u8] (existing)
-```
-
-### 4. One-liner convenience on JpegConfig (LOW VALUE)
-
-PR #49 adds:
-```rust
-let jpeg = JpegConfig::from_preset(Preset::ProgressiveBalanced, 85.0)
-    .encode_rgb(&pixels, 640, 480)?;
-```
-
-We already have this pattern:
-```rust
-let jpeg = Encoder::new(Preset::ProgressiveBalanced)
-    .quality(85)
-    .encode_rgb(&pixels, 640, 480)?;
-```
-
-No change needed - our API is already ergonomic.
+The imgref feature provides this functionality via the `EncodeablePixel` trait.
+Direct generic support on `encode_rgb()` deferred since imgref covers the use case.
 
 ## What we DON'T need from PR #49
 
@@ -84,39 +77,7 @@ No change needed - our API is already ergonomic.
 2. **Type-safe color space combinations** - Our API is simpler (RGB→YCbCr always for color, Gray for grayscale)
 3. **Raw MCU mode** - Not needed for our use case (encoder-only crate)
 
-## Implementation priority
+## Remaining ideas (low priority)
 
-1. **Strided support** - Easy win, ~50 lines, enables cropping/aligned buffers
-2. **imgref feature** - Medium effort, high ergonomics payoff
-3. **Generic pixel types** - Nice to have, lower priority
-
-## API sketch for imgref
-
-```rust
-// Cargo.toml
-[features]
-imgref = ["dep:imgref", "dep:rgb"]
-
-// src/encode.rs
-#[cfg(feature = "imgref")]
-impl Encoder {
-    /// Encode from imgref with automatic dimension/stride handling
-    pub fn encode<'a, P>(&self, img: imgref::ImgRef<'a, P>) -> Result<Vec<u8>>
-    where
-        P: AsRgbBytes,
-    {
-        let (width, height) = (img.width() as u32, img.height() as u32);
-        let stride = img.stride();
-        // ... call internal strided encoder
-    }
-}
-
-// Trait for pixel types
-pub trait AsRgbBytes {
-    fn as_rgb_bytes(&self) -> &[u8];
-    fn bytes_per_pixel() -> usize;
-}
-
-impl AsRgbBytes for rgb::RGB8 { ... }
-impl AsRgbBytes for [u8; 3] { ... }
-```
+- `encode_rgb_to_writer_strided()` - strided variant for writer API (add if needed)
+- 16-bit pixel support via imgref - `RGB<u16>` with precision downsampling
