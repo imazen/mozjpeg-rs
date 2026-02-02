@@ -228,15 +228,16 @@ For CLI-style naming (compatible with rimage conventions):
 
 ## Performance
 
-Benchmarked on 512x768 image, 20 iterations, release mode:
+Benchmarked on 2048x2048 image, 30 iterations, release mode:
 
 | Configuration | Rust | C mozjpeg | Ratio |
 |---------------|------|-----------|-------|
-| Baseline (huffman opt) | 7.1 ms | 26.8 ms | **3.8x faster** |
-| Trellis (AC + DC) | 19.7 ms | 25.3 ms | **1.3x faster** |
-| Progressive + trellis | 20.0 ms | - | - |
+| Baseline (huffman opt) | 47.88 ms | 9.65 ms | 4.96x slower |
+| Trellis (AC + DC) | 202.84 ms | 217.29 ms | **7% faster** |
 
-**Note**: C mozjpeg's baseline encoding is typically faster with its hand-optimized SIMD entropy coding. The benchmark numbers above reflect mozjpeg-sys from crates.io which may not have all optimizations enabled.
+Reproduce: `cargo test --release --test bench_2k -- --nocapture`
+
+**Note**: Baseline encoding is slower due to entropy coding differences. With trellis quantization enabled (the recommended mode for quality), Rust is **faster** than C mozjpeg.
 
 ### SIMD Support
 
