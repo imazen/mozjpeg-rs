@@ -18,7 +18,13 @@ For decoding, use one of these excellent crates:
 |-------|------|-------|
 | **[jpeg-decoder](https://crates.io/crates/jpeg-decoder)** | Pure Rust | Widely used, reliable |
 | **[zune-jpeg](https://crates.io/crates/zune-jpeg)** | Pure Rust | Fast, SIMD-optimized |
-| **[mozjpeg-sys](https://crates.io/crates/mozjpeg-sys)** | C bindings | Full mozjpeg (encode + decode) |
+| **[mozjpeg](https://crates.io/crates/mozjpeg)** | C bindings | Safe wrapper for C mozjpeg (encode + decode) |
+
+**Note on C mozjpeg bindings:** If using the `mozjpeg` crate, be careful with parameter setting order. Several methods internally call `jpeg_set_defaults()` which silently resets previously-set values:
+- `set_scan_optimization_mode()`, `set_fastest_defaults()` reset: quality, smoothing, pixel density, subsampling, Huffman settings, quantization tables
+- `set_color_space()` resets: sampling factors, quantization/Huffman table assignments (e.g., 4:2:2 subsampling reverts to 4:2:0)
+
+Call these methods *first*, then set quality, subsampling, and other options.
 
 ## Why mozjpeg-rs?
 
