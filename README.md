@@ -71,10 +71,10 @@ Reproduce with: `cargo test --release --test parity_benchmark -- --nocapture`
 | Full Progressive         | 85 |     73,654 |     73,652 |  +0.00% |   0.35% |
 | Full Progressive         | 90 |     94,380 |     94,308 |  +0.08% |   0.34% |
 | Full Progressive         | 95 |    134,253 |    134,074 |  +0.13% |   0.40% |
-| Max Compression          | 75 |     52,789 |     52,480 |  +0.59% |   2.12% |
-| Max Compression          | 85 |     73,654 |     73,353 |  +0.41% |   1.25% |
-| Max Compression          | 90 |     94,380 |     94,120 |  +0.28% |   0.59% |
-| Max Compression          | 95 |    134,253 |    133,721 |  +0.40% |   0.81% |
+| Max Compression          | 75 |     52,632 |     52,480 |  +0.29% |   1.08% |
+| Max Compression          | 85 |     73,615 |     73,353 |  +0.36% |   0.87% |
+| Max Compression          | 90 |     94,487 |     94,120 |  +0.39% |   0.84% |
+| Max Compression          | 95 |    134,095 |    133,721 |  +0.28% |   0.64% |
 
 **Configs:** Baseline = huffman opt only. +Trellis = AC trellis. Full = AC trellis + DC trellis + deringing. Max Compression = Full + `optimize_scans: true`. All others use `optimize_scans: false`. All use `force_baseline: true`.
 
@@ -82,7 +82,7 @@ Reproduce with: `cargo test --release --test parity_benchmark -- --nocapture`
 - With trellis at Q75, Rust produces **smaller** files than C (-0.15% to -0.24%)
 - Without trellis, the consistent +0.21% gap comes from `fast-yuv` color conversion (±1 level rounding)
 - Without `optimize_scans`, all configs stay within ±0.25% average, worst-case per-image deviation under 1%
-- With `optimize_scans` (Max Compression), within +0.6% average — different scan search heuristics
+- With `optimize_scans` (Max Compression), within ±0.4% average — different scan search heuristics find different local optima
 - Visual quality (SSIMULACRA2, Butteraugli) is equivalent at all settings
 
 <picture>
