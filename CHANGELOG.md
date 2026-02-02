@@ -5,6 +5,55 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.0] - 2026-02-02
+
+### Added
+- **`imgref` feature (default)** - Type-safe encoding with `encode_imgref()` accepting `ImgRef<P>` directly
+  - Supports `RGB<u8>`, `RGBA<u8>` (alpha discarded), `Gray<u8>`, `[u8; 3]`, `[u8; 4]`, `u8`
+  - Automatic stride handling for subimages
+  - No dimension mix-ups (width/height baked into type)
+- **Strided encoding** - `encode_rgb_strided()` and `encode_gray_strided()` for:
+  - Memory-aligned buffers (e.g., 64-byte aligned rows)
+  - Cropping without copy (point into larger buffer)
+  - GPU texture formats with padding
+- **`EncodeablePixel` trait** - Implement for custom pixel types
+- **`Error::InvalidStride`** - New error variant for stride validation
+
+### Changed
+- `imgref` and `rgb` crates are now default dependencies (can be disabled with `default-features = false`)
+
+## [0.5.5] - 2026-02-01
+
+### Changed
+- Recommend `mozjpeg` crate for users who need both encoding and decoding
+
+## [0.5.4] - 2026-01-13
+
+### Fixed
+- Clippy warnings in benchmarks and examples
+
+### Changed
+- Removed all unsafe from SIMD modules (now uses safe wrappers)
+
+## [0.5.3] - 2026-01-10
+
+### Changed
+- Migrated from archmage 0.1 to 0.4 with safe_unaligned_simd
+
+## [0.5.1] - 2026-01-08
+
+### Fixed
+- Scan optimizer parity improvements with C mozjpeg
+
+## [0.5.0] - 2026-01-05
+
+### Added
+- Improved scan optimization algorithm
+- Better progressive scan selection
+
+### Fixed
+- optimize_scans parity with C mozjpeg (now within ±0.4%)
+
 ## [0.4.1] - 2025-01-03
 
 ### Added
@@ -102,6 +151,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Platforms: Linux, macOS, Windows (x64 and ARM64)
 - Output compatible with all standard JPEG decoders
 
+[0.6.0]: https://github.com/imazen/mozjpeg-rs/compare/v0.5.5...v0.6.0
+[0.5.5]: https://github.com/imazen/mozjpeg-rs/compare/v0.5.4...v0.5.5
+[0.5.4]: https://github.com/imazen/mozjpeg-rs/compare/v0.5.3...v0.5.4
+[0.5.3]: https://github.com/imazen/mozjpeg-rs/compare/v0.5.1...v0.5.3
+[0.5.1]: https://github.com/imazen/mozjpeg-rs/compare/v0.5.0...v0.5.1
+[0.5.0]: https://github.com/imazen/mozjpeg-rs/compare/v0.4.1...v0.5.0
 [0.4.1]: https://github.com/imazen/mozjpeg-rs/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/imazen/mozjpeg-rs/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/imazen/mozjpeg-rs/compare/v0.2.5...v0.3.0

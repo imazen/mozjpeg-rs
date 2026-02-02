@@ -117,6 +117,42 @@ let jpeg = Encoder::new()
     .encode_rgb(&pixels, width, height)?;
 ```
 
+### Type-Safe Encoding with imgref (default feature)
+
+The `imgref` feature (enabled by default) provides type-safe encoding with automatic stride handling:
+
+```rust
+use mozjpeg_rs::Encoder;
+use imgref::ImgVec;
+use rgb::RGB8;
+
+// Type-safe: dimensions baked in, can't mix up width/height
+let pixels: Vec<RGB8> = vec![RGB8::new(128, 64, 32); 640 * 480];
+let img = ImgVec::new(pixels, 640, 480);
+let jpeg = Encoder::new().quality(85).encode_imgref(img.as_ref())?;
+
+// Subimages work automatically (stride handled internally)
+let crop = img.sub_image(100, 100, 200, 200);
+let jpeg = encoder.encode_imgref(crop)?;
+```
+
+Supported pixel types: `RGB<u8>`, `RGBA<u8>` (alpha discarded), `Gray<u8>`, `[u8; 3]`, `[u8; 4]`, `u8`.
+
+### Strided Encoding
+
+For memory-aligned buffers or cropping without copy:
+
+```rust
+// Memory-aligned buffer (rows padded to 256 bytes)
+let stride = 256;
+let buffer: Vec<u8> = vec![128; stride * height];
+let jpeg = encoder.encode_rgb_strided(&buffer, width, height, stride)?;
+
+// Crop without copy - point into larger buffer
+let crop_data = &full_image[crop_offset..];
+let jpeg = encoder.encode_rgb_strided(crop_data, crop_w, crop_h, full_stride)?;
+```
+
 ## Features
 
 - **Trellis quantization** - Rate-distortion optimized coefficient selection (AC + DC)
@@ -124,6 +160,8 @@ let jpeg = Encoder::new()
 - **Huffman optimization** - 2-pass encoding for optimal entropy coding
 - **Overshoot deringing** - Reduces ringing artifacts at sharp edges
 - **Chroma subsampling** - 4:4:4, 4:2:2, 4:2:0 modes
+- **Type-safe imgref integration** - Encode `ImgRef<RGB8>` directly with automatic stride handling
+- **Strided encoding** - Memory-aligned buffers, crop without copy
 - **Safe Rust** - `#![deny(unsafe_code)]` with exceptions only for SIMD intrinsics
 
 ### Encoder Settings Matrix
@@ -206,7 +244,7 @@ mozjpeg-rs uses `multiversion` for automatic vectorization by default. Optional 
 
 ```toml
 [dependencies]
-mozjpeg-rs = { version = "0.2", features = ["simd-intrinsics"] }
+mozjpeg-rs = { version = "0.6", features = ["simd-intrinsics"] }
 ```
 
 In benchmarks, the difference is minimal (~2%) as `multiversion` autovectorization works well for DCT and color conversion.
