@@ -101,6 +101,7 @@ Reproduce: `cargo test --release --test parity_benchmark -- --nocapture`
 **Key findings:**
 - With trellis at Q75, Rust produces **smaller** files than C (-0.15% to -0.24%)
 - Without trellis, consistent +0.21% gap from `fast-yuv` color conversion ±1 rounding
+  - Use `Encoder::c_compat_color(true)` for exact baseline parity (bytewise identical)
 - Without `optimize_scans`, all configs within ±0.25% average, worst-case per-image deviation under 3%
 - With `optimize_scans` (Max Compression), within ±0.7% average
 - Rust scan optimizer can produce smaller files than C mozjpeg for some images (better optimization choices)
@@ -174,6 +175,12 @@ let encoder = Encoder::new()
     .trellis(TrellisConfig::default())
     .optimize_huffman(true);
 let jpeg_data = encoder.encode_rgb(&pixels, width, height)?;
+
+// Exact C mozjpeg parity (baseline mode only)
+let encoder = Encoder::baseline_optimized()
+    .quality(85)
+    .c_compat_color(true);  // Slower but bytewise identical to C mozjpeg
+let jpeg_data = encoder.encode_rgb(&pixels, width, height)?;
 ```
 
 ### Implemented Features
@@ -189,6 +196,7 @@ let jpeg_data = encoder.encode_rgb(&pixels, width, height)?;
 - **Optimize scans** - Try multiple scan configurations for progressive mode, pick smallest
 - **Grayscale progressive** - Full progressive JPEG support for grayscale images
 - **Smoothing filter** - Noise reduction for dithered images (`.smoothing(30)`)
+- **C-compat color conversion** - Exact C mozjpeg parity for baseline mode (`.c_compat_color(true)`)
 
 ### Remaining Work
 - **Baseline entropy encoding** - ~4.7x slower than C (trellis mode is 10% faster than C)
@@ -634,7 +642,8 @@ GitHub Actions workflow runs on push/PR:
 - **`fast-yuv`** (default) - Use the `yuv` crate for SIMD color conversion.
   ~38% faster than our hand-written AVX2 (5.15 vs 3.72 Gelem/s at 1920x1080).
   Supports AVX-512, AVX2, SSE, NEON, and WASM SIMD. Precision difference is ±1 level,
-  invisible after JPEG quantization.
+  invisible after JPEG quantization. For exact C mozjpeg baseline parity, use
+  `Encoder::c_compat_color(true)` instead (slower but bytewise identical).
 
 - **`mozjpeg-sys-config`** - Encode using C mozjpeg with Rust `Encoder` settings.
   Adds `Encoder::to_c_mozjpeg()` which returns a `CMozjpeg` encoder.
