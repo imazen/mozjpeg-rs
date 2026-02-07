@@ -209,6 +209,44 @@ jobs:
           fail_ci_if_error: false
           token: ${{ secrets.CODECOV_TOKEN }}
 
+  # Cross-compiled 32-bit and ARM testing with QEMU emulation
+  # NOTE: Only runs lib tests (pure Rust). Integration tests require mozjpeg-sys
+  # which builds C code via cc/cmake — this may fail under cross-compilation if
+  # the cross Docker image lacks nasm/cmake. If integration tests are needed,
+  # the cross Docker images would need to be customized with those build tools.
+  test-cross:
+    name: Cross (${{ matrix.target }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - i686-unknown-linux-gnu
+          - armv7-unknown-linux-gnueabihf
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Install cross
+        uses: taiki-e/install-action@cross
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build (cross)
+        run: cross build -p mozjpeg-rs --target ${{ matrix.target }}
+
+      - name: Build release (cross)
+        run: cross build -p mozjpeg-rs --release --target ${{ matrix.target }}
+
+      - name: Test lib (cross/QEMU)
+        run: cross test -p mozjpeg-rs --lib --target ${{ matrix.target }}
+
   # Publish dry-run (only on PRs, to catch packaging issues early)
   publish-check:
     name: Publish Check
