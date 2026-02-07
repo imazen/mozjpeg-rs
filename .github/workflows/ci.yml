@@ -247,6 +247,29 @@ jobs:
       - name: Test lib (cross/QEMU)
         run: cross test -p mozjpeg-rs --lib --target ${{ matrix.target }}
 
+
+  # WASM build check - mozjpeg-rs is pure Rust (no C FFI in default features),
+  # so it should compile for wasm32. Dependencies (wide, multiversion, archmage)
+  # have varying WASM support, so this is continue-on-error until fully validated.
+  test-wasm:
+    name: WASM Build Check
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-wasip1
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build for WASM (experimental)
+        env:
+          RUSTFLAGS: "-C target-feature=+simd128"
+        run: cargo build -p mozjpeg-rs --target wasm32-wasip1
+
   # Publish dry-run (only on PRs, to catch packaging issues early)
   publish-check:
     name: Publish Check
