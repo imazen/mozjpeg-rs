@@ -150,10 +150,8 @@ pub fn forward_dct_8x8_neon(
 
     // Pass 1
     dct_pass(
-        token,
-        &mut col0, &mut col1, &mut col2, &mut col3,
-        &mut col4, &mut col5, &mut col6, &mut col7,
-        consts_lo, consts_hi, consts2, true,
+        token, &mut col0, &mut col1, &mut col2, &mut col3, &mut col4, &mut col5, &mut col6,
+        &mut col7, consts_lo, consts_hi, consts2, true,
     );
 
     // Transpose again
@@ -195,10 +193,8 @@ pub fn forward_dct_8x8_neon(
 
     // Pass 2
     dct_pass(
-        token,
-        &mut col0, &mut col1, &mut col2, &mut col3,
-        &mut col4, &mut col5, &mut col6, &mut col7,
-        consts_lo, consts_hi, consts2, false,
+        token, &mut col0, &mut col1, &mut col2, &mut col3, &mut col4, &mut col5, &mut col6,
+        &mut col7, consts_lo, consts_hi, consts2, false,
     );
 
     // Store results - use chunks to get mutable array references
@@ -214,8 +210,14 @@ pub fn forward_dct_8x8_neon(
 #[rite]
 fn dct_pass(
     token: NeonToken,
-    v0: &mut int16x8_t, v1: &mut int16x8_t, v2: &mut int16x8_t, v3: &mut int16x8_t,
-    v4: &mut int16x8_t, v5: &mut int16x8_t, v6: &mut int16x8_t, v7: &mut int16x8_t,
+    v0: &mut int16x8_t,
+    v1: &mut int16x8_t,
+    v2: &mut int16x8_t,
+    v3: &mut int16x8_t,
+    v4: &mut int16x8_t,
+    v5: &mut int16x8_t,
+    v6: &mut int16x8_t,
+    v7: &mut int16x8_t,
     consts_lo: int16x4_t,
     consts_hi: int16x4_t,
     consts2: int16x4_t,
