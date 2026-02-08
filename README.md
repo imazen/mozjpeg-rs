@@ -235,12 +235,12 @@ For CLI-style naming (compatible with rimage conventions):
 
 ## Performance
 
-Benchmarked on 2048x2048 image (4 megapixels), 30 iterations, release mode:
+Benchmarked on 2048x2048 image (4 megapixels), 30 iterations, release mode with AVX2/NEON:
 
 | Configuration | Rust | C mozjpeg | |
 |---------------|------|-----------|---|
-| Trellis (AC + DC) | 202 ms | 217 ms | **7% faster** |
-| Baseline (huffman opt) | 48 ms | 10 ms | 5x slower |
+| Trellis (AC + DC) | 197 ms | 210 ms | **6% faster** |
+| Baseline (huffman opt) | 42 ms | 9 ms | 4.6x slower |
 
 Reproduce: `cargo test --release --test bench_2k -- --nocapture`
 
@@ -248,14 +248,12 @@ Reproduce: `cargo test --release --test bench_2k -- --nocapture`
 
 ### SIMD Support
 
-mozjpeg-rs uses `multiversion` for automatic vectorization by default. Optional hand-written SIMD intrinsics are available:
+mozjpeg-rs uses **archmage** for safe SIMD with runtime CPU detection:
+- **x86_64**: AVX2 (automatic, no feature flag needed)
+- **aarch64**: NEON (automatic, no feature flag needed)
+- **Fallback**: `multiversion` autovectorization on other platforms
 
-```toml
-[dependencies]
-mozjpeg-rs = { version = "0.7", features = ["simd-intrinsics"] }
-```
-
-In benchmarks, the difference is minimal (~2%) as `multiversion` autovectorization works well for DCT and color conversion.
+All SIMD code uses safe Rust intrinsics via archmage and safe_unaligned_simd — no `unsafe` blocks.
 
 ## Differences from C mozjpeg
 
