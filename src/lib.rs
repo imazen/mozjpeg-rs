@@ -120,9 +120,10 @@
 //! # }
 //! ```
 
-// Deny unsafe code by default. All SIMD uses archmage/safe_unaligned_simd (100% safe).
-// Only FFI modules (compat.rs, test_encoder.rs) opt-in with #![allow(unsafe_code)].
-#![deny(unsafe_code)]
+// Forbid unsafe code when possible. Core library is 100% safe (archmage/safe_unaligned_simd).
+// When mozjpeg-sys-config feature is enabled, downgrade to deny to allow compat.rs FFI.
+#![cfg_attr(not(feature = "mozjpeg-sys-config"), forbid(unsafe_code))]
+#![cfg_attr(feature = "mozjpeg-sys-config", deny(unsafe_code))]
 #![warn(missing_docs)]
 
 // ============================================================================
