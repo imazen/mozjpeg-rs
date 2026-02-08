@@ -207,6 +207,7 @@ pub fn forward_dct_8x8_neon(
 /// Single DCT pass (row or column).
 ///
 /// Inner helper - uses #[rite] for zero overhead.
+#[allow(clippy::too_many_arguments)]
 #[rite]
 fn dct_pass(
     token: NeonToken,
