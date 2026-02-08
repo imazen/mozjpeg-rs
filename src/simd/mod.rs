@@ -35,9 +35,13 @@ pub mod x86_64;
 pub mod aarch64;
 
 use crate::consts::DCTSIZE2;
+use archmage::SimdToken;
 
 #[cfg(target_arch = "x86_64")]
-use archmage::{SimdToken, X64V3Token};
+use archmage::X64V3Token;
+
+#[cfg(target_arch = "aarch64")]
+use archmage::NeonToken;
 
 // ============================================================================
 // Fast YUV color conversion using the yuv crate (when feature enabled)
@@ -114,6 +118,9 @@ enum DctVariant {
     /// Has known overflow with deringing; see [`SimdOps::avx2_i16()`].
     #[cfg(target_arch = "x86_64")]
     Avx2I16,
+    /// Archmage-based safe NEON with cached token
+    #[cfg(target_arch = "aarch64")]
+    NeonArchmage,
 }
 
 /// SIMD operations dispatch table.
@@ -131,6 +138,9 @@ pub struct SimdOps {
     /// Cached AVX2 token for archmage-based DCT (x86_64 only)
     #[cfg(target_arch = "x86_64")]
     avx2_token: Option<X64V3Token>,
+    /// Cached NEON token for archmage-based DCT (aarch64 only)
+    #[cfg(target_arch = "aarch64")]
+    neon_token: Option<NeonToken>,
 }
 
 impl SimdOps {
@@ -182,7 +192,22 @@ impl SimdOps {
             )
         };
 
-        #[cfg(not(target_arch = "x86_64"))]
+        #[cfg(target_arch = "aarch64")]
+        let (dct_fn, dct_variant, neon_token) = if let Some(token) = NeonToken::summon() {
+            (
+                scalar::forward_dct_8x8 as ForwardDctFn,
+                DctVariant::NeonArchmage,
+                Some(token),
+            )
+        } else {
+            (
+                scalar::forward_dct_8x8 as ForwardDctFn,
+                DctVariant::Multiversion,
+                None,
+            )
+        };
+
+        #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
         let (dct_fn, dct_variant) = (
             scalar::forward_dct_8x8 as ForwardDctFn,
             DctVariant::Multiversion,
@@ -194,12 +219,14 @@ impl SimdOps {
             dct_variant,
             #[cfg(target_arch = "x86_64")]
             avx2_token,
+            #[cfg(target_arch = "aarch64")]
+            neon_token,
         }
     }
 
     /// Perform forward DCT using the best available implementation.
     ///
-    /// This method uses the cached AVX2 token when available, avoiding
+    /// This method uses the cached AVX2/NEON token when available, avoiding
     /// per-call capability checks.
     #[inline]
     pub fn do_forward_dct(&self, samples: &[i16; DCTSIZE2], coeffs: &mut [i16; DCTSIZE2]) {
@@ -212,6 +239,16 @@ impl SimdOps {
                     crate::dct::avx2_archmage::forward_dct_8x8_i32(token, samples, coeffs);
                 } else {
                     // Fallback (shouldn't happen if variant is Avx2Archmage)
+                    crate::dct::forward_dct_8x8_i32_multiversion(samples, coeffs);
+                }
+            }
+            #[cfg(target_arch = "aarch64")]
+            DctVariant::NeonArchmage => {
+                // Use archmage with cached NEON token
+                if let Some(token) = self.neon_token {
+                    aarch64::neon::forward_dct_8x8_neon(token, samples, coeffs);
+                } else {
+                    // Fallback (shouldn't happen if variant is NeonArchmage)
                     crate::dct::forward_dct_8x8_i32_multiversion(samples, coeffs);
                 }
             }
@@ -243,6 +280,8 @@ impl SimdOps {
             dct_variant: DctVariant::Multiversion,
             #[cfg(target_arch = "x86_64")]
             avx2_token: None,
+            #[cfg(target_arch = "aarch64")]
+            neon_token: None,
         }
     }
 
@@ -312,6 +351,8 @@ impl SimdOps {
             DctVariant::Avx2Archmage => "avx2_archmage",
             #[cfg(target_arch = "x86_64")]
             DctVariant::Avx2I16 => "avx2_i16",
+            #[cfg(target_arch = "aarch64")]
+            DctVariant::NeonArchmage => "neon_archmage",
         }
     }
 }
@@ -386,7 +427,10 @@ mod tests {
         let name = ops.dct_variant_name();
         // Should be one of the known variants
         assert!(
-            name == "multiversion" || name == "avx2_intrinsics" || name == "avx2_archmage",
+            name == "multiversion"
+                || name == "avx2_intrinsics"
+                || name == "avx2_archmage"
+                || name == "neon_archmage",
             "Unknown variant: {}",
             name
         );

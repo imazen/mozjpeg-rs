@@ -1,14 +1,11 @@
 //! NEON SIMD implementations for aarch64.
 //!
-//! Implements forward DCT and color conversion using ARM NEON intrinsics
-//! with archmage for safe execution. Based on the same algorithm as C mozjpeg's
-//! jfdctint-neon.c but rewritten in safe Rust.
+//! Implements forward DCT using ARM NEON intrinsics with archmage for safe execution.
+//! Based on the same algorithm as C mozjpeg's jfdctint-neon.c.
 
 use crate::consts::DCTSIZE2;
-use archmage::arcane;
-use archmage::Aarch64NeonToken;
-use core::arch::aarch64::*;
-use safe_unaligned_simd::aarch64 as neon_mem;
+use archmage::prelude::*;
+use safe_unaligned_simd::aarch64::{vld1_s16, vld1q_s16, vst1q_s16};
 
 // ============================================================================
 // DCT Constants (same as x86_64 AVX2 version)
@@ -31,7 +28,6 @@ const FIX_2_562915447: i32 = 20995;
 const FIX_3_072711026: i32 = 25172;
 
 /// DCT constants stored in NEON-friendly layout.
-/// Constants are arranged for efficient vmull_lane access.
 #[repr(align(16))]
 struct DctConstants {
     vals: [i16; 12],
@@ -64,24 +60,9 @@ static DCT_CONSTS: DctConstants = DctConstants::new();
 // Helper Functions
 // ============================================================================
 
-/// Load 8 i16 values into NEON register.
-#[arcane]
-#[inline(always)]
-fn load_i16x8(token: Aarch64NeonToken, data: &[i16; 8]) -> int16x8_t {
-    neon_mem::vld1q_s16(data)
-}
-
-/// Store 8 i16 values from NEON register.
-#[arcane]
-#[inline(always)]
-fn store_i16x8(token: Aarch64NeonToken, data: &mut [i16; 8], v: int16x8_t) {
-    neon_mem::vst1q_s16(data, v);
-}
-
 /// Descale and round for pass 1.
-#[arcane]
-#[inline(always)]
-fn descale_p1(token: Aarch64NeonToken, v_l: int32x4_t, v_h: int32x4_t) -> int16x8_t {
+#[rite]
+fn descale_p1(_token: NeonToken, v_l: int32x4_t, v_h: int32x4_t) -> int16x8_t {
     const SHIFT: i32 = CONST_BITS - PASS1_BITS;
     let low = vrshrn_n_s32::<SHIFT>(v_l);
     let high = vrshrn_n_s32::<SHIFT>(v_h);
@@ -89,9 +70,8 @@ fn descale_p1(token: Aarch64NeonToken, v_l: int32x4_t, v_h: int32x4_t) -> int16x
 }
 
 /// Descale and round for pass 2.
-#[arcane]
-#[inline(always)]
-fn descale_p2(token: Aarch64NeonToken, v_l: int32x4_t, v_h: int32x4_t) -> int16x8_t {
+#[rite]
+fn descale_p2(_token: NeonToken, v_l: int32x4_t, v_h: int32x4_t) -> int16x8_t {
     const SHIFT: i32 = CONST_BITS + PASS1_BITS;
     let low = vrshrn_n_s32::<SHIFT>(v_l);
     let high = vrshrn_n_s32::<SHIFT>(v_h);
@@ -104,38 +84,34 @@ fn descale_p2(token: Aarch64NeonToken, v_l: int32x4_t, v_h: int32x4_t) -> int16x
 
 /// Forward DCT using NEON intrinsics.
 ///
-/// Implements the same algorithm as C mozjpeg's jfdctint-neon but using
-/// archmage for safe intrinsics. Uses two-pass approach:
-/// 1. Process rows with butterfly and rotation stages
-/// 2. Transpose
-/// 3. Process columns
+/// Entry point - uses #[arcane] for safe target_feature dispatch.
+/// Implements the same algorithm as C mozjpeg's jfdctint-neon.
 #[arcane]
 pub fn forward_dct_8x8_neon(
-    token: Aarch64NeonToken,
+    token: NeonToken,
     samples: &[i16; DCTSIZE2],
     coeffs: &mut [i16; DCTSIZE2],
 ) {
-    // Load DCT constants
-    let consts = neon_mem::vld1q_s16(&DCT_CONSTS.vals[0..8].try_into().unwrap());
+    // Load DCT constants using vld1q_s16 from prelude (safe_unaligned_simd)
+    let consts_arr: [i16; 8] = DCT_CONSTS.vals[0..8].try_into().unwrap();
+    let consts = vld1q_s16(&consts_arr);
     let consts_lo = vget_low_s16(consts);
     let consts_hi = vget_high_s16(consts);
-    let consts2 = neon_mem::vld1_s16(&DCT_CONSTS.vals[8..12].try_into().unwrap());
 
-    // Load 8x8 block - de-interleave load and transpose
-    // Cast to access memory as [i16; 64]
-    let data_ptr = samples.as_ptr();
+    let consts2_arr: [i16; 4] = DCT_CONSTS.vals[8..12].try_into().unwrap();
+    let consts2 = vld1_s16(&consts2_arr);
 
-    // Load rows 0-7
-    let mut col0 = neon_mem::vld1q_s16(unsafe { &*(data_ptr.add(0 * 8) as *const [i16; 8]) });
-    let mut col1 = neon_mem::vld1q_s16(unsafe { &*(data_ptr.add(1 * 8) as *const [i16; 8]) });
-    let mut col2 = neon_mem::vld1q_s16(unsafe { &*(data_ptr.add(2 * 8) as *const [i16; 8]) });
-    let mut col3 = neon_mem::vld1q_s16(unsafe { &*(data_ptr.add(3 * 8) as *const [i16; 8]) });
-    let mut col4 = neon_mem::vld1q_s16(unsafe { &*(data_ptr.add(4 * 8) as *const [i16; 8]) });
-    let mut col5 = neon_mem::vld1q_s16(unsafe { &*(data_ptr.add(5 * 8) as *const [i16; 8]) });
-    let mut col6 = neon_mem::vld1q_s16(unsafe { &*(data_ptr.add(6 * 8) as *const [i16; 8]) });
-    let mut col7 = neon_mem::vld1q_s16(unsafe { &*(data_ptr.add(7 * 8) as *const [i16; 8]) });
+    // Load 8x8 block
+    let mut col0 = vld1q_s16(samples[0..8].try_into().unwrap());
+    let mut col1 = vld1q_s16(samples[8..16].try_into().unwrap());
+    let mut col2 = vld1q_s16(samples[16..24].try_into().unwrap());
+    let mut col3 = vld1q_s16(samples[24..32].try_into().unwrap());
+    let mut col4 = vld1q_s16(samples[32..40].try_into().unwrap());
+    let mut col5 = vld1q_s16(samples[40..48].try_into().unwrap());
+    let mut col6 = vld1q_s16(samples[48..56].try_into().unwrap());
+    let mut col7 = vld1q_s16(samples[56..64].try_into().unwrap());
 
-    // Transpose 8x8 using NEON transpose instructions
+    // Transpose 8x8
     let cols_01 = vtrnq_s16(col0, col1);
     let cols_23 = vtrnq_s16(col2, col3);
     let cols_45 = vtrnq_s16(col4, col5);
@@ -172,14 +148,15 @@ pub fn forward_dct_8x8_neon(
     col6 = vreinterpretq_s16_s32(rows_26.1);
     col7 = vreinterpretq_s16_s32(rows_37.1);
 
-    // Pass 1: process rows (now columns after transpose)
+    // Pass 1
     dct_pass(
+        token,
         &mut col0, &mut col1, &mut col2, &mut col3,
         &mut col4, &mut col5, &mut col6, &mut col7,
         consts_lo, consts_hi, consts2, true,
     );
 
-    // Transpose again for pass 2
+    // Transpose again
     let cols_01 = vtrnq_s16(col0, col1);
     let cols_23 = vtrnq_s16(col2, col3);
     let cols_45 = vtrnq_s16(col4, col5);
@@ -216,33 +193,27 @@ pub fn forward_dct_8x8_neon(
     col6 = vreinterpretq_s16_s32(rows_26.1);
     col7 = vreinterpretq_s16_s32(rows_37.1);
 
-    // Pass 2: process columns
+    // Pass 2
     dct_pass(
+        token,
         &mut col0, &mut col1, &mut col2, &mut col3,
         &mut col4, &mut col5, &mut col6, &mut col7,
         consts_lo, consts_hi, consts2, false,
     );
 
-    // Store results
-    let out_ptr = coeffs.as_mut_ptr();
-    neon_mem::vst1q_s16(unsafe { &mut *(out_ptr.add(0 * 8) as *mut [i16; 8]) }, col0);
-    neon_mem::vst1q_s16(unsafe { &mut *(out_ptr.add(1 * 8) as *mut [i16; 8]) }, col1);
-    neon_mem::vst1q_s16(unsafe { &mut *(out_ptr.add(2 * 8) as *mut [i16; 8]) }, col2);
-    neon_mem::vst1q_s16(unsafe { &mut *(out_ptr.add(3 * 8) as *mut [i16; 8]) }, col3);
-    neon_mem::vst1q_s16(unsafe { &mut *(out_ptr.add(4 * 8) as *mut [i16; 8]) }, col4);
-    neon_mem::vst1q_s16(unsafe { &mut *(out_ptr.add(5 * 8) as *mut [i16; 8]) }, col5);
-    neon_mem::vst1q_s16(unsafe { &mut *(out_ptr.add(6 * 8) as *mut [i16; 8]) }, col6);
-    neon_mem::vst1q_s16(unsafe { &mut *(out_ptr.add(7 * 8) as *mut [i16; 8]) }, col7);
+    // Store results - use chunks to get mutable array references
+    let cols = [col0, col1, col2, col3, col4, col5, col6, col7];
+    for (i, chunk) in coeffs.chunks_exact_mut(8).enumerate() {
+        vst1q_s16(chunk.try_into().unwrap(), cols[i]);
+    }
 }
 
 /// Single DCT pass (row or column).
 ///
-/// Processes 8 rows/columns in parallel using NEON SIMD.
-/// The algorithm matches C mozjpeg's implementation.
-#[arcane]
-#[inline(always)]
+/// Inner helper - uses #[rite] for zero overhead.
+#[rite]
 fn dct_pass(
-    token: Aarch64NeonToken,
+    token: NeonToken,
     v0: &mut int16x8_t, v1: &mut int16x8_t, v2: &mut int16x8_t, v3: &mut int16x8_t,
     v4: &mut int16x8_t, v5: &mut int16x8_t, v6: &mut int16x8_t, v7: &mut int16x8_t,
     consts_lo: int16x4_t,
@@ -308,7 +279,7 @@ fn dct_pass(
     z5_l = vmlal_lane_s16::<1>(z5_l, vget_low_s16(z4), consts_hi);
     z5_h = vmlal_lane_s16::<1>(z5_h, vget_high_s16(z4), consts_hi);
 
-    // Compute tmp4, tmp5, tmp6, tmp7 with rotations
+    // Compute rotations
     let mut tmp4_l = vmull_lane_s16::<0>(vget_low_s16(tmp4), consts_lo);
     let mut tmp4_h = vmull_lane_s16::<0>(vget_high_s16(tmp4), consts_lo);
 
@@ -321,19 +292,15 @@ fn dct_pass(
     let mut tmp7_l = vmull_lane_s16::<2>(vget_low_s16(tmp7), consts_hi);
     let mut tmp7_h = vmull_lane_s16::<2>(vget_high_s16(tmp7), consts_hi);
 
-    // z1 * (-FIX_0_899976223)
     let z1_l = vmull_lane_s16::<0>(vget_low_s16(z1), consts_hi);
     let z1_h = vmull_lane_s16::<0>(vget_high_s16(z1), consts_hi);
 
-    // z2 * (-FIX_2_562915447)
     let z2_l = vmull_lane_s16::<2>(vget_low_s16(z2), consts2);
     let z2_h = vmull_lane_s16::<2>(vget_high_s16(z2), consts2);
 
-    // z3 * (-FIX_1_961570560)
     let z3_l = vmull_lane_s16::<0>(vget_low_s16(z3), consts2);
     let z3_h = vmull_lane_s16::<0>(vget_high_s16(z3), consts2);
 
-    // z4 * (-FIX_0_390180644)
     let z4_l = vmull_lane_s16::<1>(vget_low_s16(z4), consts_lo);
     let z4_h = vmull_lane_s16::<1>(vget_high_s16(z4), consts_lo);
 
@@ -378,11 +345,10 @@ fn dct_pass(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use archmage::SimdToken;
 
     #[test]
     fn test_neon_dct_flat_block() {
-        let Some(token) = Aarch64NeonToken::try_new() else {
+        let Some(token) = NeonToken::summon() else {
             eprintln!("NEON not available, skipping test");
             return;
         };
@@ -403,7 +369,7 @@ mod tests {
 
     #[test]
     fn test_neon_vs_scalar() {
-        let Some(token) = Aarch64NeonToken::try_new() else {
+        let Some(token) = NeonToken::summon() else {
             eprintln!("NEON not available, skipping test");
             return;
         };
