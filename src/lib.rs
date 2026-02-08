@@ -120,8 +120,8 @@
 //! # }
 //! ```
 
-// Enforce no unsafe code in this crate, except where explicitly allowed.
-// SIMD intrinsics in dct.rs and test FFI code are the only exceptions.
+// Deny unsafe code by default. All SIMD uses archmage/safe_unaligned_simd (100% safe).
+// Only FFI modules (compat.rs, test_encoder.rs) opt-in with #![allow(unsafe_code)].
 #![deny(unsafe_code)]
 #![warn(missing_docs)]
 
