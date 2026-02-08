@@ -5,6 +5,29 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.0] - 2026-02-08
+
+### Added
+- **ARM NEON SIMD support** — Safe SIMD implementation for aarch64 using archmage
+  - Automatic runtime detection and dispatch
+  - Byte-identical output to scalar implementation
+  - Zero unsafe code
+- **100% safe Rust** — Achieved `#![forbid(unsafe_code)]` with no exceptions
+  - Uses archmage 0.5 for safe SIMD intrinsics
+  - Uses safe_unaligned_simd 0.2.4 for safe load/store operations
+- **CI coverage for ARM platforms** — Tests on native arm64 runners plus QEMU for aarch64, armv7, and i686
+- **WASM support** — Builds successfully for wasm32-wasip1 with SIMD128
+
+### Changed
+- Updated to archmage 0.5 (from 0.4)
+- Updated to safe_unaligned_simd 0.2.4 (from 0.2.3)
+- Trellis encoding is now **6% faster** than C mozjpeg (was 7%, updated measurements)
+- CI now tests 15 platform configurations including ARM and WASM
+
+### Fixed
+- Conditional compilation for forbid(unsafe_code) when mozjpeg-sys-config feature is enabled
+- wasm32 unused import warnings
+
 ## [0.7.0] - 2026-02-02
 
 ### Added
