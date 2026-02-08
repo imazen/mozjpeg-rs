@@ -169,7 +169,7 @@ let jpeg = encoder.encode_rgb_strided(crop_data, crop_w, crop_h, full_stride)?;
 - **Chroma subsampling** - 4:4:4, 4:2:2, 4:2:0 modes
 - **Type-safe imgref integration** - Encode `ImgRef<RGB8>` directly with automatic stride handling
 - **Strided encoding** - Memory-aligned buffers, crop without copy
-- **Safe Rust** - `#![deny(unsafe_code)]` with exceptions only for SIMD intrinsics
+- **100% Safe Rust** - `#![deny(unsafe_code)]` with zero exceptions (archmage + safe_unaligned_simd for SIMD)
 
 ### Encoder Settings Matrix
 

@@ -1,5 +1,13 @@
 # mozjpeg-rs Development Guide
 
+## Safety & Performance
+
+**100% Safe Rust** - The core library uses `#![deny(unsafe_code)]` with no exceptions:
+- All SIMD uses `archmage 0.5` with `#[arcane]` macro for safe target_feature dispatch
+- Memory operations use `safe_unaligned_simd 0.2.4` for unaligned loads/stores
+- Zero performance loss vs unsafe intrinsics (archmage token caching eliminates dispatch overhead)
+- Only FFI modules (compat.rs, test_encoder.rs) opt-in to unsafe for C mozjpeg interop
+
 ## Development Guidelines
 
 ### Never disable features to achieve parity
