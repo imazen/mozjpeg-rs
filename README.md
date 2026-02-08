@@ -36,7 +36,7 @@ Call these methods *first*, then set quality, subsampling, and other options.
 |--|---------------|-----------|---------------|
 | **Language** | Pure Rust | C | C/asm |
 | **Memory safety** | Compile-time guaranteed | Manual | Manual |
-| **Trellis quantization** | Yes (7% faster than C) | Yes | No |
+| **Trellis quantization** | Yes (6% faster than C) | Yes | No |
 | **Build complexity** | `cargo add` | cmake + nasm + C toolchain | cmake + nasm |
 | **Output parity** | Byte-exact with C mozjpeg | — | Different output |
 
@@ -53,9 +53,9 @@ Call these methods *first*, then set quality, subsampling, and other options.
 
 ## Compression Results vs C mozjpeg
 
-Tested on Kodak corpus (24 images), 4:2:0 subsampling, exact color match (default). Positive delta = Rust files are larger.
+Tested on CID22 corpus (validation subset), 4:2:0 subsampling, exact color match (default). Positive delta = Rust files are larger.
 
-Reproduce with: `cargo test --release --test parity_benchmark -- --nocapture`
+Reproduce with: `cargo run --release --example cid22_bench`
 
 | Config | Q | Size Δ | Max Dev |
 |--------|---|--------|---------|
@@ -173,7 +173,7 @@ let jpeg = encoder.encode_rgb_strided(crop_data, crop_w, crop_h, full_stride)?;
 - **Chroma subsampling** - 4:4:4, 4:2:2, 4:2:0 modes
 - **Type-safe imgref integration** - Encode `ImgRef<RGB8>` directly with automatic stride handling
 - **Strided encoding** - Memory-aligned buffers, crop without copy
-- **100% Safe Rust** - `#![deny(unsafe_code)]` with zero exceptions (archmage + safe_unaligned_simd for SIMD)
+- **100% Safe Rust** - `#![forbid(unsafe_code)]` with zero exceptions (archmage + safe_unaligned_simd for SIMD)
 
 ### Encoder Settings Matrix
 
@@ -273,32 +273,16 @@ mozjpeg-rs aims for compatibility with C mozjpeg but has some differences:
 | **Arithmetic coding** | Not implemented | Available (rarely used) |
 | **Grayscale progressive** | Yes | Yes |
 
-### Why multipass (`use_scans_in_trellis`) is not implemented
 
-C mozjpeg's multipass option makes trellis quantization "scan-aware" for progressive encoding by optimizing low and high frequency AC coefficients separately. Benchmarks on the test corpus (Q85, progressive) show this is a poor tradeoff:
+### Output Parity with C mozjpeg
 
-| Metric | Without Multipass | With Multipass | Difference |
-|--------|-------------------|----------------|------------|
-| File size | 1,760 KB | 1,770 KB | **+0.52% larger** |
-| Quality (butteraugli) | 2.59 | 2.54 | -0.05 (imperceptible) |
-| Encoding time | ~7ms | ~8.5ms | **~20% slower** |
+**Baseline and Progressive modes**: Byte-identical output (0.00% difference) when using default color conversion.
 
-Multipass produces larger files, is slower, and provides no perceptible quality improvement.
+**With trellis quantization**: Rust produces 0.05-0.80% smaller files than C mozjpeg due to slightly better rate-distortion optimization.
 
-### Where does the remaining gap come from?
+**With `fast_color(true)`**: ±1 rounding difference in color conversion (uses `yuv` crate for ~40% faster RGB→YCbCr), producing slightly different but visually identical output.
 
-The consistent +0.21% gap in non-trellis modes comes from the `fast-yuv` feature, which uses the `yuv` crate for SIMD color conversion (AVX-512/AVX2/SSE/NEON). It has ±1 level rounding differences vs C mozjpeg's color conversion, producing slightly different DCT coefficients. This is invisible after JPEG quantization. Without `fast-yuv`, Rust matches or beats C at all quality levels.
-
-With trellis enabled, Rust's trellis optimizer finds slightly better rate-distortion tradeoffs at Q75, producing smaller files than C.
-
-### Matching C mozjpeg output exactly
-
-For near byte-identical output to C mozjpeg, use baseline mode with matching settings:
-1. Use baseline (non-progressive) mode with Huffman optimization
-2. Match all encoder settings via `TestEncoderConfig`
-3. Use the same quantization tables (Robidoux/ImageMagick, the default for both)
-
-The FFI comparison tests in `tests/ffi_comparison.rs` verify component-level parity.
+The FFI comparison tests in `tests/ffi_validation.rs` verify component-level parity against C mozjpeg.
 
 ## Development
 
@@ -327,14 +311,17 @@ cargo test --test ffi_validation
 ### Reproduce Benchmarks
 
 ```bash
-# Fetch test corpus (CID22 images)
+# Fetch test corpus (CID22, CLIC, and other images)
 ./scripts/fetch-corpus.sh
 
-# Run full corpus comparison
-cargo run --release --example full_corpus_test
+# CID22 benchmark (recommended)
+cargo run --release --example cid22_bench
 
-# Run pareto benchmark
-cargo run --release --example pareto_benchmark
+# Performance benchmark (2048×2048)
+cargo test --release --test bench_2k -- --nocapture
+
+# Full corpus comparison
+cargo run --release --example comprehensive_comparison
 ```
 
 ### Test Coverage
@@ -360,7 +347,7 @@ Based on Mozilla's [mozjpeg](https://github.com/mozilla/mozjpeg), which builds o
 
 ## AI-Generated Code Notice
 
-This crate was developed with significant assistance from Claude (Anthropic). While the code has been tested against the C mozjpeg reference implementation and passes 248 tests including FFI validation, **not all code has been manually reviewed or human-audited**.
+This crate was developed with significant assistance from Claude (Anthropic). While the code has been tested against the C mozjpeg reference implementation and passes 300+ tests including FFI validation, **not all code has been manually reviewed or human-audited**.
 
 Before using in production:
 - Review critical code paths for your use case
