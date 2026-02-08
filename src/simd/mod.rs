@@ -35,6 +35,8 @@ pub mod x86_64;
 pub mod aarch64;
 
 use crate::consts::DCTSIZE2;
+
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 use archmage::SimdToken;
 
 #[cfg(target_arch = "x86_64")]
