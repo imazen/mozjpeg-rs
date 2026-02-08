@@ -205,6 +205,7 @@ let jpeg_data = encoder.encode_rgb(&pixels, width, height)?;
 - **Grayscale progressive** - Full progressive JPEG support for grayscale images
 - **Smoothing filter** - Noise reduction for dithered images (`.smoothing(30)`)
 - **C-compat color conversion** - Exact C mozjpeg parity (default, AVX2-accelerated)
+- **SIMD optimizations** - AVX2 (x86_64) and NEON (aarch64) with archmage safe intrinsics
 
 ### Remaining Work
 - **Baseline entropy encoding** - ~4.7x slower than C (trellis mode is 10% faster than C)
