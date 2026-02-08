@@ -1,6 +1,6 @@
 # mozjpeg-rs
 
-Pure Rust JPEG encoder with **byte-exact C mozjpeg parity** and trellis quantization for optimal compression. With trellis enabled, produces **smaller files** than C mozjpeg while being **7% faster**.
+**100% safe Rust** JPEG encoder (`#![forbid(unsafe_code)]`) with **byte-identical output** to C mozjpeg in baseline and progressive modes (0.00% avg diff). Trellis modes produce **0.05-0.80% smaller files** than C mozjpeg while being **7% faster** at 2048×2048. Uses safe SIMD (archmage) on x86_64 (AVX2) and aarch64 (NEON).
 
 [![Crates.io](https://img.shields.io/crates/v/mozjpeg-rs.svg)](https://crates.io/crates/mozjpeg-rs)
 [![Documentation](https://docs.rs/mozjpeg-rs/badge.svg)](https://docs.rs/mozjpeg-rs)
