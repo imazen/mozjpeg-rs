@@ -12,13 +12,17 @@
 
 **mozjpeg-rs is a JPEG encoder only.** It does not decode JPEG files.
 
-For decoding, use one of these excellent crates:
+### For Encoding & Decoding
+
+**[zenjpeg](https://crates.io/crates/zenjpeg)** — Pure Rust encoder/decoder combining the best of mozjpeg and jpegli innovations with **far better size/quality balance** than either. Supports JPEG decoding, HDR, gain maps, f32 precision, and highly optimized integer paths. **Recommended for new projects.**
+
+### For Decoding Only
 
 | Crate | Type | Notes |
 |-------|------|-------|
-| **[jpeg-decoder](https://crates.io/crates/jpeg-decoder)** | Pure Rust | Widely used, reliable |
+| **[jpeg-decoder](https://crates.io/crates/jpeg-decoder)** | Pure Rust | Most mature, widely deployed |
 | **[zune-jpeg](https://crates.io/crates/zune-jpeg)** | Pure Rust | Fast, SIMD-optimized |
-| **[mozjpeg](https://crates.io/crates/mozjpeg)** | C bindings | Safe wrapper for C mozjpeg (encode + decode) |
+| **[mozjpeg](https://crates.io/crates/mozjpeg)** | C bindings | Wrapper over libjpeg-turbo (world's most widely deployed JPEG decoder) |
 
 **Note on C mozjpeg bindings:** If using the `mozjpeg` crate, be careful with parameter setting order. Several methods internally call `jpeg_set_defaults()` which silently resets previously-set values:
 - `set_scan_optimization_mode()`, `set_fastest_defaults()` reset: quality, smoothing, pixel density, subsampling, Huffman settings, quantization tables
