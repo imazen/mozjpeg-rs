@@ -137,7 +137,7 @@ pub const JCS_EXT_BGRA: c_int = 13;
 pub const JCS_EXT_ABGR: c_int = 14;
 pub const JCS_EXT_ARGB: c_int = 15;
 
-extern "C" {
+unsafe extern "C" {
     // Standard libjpeg API
     pub fn jpeg_std_error(err: *mut jpeg_error_mgr) -> *mut jpeg_error_mgr;
     pub fn jpeg_CreateCompress(
