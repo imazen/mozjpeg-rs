@@ -59,7 +59,7 @@ wide = "1.1.1"
 # Safe SIMD with capability tokens
 archmage = { version = "0.5", features = ["macros"] }
 # Safe unaligned SIMD memory operations (no token parameter needed)
-safe_unaligned_simd = "0.2.4"
+safe_unaligned_simd = "0.2.5"
 # Optional: mozjpeg-sys configuration (configure C encoder from our settings)
 mozjpeg-sys = { version = "2.2", optional = true }
 libc = { version = "0.2", optional = true }
