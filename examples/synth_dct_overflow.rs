@@ -14,10 +14,17 @@ use std::fs::{self, File};
 use std::io::Write;
 use std::path::Path;
 
-const OUTPUT_DIR: &str = "/mnt/v/output/mozjpeg-rs/synth-overflow";
+fn mozjpeg_output_dir() -> String {
+    std::env::var("MOZJPEG_RS_OUTPUT_DIR").unwrap_or_else(|_| "/mnt/v/output/mozjpeg-rs".into())
+}
+
+fn output_dir() -> String {
+    format!("{}/synth-overflow", mozjpeg_output_dir())
+}
 
 fn main() {
-    fs::create_dir_all(OUTPUT_DIR).unwrap();
+    let out_dir = output_dir();
+    fs::create_dir_all(&out_dir).unwrap();
 
     let i16_ops = match SimdOps::avx2_i16() {
         Some(ops) => ops,
@@ -61,7 +68,7 @@ fn main() {
     ];
 
     // Save patterns as PNG
-    let output_dir = Path::new(OUTPUT_DIR);
+    let output_dir = Path::new(&out_dir);
     for (name, rgb, w, h) in &patterns {
         save_png(&output_dir.join(format!("{}.png", name)), rgb, *w, *h);
     }
@@ -210,7 +217,7 @@ fn main() {
     println!("Files saved to {:?}", output_dir);
     println!();
     println!("To view comparisons:");
-    println!("  feh /mnt/v/output/mozjpeg-rs/synth-overflow/*_q25_*.jpg");
+    println!("  feh {}/*_q25_*.jpg", out_dir);
 }
 
 fn make_vertical_split(w: u32, h: u32, invert: bool) -> Vec<u8> {

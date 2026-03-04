@@ -5,7 +5,9 @@ use std::fs;
 use std::path::Path;
 
 fn main() {
-    let corpus_dir = "/home/lilith/work/mozjpeg-rs/corpus/CID22/CID22-512/training";
+    let corpus_dir_buf = mozjpeg_rs::corpus::cid22_dir()
+        .expect("CID22 corpus not found. Set MOZJPEG_CORPUS_DIR or CODEC_CORPUS_DIR.");
+    let corpus_dir = corpus_dir_buf.to_str().expect("corpus path");
 
     let mut files: Vec<_> = fs::read_dir(corpus_dir)
         .unwrap()

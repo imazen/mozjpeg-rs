@@ -13,12 +13,20 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
-const OUTPUT_DIR: &str = "/mnt/v/output/mozjpeg-rs/trellis-speed-bench";
 const WARMUP_ITERS: usize = 1;
 const BENCH_ITERS: usize = 5;
 
+fn mozjpeg_output_dir() -> String {
+    std::env::var("MOZJPEG_RS_OUTPUT_DIR").unwrap_or_else(|_| "/mnt/v/output/mozjpeg-rs".into())
+}
+
+fn output_dir() -> String {
+    format!("{}/trellis-speed-bench", mozjpeg_output_dir())
+}
+
 fn main() {
-    fs::create_dir_all(OUTPUT_DIR).unwrap();
+    let out_dir = output_dir();
+    fs::create_dir_all(&out_dir).unwrap();
 
     let mut images: Vec<(String, Vec<u8>, u32, u32)> = Vec::new();
 
@@ -94,7 +102,7 @@ fn main() {
 
     let qualities = [75u8, 85, 90, 95];
 
-    let csv_path = Path::new(OUTPUT_DIR).join("results.csv");
+    let csv_path = Path::new(&out_dir).join("results.csv");
     let mut csv = File::create(&csv_path).unwrap();
     writeln!(
         csv,

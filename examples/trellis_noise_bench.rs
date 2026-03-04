@@ -12,12 +12,20 @@ use std::io::Write;
 use std::path::Path;
 use std::time::Instant;
 
-const OUTPUT_DIR: &str = "/mnt/v/output/mozjpeg-rs/trellis-noise-bench";
 const WARMUP_ITERS: usize = 2;
 const BENCH_ITERS: usize = 7;
 
+fn mozjpeg_output_dir() -> String {
+    std::env::var("MOZJPEG_RS_OUTPUT_DIR").unwrap_or_else(|_| "/mnt/v/output/mozjpeg-rs".into())
+}
+
+fn output_dir() -> String {
+    format!("{}/trellis-noise-bench", mozjpeg_output_dir())
+}
+
 fn main() {
-    fs::create_dir_all(OUTPUT_DIR).unwrap();
+    let out_dir = output_dir();
+    fs::create_dir_all(&out_dir).unwrap();
 
     let images: Vec<(&str, Vec<u8>, u32, u32)> = vec![
         (
@@ -114,7 +122,7 @@ fn main() {
 
     let qualities = [75u8, 85, 90, 95, 100];
 
-    let csv_path = Path::new(OUTPUT_DIR).join("noise_results.csv");
+    let csv_path = Path::new(&out_dir).join("noise_results.csv");
     let mut csv = File::create(&csv_path).unwrap();
     writeln!(
         csv,

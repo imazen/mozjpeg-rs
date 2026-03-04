@@ -4,7 +4,10 @@ use mozjpeg_rs::{Encoder, TrellisConfig};
 use std::fs;
 
 fn main() {
-    let source_path = "/home/lilith/work/mozjpeg-rs/corpus/CID22/CID22-512/training/10.png";
+    let source_path_buf = mozjpeg_rs::corpus::cid22_dir()
+        .expect("CID22 corpus not found. Set MOZJPEG_CORPUS_DIR or CODEC_CORPUS_DIR.")
+        .join("10.png");
+    let source_path = source_path_buf.to_str().expect("corpus path");
     let decoder = png::Decoder::new(fs::File::open(source_path).unwrap());
     let mut reader = decoder.read_info().unwrap();
     let mut buf = vec![0; reader.output_buffer_size()];
