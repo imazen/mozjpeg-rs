@@ -2,7 +2,7 @@
 name = "mozjpeg-rs"
 version = "0.8.0"
 edition = "2024"
-rust-version = "1.89.0"
+rust-version = "1.89"
 license = "BSD-3-Clause"
 repository = "https://github.com/imazen/mozjpeg-rs"
 description = "Pure Rust JPEG encoder based on Mozilla's mozjpeg with trellis quantization"
