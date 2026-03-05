@@ -10,13 +10,12 @@
 //!
 //! Reference: libjpeg-turbo/simd/x86_64/jchuff-sse2.asm
 
-// SIMD functions use #[arcane] for safe target_feature dispatch or
-// safe #[target_feature] (Rust 1.86+) for methods.
+// SIMD functions use #[arcane] for safe target_feature dispatch.
 
 #[cfg(target_arch = "x86_64")]
 use std::arch::x86_64::*;
 
-use archmage::{arcane, X64V3Token};
+use archmage::{X64V3Token, arcane};
 
 use crate::consts::{DCTSIZE2, JPEG_NATURAL_ORDER};
 use crate::huffman::DerivedTable;
@@ -190,7 +189,10 @@ impl SimdEntropyEncoder {
     }
 
     /// Encode a single 8x8 block of DCT coefficients using SIMD.
-    #[arcane]
+    ///
+    /// Uses `nested` because default sibling expansion generates bare
+    /// `__arcane_fn()` calls that don't resolve inside impl blocks.
+    #[arcane(nested)]
     fn encode_block_sse2(
         _token: X64V3Token,
         _self: &mut SimdEntropyEncoder,
@@ -199,31 +201,17 @@ impl SimdEntropyEncoder {
         dc_table: &DerivedTable,
         ac_table: &DerivedTable,
     ) {
-        // Step 1: Reorder to zigzag and handle sign, build non-zero mask
-        // Note: zigzag_reorder_and_sign_sse2 applies sign adjustment to ALL coefficients
-        // including DC at position 0, but we use block[0] for DC encoding since
-        // encode_dc_fast handles sign adjustment internally.
         let mut temp = [0i16; DCTSIZE2];
         let nonzero_mask =
             SimdEntropyEncoder::zigzag_reorder_and_sign_sse2(_token, block, &mut temp);
-
-        // Step 2: Encode DC coefficient (use original block[0], not sign-adjusted temp[0])
-        // encode_dc_fast handles sign adjustment for negative DC differentials
         _self.encode_dc_fast(block[0], component, dc_table);
-
-        // Step 3: Encode AC coefficients using tzcnt-based iteration
-        // temp[1..63] are already sign-adjusted for AC encoding
         _self.encode_ac_tzcnt(&temp, nonzero_mask, ac_table);
     }
 
     /// Reorder coefficients to zigzag order with sign handling using SSE2.
     ///
     /// Returns a 64-bit mask where bit `i` is set if `temp[i]` != 0.
-    ///
-    /// Sign handling: for negative values, we compute `value - 1` which gives
-    /// the JPEG-format encoding where negative values are represented as
-    /// (value - 1) & mask.
-    #[arcane]
+    #[arcane(nested)]
     fn zigzag_reorder_and_sign_sse2(
         _token: X64V3Token,
         block: &[i16; DCTSIZE2],
@@ -232,19 +220,9 @@ impl SimdEntropyEncoder {
         let zero = _mm_setzero_si128();
         let mut nonzero_mask: u64 = 0;
 
-        // Process in chunks of 8 coefficients
-        // For each zigzag position, load the coefficient from natural order,
-        // handle sign, and build the non-zero mask.
-
-        // The C version uses complex shuffles to rearrange in SIMD.
-        // For this Rust port, we'll use a simpler approach that still benefits
-        // from SIMD for the sign handling and mask building.
-
         for chunk in 0..8 {
             let base = chunk * 8;
 
-            // Load 8 coefficients in zigzag order
-            // JPEG_NATURAL_ORDER[i] gives the natural position for zigzag position i
             let idx0 = JPEG_NATURAL_ORDER[base];
             let idx1 = JPEG_NATURAL_ORDER[base + 1];
             let idx2 = JPEG_NATURAL_ORDER[base + 2];
@@ -254,8 +232,6 @@ impl SimdEntropyEncoder {
             let idx6 = JPEG_NATURAL_ORDER[base + 6];
             let idx7 = JPEG_NATURAL_ORDER[base + 7];
 
-            // Create SIMD vector from gathered coefficients
-            // _mm_set_epi16 takes args in reverse order (highest element first)
             let values = _mm_set_epi16(
                 block[idx7],
                 block[idx6],
@@ -267,21 +243,15 @@ impl SimdEntropyEncoder {
                 block[idx0],
             );
 
-            // Sign handling: for negative values, compute value + (value < 0 ? -1 : 0)
-            // which is equivalent to value - 1 for negatives, value for positives
-            let sign_mask = _mm_cmpgt_epi16(zero, values); // -1 where value < 0
-            let adjusted = _mm_add_epi16(values, sign_mask); // value += sign_mask
+            let sign_mask = _mm_cmpgt_epi16(zero, values);
+            let adjusted = _mm_add_epi16(values, sign_mask);
 
-            // Store the adjusted values - use bytemuck for safe type conversion
             let adjusted_arr: [i16; 8] = bytemuck::cast(adjusted);
             temp[base..base + 8].copy_from_slice(&adjusted_arr);
 
-            // Build non-zero mask: compare with zero, pack to bytes
-            let is_zero = _mm_cmpeq_epi16(adjusted, zero); // -1 where value == 0
+            let is_zero = _mm_cmpeq_epi16(adjusted, zero);
             let mask_bits = _mm_movemask_epi8(is_zero) as u32;
 
-            // Each i16 becomes 2 bytes in movemask, we need 1 bit per i16
-            // So we take bits 0, 2, 4, 6, 8, 10, 12, 14 and compress them
             let compressed = (mask_bits & 0x0001)
                 | ((mask_bits & 0x0004) >> 1)
                 | ((mask_bits & 0x0010) >> 2)
@@ -291,7 +261,6 @@ impl SimdEntropyEncoder {
                 | ((mask_bits & 0x1000) >> 6)
                 | ((mask_bits & 0x4000) >> 7);
 
-            // is_zero gives -1 for zeros, so invert to get non-zero mask
             let nonzero_bits = (!compressed) & 0xFF;
             nonzero_mask |= (nonzero_bits as u64) << base;
         }
