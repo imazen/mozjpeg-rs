@@ -111,9 +111,9 @@ fn main() {
 fn process_image(path: &Path) -> Result<(usize, usize, f64, f64), Box<dyn std::error::Error>> {
     // Load PNG
     let file = fs::File::open(path)?;
-    let decoder = png::Decoder::new(file);
+    let decoder = png::Decoder::new(std::io::BufReader::new(file));
     let mut reader = decoder.read_info()?;
-    let mut buf = vec![0; reader.output_buffer_size()];
+    let mut buf = vec![0; reader.output_buffer_size().unwrap()];
     let info = reader.next_frame(&mut buf)?;
     let bytes = &buf[..info.buffer_size()];
 

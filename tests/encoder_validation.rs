@@ -65,9 +65,9 @@ fn calculate_dssim(original: &[u8], decoded: &[u8], width: u32, height: u32) -> 
 fn load_bundled_image() -> (Vec<u8>, u32, u32) {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/images/1.png");
     let file = std::fs::File::open(&path).expect("Failed to open bundled test image");
-    let decoder = png::Decoder::new(file);
+    let decoder = png::Decoder::new(std::io::BufReader::new(file));
     let mut reader = decoder.read_info().expect("Failed to read PNG info");
-    let mut buf = vec![0u8; reader.output_buffer_size()];
+    let mut buf = vec![0u8; reader.output_buffer_size().unwrap()];
     let info = reader.next_frame(&mut buf).expect("Failed to decode PNG");
 
     let rgb_data: Vec<u8> = match info.color_type {
@@ -395,9 +395,9 @@ mod corpus_tests {
         for entry in entries {
             let path = entry.path();
             let file = std::fs::File::open(&path).expect("Failed to open image");
-            let decoder = png::Decoder::new(file);
+            let decoder = png::Decoder::new(std::io::BufReader::new(file));
             let mut reader = decoder.read_info().expect("PNG read failed");
-            let mut buf = vec![0u8; reader.output_buffer_size()];
+            let mut buf = vec![0u8; reader.output_buffer_size().unwrap()];
             let info = reader.next_frame(&mut buf).expect("PNG decode failed");
 
             let rgb_data: Vec<u8> = match info.color_type {

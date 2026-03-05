@@ -69,16 +69,16 @@ imgref = { version = "1.12", optional = true }
 rgb = { version = "0.8", optional = true }
 
 [dev-dependencies]
-dssim = "3.2"
+dssim = "3.4"
 yuv = "0.8"
 rgb = "0.8"
 imgref = "1.10"
 ssimulacra2 = "0.5"
 png = "0.18"
 proptest = "1.4"
-criterion = "0.5"
+criterion = "0.8"
 jpeg-decoder = "0.3"
-zune-jpeg = "0.4"
+zune-jpeg = "0.5"
 libc = "0.2"
 # Use existing mozjpeg-sys from crates.io for basic FFI validation
 mozjpeg-sys = "2.2"

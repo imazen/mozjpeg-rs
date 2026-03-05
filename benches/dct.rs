@@ -2,12 +2,13 @@
 
 #![allow(deprecated)] // Benchmarks compare deprecated implementations
 
-use criterion::{Criterion, Throughput, black_box, criterion_group, criterion_main};
+use criterion::{Criterion, Throughput, criterion_group, criterion_main};
 use mozjpeg_rs::dct::{
     forward_dct_8x8_i32_multiversion, forward_dct_8x8_i32_wide_gather,
     forward_dct_8x8_i32_wide_transpose, forward_dct_u8_i32_multiversion,
 };
 use mozjpeg_rs::simd::SimdOps;
+use std::hint::black_box;
 
 /// Generate pseudo-random test data
 fn generate_test_data() -> [u8; 64] {

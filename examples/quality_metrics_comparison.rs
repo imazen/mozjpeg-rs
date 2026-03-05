@@ -88,9 +88,9 @@ fn main() {
 }
 
 fn load_png_rgb(path: &Path) -> (Vec<u8>, u32, u32) {
-    let decoder = png::Decoder::new(fs::File::open(path).unwrap());
+    let decoder = png::Decoder::new(std::io::BufReader::new(fs::File::open(path).unwrap()));
     let mut reader = decoder.read_info().unwrap();
-    let mut buf = vec![0; reader.output_buffer_size()];
+    let mut buf = vec![0; reader.output_buffer_size().unwrap()];
     let info = reader.next_frame(&mut buf).unwrap();
     (buf[..info.buffer_size()].to_vec(), info.width, info.height)
 }

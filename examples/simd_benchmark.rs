@@ -6,9 +6,9 @@ fn main() {
     let source_path = "corpus/CID22/CID22-512/training/10.png";
     let file =
         std::fs::File::open(source_path).expect("Need corpus/CID22/CID22-512/training/10.png");
-    let decoder = png::Decoder::new(file);
+    let decoder = png::Decoder::new(std::io::BufReader::new(file));
     let mut reader = decoder.read_info().unwrap();
-    let mut buf = vec![0; reader.output_buffer_size()];
+    let mut buf = vec![0; reader.output_buffer_size().unwrap()];
     let info = reader.next_frame(&mut buf).unwrap();
     let rgb_data = &buf[..info.buffer_size()];
     let width = info.width;

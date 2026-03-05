@@ -5,7 +5,7 @@
 
 #![allow(deprecated)] // Using deprecated wide-based DCT for benchmark consistency
 
-use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main};
+use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use mozjpeg_rs::bitstream::VecBitWriter;
 use mozjpeg_rs::consts::{
     AC_LUMINANCE_BITS, AC_LUMINANCE_VALUES, DC_LUMINANCE_BITS, DC_LUMINANCE_VALUES, DCTSIZE,
@@ -16,6 +16,7 @@ use mozjpeg_rs::entropy::EntropyEncoder;
 use mozjpeg_rs::fast_entropy::FastEntropyEncoder;
 use mozjpeg_rs::huffman::{DerivedTable, HuffTable};
 use mozjpeg_rs::quant;
+use std::hint::black_box;
 
 #[cfg(target_arch = "x86_64")]
 use mozjpeg_rs::simd::x86_64::entropy::SimdEntropyEncoder;
@@ -45,9 +46,9 @@ fn create_ac_luma_table() -> DerivedTable {
 /// Load a real PNG image and convert to Y plane (grayscale).
 fn load_real_image(path: &Path) -> (Vec<u8>, usize, usize) {
     let file = File::open(path).expect("Failed to open test image");
-    let decoder = png::Decoder::new(file);
+    let decoder = png::Decoder::new(std::io::BufReader::new(file));
     let mut reader = decoder.read_info().expect("Failed to read PNG info");
-    let mut buf = vec![0u8; reader.output_buffer_size()];
+    let mut buf = vec![0u8; reader.output_buffer_size().unwrap()];
     let info = reader.next_frame(&mut buf).expect("Failed to decode PNG");
 
     let width = info.width as usize;

@@ -4,10 +4,11 @@
 //!
 //! Run with: cargo bench
 
-use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main};
+use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use mozjpeg_rs::test_encoder::{TestEncoderConfig, encode_rust};
 use mozjpeg_rs::{Encoder, Subsampling};
 use mozjpeg_sys::*;
+use std::hint::black_box;
 use std::ptr;
 
 /// Create a synthetic test image with gradient and noise.

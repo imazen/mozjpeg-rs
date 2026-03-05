@@ -105,15 +105,15 @@ fn run_corpus(
 }
 
 fn load_png(path: &Path) -> Vec<u8> {
-    let decoder = png::Decoder::new(fs::File::open(path).unwrap());
+    let decoder = png::Decoder::new(std::io::BufReader::new(fs::File::open(path).unwrap()));
     let mut reader = decoder.read_info().unwrap();
-    let mut buf = vec![0; reader.output_buffer_size()];
+    let mut buf = vec![0; reader.output_buffer_size().unwrap()];
     let info = reader.next_frame(&mut buf).unwrap();
     buf[..info.buffer_size()].to_vec()
 }
 
 fn get_png_dimensions(path: &Path) -> (u32, u32) {
-    let decoder = png::Decoder::new(fs::File::open(path).unwrap());
+    let decoder = png::Decoder::new(std::io::BufReader::new(fs::File::open(path).unwrap()));
     let reader = decoder.read_info().unwrap();
     let info = reader.info();
     (info.width, info.height)

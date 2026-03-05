@@ -1,9 +1,10 @@
 //! Benchmarks for color conversion
 
-use criterion::{Criterion, Throughput, black_box, criterion_group, criterion_main};
+use criterion::{Criterion, Throughput, criterion_group, criterion_main};
 use mozjpeg_rs::color::{convert_rgb_to_gray, convert_rgb_to_ycbcr, rgb_to_ycbcr};
 #[cfg(target_arch = "x86_64")]
 use mozjpeg_rs::color_avx2::convert_rgb_to_ycbcr_dispatch;
+use std::hint::black_box;
 use yuv::{
     YuvChromaSubsampling, YuvConversionMode, YuvPlanarImageMut, YuvRange, YuvStandardMatrix,
     rgb_to_yuv444,

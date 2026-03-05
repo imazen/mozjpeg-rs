@@ -300,9 +300,9 @@ fn encode_c(rgb: &[u8], width: u32, height: u32, quality: i32) -> Vec<u8> {
 /// Load a PNG image and return RGB data.
 fn load_png(path: &Path) -> Option<(Vec<u8>, u32, u32)> {
     let file = File::open(path).ok()?;
-    let decoder = png::Decoder::new(file);
+    let decoder = png::Decoder::new(std::io::BufReader::new(file));
     let mut reader = decoder.read_info().ok()?;
-    let mut buf = vec![0; reader.output_buffer_size()];
+    let mut buf = vec![0; reader.output_buffer_size().unwrap()];
     let info = reader.next_frame(&mut buf).ok()?;
     let bytes = &buf[..info.buffer_size()];
 

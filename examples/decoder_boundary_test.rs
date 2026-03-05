@@ -15,7 +15,7 @@ fn decode_and_compare(jpeg: &[u8]) -> (u8, u8, u8) {
     // Decode with zune-jpeg
     let zune = {
         use zune_jpeg::JpegDecoder;
-        let mut dec = JpegDecoder::new(jpeg);
+        let mut dec = JpegDecoder::new(std::io::Cursor::new(jpeg));
         dec.decode().unwrap()
     };
 

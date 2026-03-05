@@ -45,7 +45,7 @@ fn decode_jpeg_decoder(jpeg: &[u8]) -> Result<DecodedImage, String> {
 fn decode_zune_jpeg(jpeg: &[u8]) -> Result<DecodedImage, String> {
     use zune_jpeg::JpegDecoder;
 
-    let mut decoder = JpegDecoder::new(jpeg);
+    let mut decoder = JpegDecoder::new(std::io::Cursor::new(jpeg));
     let pixels = decoder
         .decode()
         .map_err(|e| format!("zune-jpeg: {:?}", e))?;

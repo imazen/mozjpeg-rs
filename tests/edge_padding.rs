@@ -18,9 +18,9 @@ fn test_edge_padding_behavior() {
     // Load actual test image and crop to non-aligned size
     let input_path = "tests/images/1.png";
     let file = fs::File::open(input_path).expect("Failed to open image");
-    let decoder = png::Decoder::new(file);
+    let decoder = png::Decoder::new(std::io::BufReader::new(file));
     let mut reader = decoder.read_info().expect("Failed to read PNG info");
-    let mut buf = vec![0u8; reader.output_buffer_size()];
+    let mut buf = vec![0u8; reader.output_buffer_size().unwrap()];
     let info = reader.next_frame(&mut buf).expect("Failed to decode PNG");
 
     let full_width = info.width as usize;

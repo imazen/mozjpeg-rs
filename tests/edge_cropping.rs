@@ -21,9 +21,9 @@ fn test_edge_cropping_all_remainders() {
 
     // Load the PNG image
     let file = fs::File::open(input_path).expect("Failed to open input image");
-    let decoder = png::Decoder::new(file);
+    let decoder = png::Decoder::new(std::io::BufReader::new(file));
     let mut reader = decoder.read_info().expect("Failed to read PNG info");
-    let mut buf = vec![0u8; reader.output_buffer_size()];
+    let mut buf = vec![0u8; reader.output_buffer_size().unwrap()];
     let info = reader.next_frame(&mut buf).expect("Failed to decode PNG");
     let full_width = info.width as usize;
     let full_height = info.height as usize;

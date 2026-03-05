@@ -63,9 +63,9 @@ pub struct BenchmarkResults {
 /// Load a PNG image and return RGB data
 fn load_png(path: &Path) -> Result<(Vec<u8>, u32, u32), Box<dyn std::error::Error>> {
     let file = fs::File::open(path)?;
-    let decoder = png::Decoder::new(file);
+    let decoder = png::Decoder::new(std::io::BufReader::new(file));
     let mut reader = decoder.read_info()?;
-    let mut buf = vec![0; reader.output_buffer_size()];
+    let mut buf = vec![0; reader.output_buffer_size().unwrap()];
     let info = reader.next_frame(&mut buf)?;
     buf.truncate(info.buffer_size());
 

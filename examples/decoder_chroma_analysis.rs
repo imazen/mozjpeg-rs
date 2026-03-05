@@ -26,7 +26,7 @@ fn decode_jpeg_decoder(jpeg: &[u8]) -> DecodedImage {
 
 fn decode_zune_jpeg(jpeg: &[u8]) -> DecodedImage {
     use zune_jpeg::JpegDecoder;
-    let mut dec = JpegDecoder::new(jpeg);
+    let mut dec = JpegDecoder::new(std::io::Cursor::new(jpeg));
     let pixels = dec.decode().unwrap();
     let info = dec.info().unwrap();
     DecodedImage {
