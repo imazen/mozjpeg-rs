@@ -3,7 +3,7 @@
 //! Rust now generates exactly 64 scans for YCbCr, matching C mozjpeg's
 //! jpeg_search_progression() in jcparam.c.
 
-use mozjpeg_rs::scan_optimize::{generate_search_scans, ScanSearchConfig};
+use mozjpeg_rs::scan_optimize::{ScanSearchConfig, generate_search_scans};
 
 /// Test that Rust generates the expected number of progressive scans.
 ///

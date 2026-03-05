@@ -5,8 +5,8 @@
 //! Uses codec-eval for perceptual quality metrics.
 
 use codec_eval::{
-    decode::jpeg_decode_callback, EvalConfig, EvalSession, ImageData, MetricConfig,
-    ViewingCondition,
+    EvalConfig, EvalSession, ImageData, MetricConfig, ViewingCondition,
+    decode::jpeg_decode_callback,
 };
 use mozjpeg_rs::{Encoder, Subsampling, TrellisConfig};
 use std::fs::File;
@@ -388,16 +388,25 @@ where
 fn print_results(results: &[Result], mode_name: &str) {
     println!("### {} Results\n", mode_name);
 
-    println!("| Q | Rust Size | C Size | Diff | R SSIM2 | C SSIM2 | R DSSIM | C DSSIM | R Butter | C Butter |");
-    println!("|---|-----------|--------|------|---------|---------|---------|---------|----------|----------|");
+    println!(
+        "| Q | Rust Size | C Size | Diff | R SSIM2 | C SSIM2 | R DSSIM | C DSSIM | R Butter | C Butter |"
+    );
+    println!(
+        "|---|-----------|--------|------|---------|---------|---------|---------|----------|----------|"
+    );
     for r in results {
         println!(
             "| {:2} | {:>9} | {:>6} | {:>+.2}% | {:>7.2} | {:>7.2} | {:.6} | {:.6} | {:>8.4} | {:>8.4} |",
             r.quality,
-            r.rust_size, r.c_size, r.size_diff_pct,
-            r.rust_ssim2, r.c_ssim2,
-            r.rust_dssim, r.c_dssim,
-            r.rust_butteraugli, r.c_butteraugli
+            r.rust_size,
+            r.c_size,
+            r.size_diff_pct,
+            r.rust_ssim2,
+            r.c_ssim2,
+            r.rust_dssim,
+            r.c_dssim,
+            r.rust_butteraugli,
+            r.c_butteraugli
         );
     }
     println!();

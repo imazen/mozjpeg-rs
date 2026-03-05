@@ -352,7 +352,11 @@ impl ScanSelector {
         if DEBUG_SCAN_OPT {
             eprintln!(
                 "[SCAN_OPT] Selection: al_luma={}, al_chroma={}, freq_luma={}, freq_chroma={}, interleave={}",
-                best_al_luma, best_al_chroma, best_freq_split_luma, best_freq_split_chroma, interleave_chroma_dc
+                best_al_luma,
+                best_al_chroma,
+                best_freq_split_luma,
+                best_freq_split_chroma,
+                interleave_chroma_dc
             );
         }
 

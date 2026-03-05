@@ -325,11 +325,7 @@ fn test_successive_approximation_scan_structure() {
     println!("=================================================");
     for (i, scan) in scans.iter().enumerate() {
         let scan_type = if scan.ss == 0 && scan.se == 0 {
-            if scan.ah > 0 {
-                "DC refine"
-            } else {
-                "DC first"
-            }
+            if scan.ah > 0 { "DC refine" } else { "DC first" }
         } else if scan.ah > 0 {
             "AC refine"
         } else {

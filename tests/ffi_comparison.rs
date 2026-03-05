@@ -539,10 +539,10 @@ fn test_deringing_matches_c() {
 /// must produce identical decisions to C mozjpeg.
 #[test]
 fn test_trellis_matches_c() {
+    use mozjpeg_rs::TrellisConfig;
     use mozjpeg_rs::consts::{AC_LUMINANCE_BITS, AC_LUMINANCE_VALUES, STD_LUMINANCE_QUANT_TBL};
     use mozjpeg_rs::huffman::{DerivedTable, HuffTable};
     use mozjpeg_rs::trellis::trellis_quantize_block;
-    use mozjpeg_rs::TrellisConfig;
 
     // Build the AC Huffman table to get code sizes
     let mut htbl = HuffTable::default();
@@ -699,10 +699,10 @@ fn test_trellis_matches_c() {
 /// Uses pseudo-random values that mimic actual DCT output patterns.
 #[test]
 fn test_trellis_matches_c_random() {
+    use mozjpeg_rs::TrellisConfig;
     use mozjpeg_rs::consts::{AC_LUMINANCE_BITS, AC_LUMINANCE_VALUES, STD_LUMINANCE_QUANT_TBL};
     use mozjpeg_rs::huffman::{DerivedTable, HuffTable};
     use mozjpeg_rs::trellis::trellis_quantize_block;
-    use mozjpeg_rs::TrellisConfig;
 
     // Build AC Huffman table
     let mut htbl = HuffTable::default();
@@ -812,11 +812,11 @@ fn test_trellis_matches_c_random() {
 /// Test trellis at different quality levels (which affects quantization tables).
 #[test]
 fn test_trellis_matches_c_quality_levels() {
+    use mozjpeg_rs::TrellisConfig;
     use mozjpeg_rs::consts::{AC_LUMINANCE_BITS, AC_LUMINANCE_VALUES, STD_LUMINANCE_QUANT_TBL};
     use mozjpeg_rs::huffman::{DerivedTable, HuffTable};
     use mozjpeg_rs::quant::quality_to_scale_factor;
     use mozjpeg_rs::trellis::trellis_quantize_block;
-    use mozjpeg_rs::TrellisConfig;
 
     // Build AC Huffman table
     let mut htbl = HuffTable::default();
@@ -933,10 +933,10 @@ fn test_trellis_matches_c_quality_levels() {
 /// and the trellis optimizes the entire chain of DC values.
 #[test]
 fn test_dc_trellis_matches_c() {
-    use mozjpeg_rs::consts::{DCTSIZE2, DC_LUMINANCE_BITS, DC_LUMINANCE_VALUES};
+    use mozjpeg_rs::TrellisConfig;
+    use mozjpeg_rs::consts::{DC_LUMINANCE_BITS, DC_LUMINANCE_VALUES, DCTSIZE2};
     use mozjpeg_rs::huffman::{DerivedTable, HuffTable};
     use mozjpeg_rs::trellis::dc_trellis_optimize;
-    use mozjpeg_rs::TrellisConfig;
 
     // Build the DC Huffman table
     let mut htbl = HuffTable::default();

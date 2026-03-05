@@ -14,8 +14,8 @@
 //!   --xyb-roundtrip  Enable XYB roundtrip for fair comparison (isolates compression error)
 
 use codec_eval::{
-    decode::jpeg_decode_callback, EvalConfig, EvalSession, ImageData, MetricConfig,
-    ViewingCondition,
+    EvalConfig, EvalSession, ImageData, MetricConfig, ViewingCondition,
+    decode::jpeg_decode_callback,
 };
 use mozjpeg_rs::Encoder;
 use mozjpeg_sys::*;

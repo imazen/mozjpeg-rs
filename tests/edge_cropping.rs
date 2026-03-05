@@ -6,8 +6,8 @@
 //! 2. Edge pixels (right/bottom) aren't degraded more than center pixels
 //! 3. Rust and C decoded pixels match (within tolerance)
 
-use mozjpeg_rs::test_encoder::{encode_rust, TestEncoderConfig};
 use mozjpeg_rs::Subsampling;
+use mozjpeg_rs::test_encoder::{TestEncoderConfig, encode_rust};
 use mozjpeg_sys::*;
 use png::ColorType;
 use std::fs;

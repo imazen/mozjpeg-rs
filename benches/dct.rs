@@ -2,7 +2,7 @@
 
 #![allow(deprecated)] // Benchmarks compare deprecated implementations
 
-use criterion::{black_box, criterion_group, criterion_main, Criterion, Throughput};
+use criterion::{Criterion, Throughput, black_box, criterion_group, criterion_main};
 use mozjpeg_rs::dct::{
     forward_dct_8x8_i32_multiversion, forward_dct_8x8_i32_wide_gather,
     forward_dct_8x8_i32_wide_transpose, forward_dct_u8_i32_multiversion,

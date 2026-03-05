@@ -63,7 +63,11 @@ fn descale(x: i32, n: i32) -> i32 {
 /// * `samples` - Input 8x8 block of pixel samples (typically centered around 0)
 /// * `coeffs` - Output 8x8 block of DCT coefficients
 #[autoversion]
-pub fn forward_dct_8x8_i32_multiversion(_token: SimdToken, samples: &[i16; DCTSIZE2], coeffs: &mut [i16; DCTSIZE2]) {
+pub fn forward_dct_8x8_i32_multiversion(
+    _token: SimdToken,
+    samples: &[i16; DCTSIZE2],
+    coeffs: &mut [i16; DCTSIZE2],
+) {
     // Work buffer (we modify in place across both passes)
     let mut data = [0i32; DCTSIZE2];
 
@@ -977,8 +981,8 @@ pub mod avx2_archmage {
     //! Runtime feature detection via `X64V3Token::try_new()` ensures safety.
 
     use super::*;
-    use archmage::arcane;
     use archmage::X64V3Token;
+    use archmage::arcane;
     use core::arch::x86_64::*;
     use safe_unaligned_simd::x86_64 as sse2_mem;
     use safe_unaligned_simd::x86_64 as avx_mem;

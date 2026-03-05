@@ -15,8 +15,8 @@
 // All SIMD functions use #[arcane] for safe target_feature dispatch.
 
 use crate::consts::DCTSIZE2;
-use archmage::arcane;
 use archmage::X64V3Token;
+use archmage::arcane;
 use core::arch::x86_64::*;
 use safe_unaligned_simd::x86_64 as mem_sse2;
 

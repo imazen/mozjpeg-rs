@@ -1221,10 +1221,10 @@ mod tests {
         // Create a mix of blocks: some with content, some all-zero
         let mut blocks = vec![[0i16; DCTSIZE2]; 5];
         blocks[0][JPEG_NATURAL_ORDER[1]] = 50; // Has content
-                                               // blocks[1] is all zero
-                                               // blocks[2] is all zero
+        // blocks[1] is all zero
+        // blocks[2] is all zero
         blocks[3][JPEG_NATURAL_ORDER[1]] = 30; // Has content
-                                               // blocks[4] is all zero
+        // blocks[4] is all zero
 
         let eob_info: Vec<_> = blocks
             .iter()

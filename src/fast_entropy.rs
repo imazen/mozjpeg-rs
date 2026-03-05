@@ -10,7 +10,7 @@
 //! The encoder uses SIMD to build a 64-bit mask of non-zero coefficients,
 //! enabling fast iteration through only the non-zero AC coefficients.
 
-use wide::{i16x8, CmpEq};
+use wide::{CmpEq, i16x8};
 
 use crate::consts::{DCTSIZE2, JPEG_NATURAL_ORDER};
 use crate::huffman::DerivedTable;

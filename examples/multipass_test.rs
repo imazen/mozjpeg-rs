@@ -218,8 +218,12 @@ fn main() {
     let cid22_dir = format!("{}/CID22/CID22-512/training", corpus_dir);
 
     if std::path::Path::new(&cid22_dir).exists() {
-        println!("| Image | Trellis | Trellis+MP | Size Diff | Quality (no MP) | Quality (MP) | Q Diff |");
-        println!("|-------|---------|------------|-----------|-----------------|--------------|--------|");
+        println!(
+            "| Image | Trellis | Trellis+MP | Size Diff | Quality (no MP) | Quality (MP) | Q Diff |"
+        );
+        println!(
+            "|-------|---------|------------|-----------|-----------------|--------------|--------|"
+        );
 
         let mut total_no_mp = 0usize;
         let mut total_mp = 0usize;
@@ -268,7 +272,9 @@ fn main() {
             let avg_q_no_mp = total_q_no_mp / count as f64;
             let avg_q_mp = total_q_mp / count as f64;
             let avg_q_diff = avg_q_mp - avg_q_no_mp;
-            println!("|-------|---------|------------|-----------|-----------------|--------------|--------|");
+            println!(
+                "|-------|---------|------------|-----------|-----------------|--------------|--------|"
+            );
             println!(
                 "| **Avg ({})** | {} | {} | **{:+.2}%** | {:.2} | {:.2} | **{:+.3}** |",
                 count, total_no_mp, total_mp, avg_size_diff, avg_q_no_mp, avg_q_mp, avg_q_diff

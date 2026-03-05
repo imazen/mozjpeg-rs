@@ -1,7 +1,7 @@
 //! 2048x2048 benchmark test for accurate Rust vs C comparison
 
-use mozjpeg_rs::test_encoder::{encode_rust, TestEncoderConfig};
 use mozjpeg_rs::Subsampling;
+use mozjpeg_rs::test_encoder::{TestEncoderConfig, encode_rust};
 use mozjpeg_sys::*;
 use std::ptr;
 use std::time::Instant;

@@ -5,11 +5,11 @@
 
 #![allow(deprecated)] // Using deprecated wide-based DCT for benchmark consistency
 
-use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
+use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main};
 use mozjpeg_rs::bitstream::VecBitWriter;
 use mozjpeg_rs::consts::{
-    QuantTableIdx, AC_LUMINANCE_BITS, AC_LUMINANCE_VALUES, DCTSIZE, DCTSIZE2, DC_LUMINANCE_BITS,
-    DC_LUMINANCE_VALUES,
+    AC_LUMINANCE_BITS, AC_LUMINANCE_VALUES, DC_LUMINANCE_BITS, DC_LUMINANCE_VALUES, DCTSIZE,
+    DCTSIZE2, QuantTableIdx,
 };
 use mozjpeg_rs::dct;
 use mozjpeg_rs::entropy::EntropyEncoder;

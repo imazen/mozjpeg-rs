@@ -156,10 +156,14 @@ unsafe fn trace_deinterleave() {
     let b_odd: [i16; 16] = std::mem::transmute(ymm_f);
 
     println!("Verification:");
-    println!("Expected R for even pixels: [0, 6, 12, 18, 24, 30, 36, 42, 48, 54, 60, 66, 72, 78, 84, 90]");
+    println!(
+        "Expected R for even pixels: [0, 6, 12, 18, 24, 30, 36, 42, 48, 54, 60, 66, 72, 78, 84, 90]"
+    );
     println!("Got R even: {:?}", r_even);
     println!();
-    println!("Expected G for even pixels: [1, 7, 13, 19, 25, 31, 37, 43, 49, 55, 61, 67, 73, 79, 85, 91]");
+    println!(
+        "Expected G for even pixels: [1, 7, 13, 19, 25, 31, 37, 43, 49, 55, 61, 67, 73, 79, 85, 91]"
+    );
     println!("Got G even: {:?}", g_even);
     println!();
     println!(

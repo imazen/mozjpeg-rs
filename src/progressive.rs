@@ -744,7 +744,7 @@ mod tests {
     fn test_single_partial_scan_is_progressive() {
         // A single scan that doesn't cover all coefficients is progressive
         let scans = vec![ScanInfo::dc_scan(3)]; // DC only (ss=0, se=0)
-                                                // DC-only scan has se=0, not 63, so it's considered progressive
+        // DC-only scan has se=0, not 63, so it's considered progressive
         assert!(is_progressive_script(&scans));
     }
 

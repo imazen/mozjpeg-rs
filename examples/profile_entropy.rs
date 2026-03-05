@@ -7,8 +7,8 @@
 
 use mozjpeg_rs::bitstream::VecBitWriter;
 use mozjpeg_rs::consts::{
-    QuantTableIdx, AC_LUMINANCE_BITS, AC_LUMINANCE_VALUES, DCTSIZE, DCTSIZE2, DC_LUMINANCE_BITS,
-    DC_LUMINANCE_VALUES,
+    AC_LUMINANCE_BITS, AC_LUMINANCE_VALUES, DC_LUMINANCE_BITS, DC_LUMINANCE_VALUES, DCTSIZE,
+    DCTSIZE2, QuantTableIdx,
 };
 use mozjpeg_rs::dct;
 use mozjpeg_rs::entropy::EntropyEncoder;

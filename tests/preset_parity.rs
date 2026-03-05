@@ -37,7 +37,7 @@
 //! intentionally use better tables. The mozjpeg crate doesn't expose table selection.
 
 use mozjpeg_rs::{Encoder, Preset, Subsampling};
-use ssimulacra2::{compute_frame_ssimulacra2, ColorPrimaries, Rgb, TransferCharacteristic};
+use ssimulacra2::{ColorPrimaries, Rgb, TransferCharacteristic, compute_frame_ssimulacra2};
 
 /// Image sizes to test (small, medium, large)
 const TEST_SIZES: [(u32, u32); 3] = [
@@ -401,9 +401,15 @@ fn test_progressive_smallest_parity() {
 
             println!(
                 "| {:>4}x{:<4} | {:>3} | {:>8} | {:>8} | {:>+6.2}% | {:>6.2} | {:>6.2} | {:>+6.2} |",
-                width, height, quality,
-                rust_jpeg.len(), c_jpeg.len(),
-                diff_pct, rust_ssim2, c_ssim2, quality_diff
+                width,
+                height,
+                quality,
+                rust_jpeg.len(),
+                c_jpeg.len(),
+                diff_pct,
+                rust_ssim2,
+                c_ssim2,
+                quality_diff
             );
 
             // When Rust produces significantly smaller files (>2% smaller),
@@ -415,7 +421,13 @@ fn test_progressive_smallest_parity() {
                 assert!(
                     quality_diff > -ssim2_tolerance,
                     "ProgressiveSmallest at {}x{} Q{}: Rust is {:.2}% smaller but SSIM2 is {:.2} worse (R={:.2}, C={:.2})",
-                    width, height, quality, -diff_pct, -quality_diff, rust_ssim2, c_ssim2
+                    width,
+                    height,
+                    quality,
+                    -diff_pct,
+                    -quality_diff,
+                    rust_ssim2,
+                    c_ssim2
                 );
             }
 

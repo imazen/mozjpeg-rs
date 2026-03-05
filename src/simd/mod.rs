@@ -60,8 +60,8 @@ fn convert_rgb_to_ycbcr_yuv(
     num_pixels: usize,
 ) {
     use yuv::{
-        rgb_to_yuv444, BufferStoreMut, YuvConversionMode, YuvPlanarImageMut, YuvRange,
-        YuvStandardMatrix,
+        BufferStoreMut, YuvConversionMode, YuvPlanarImageMut, YuvRange, YuvStandardMatrix,
+        rgb_to_yuv444,
     };
 
     // Treat as 1D image (width=num_pixels, height=1)

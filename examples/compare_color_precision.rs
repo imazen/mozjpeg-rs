@@ -4,8 +4,8 @@
 
 use mozjpeg_rs::color::rgb_to_ycbcr;
 use yuv::{
-    rgb_to_yuv444, YuvChromaSubsampling, YuvConversionMode, YuvPlanarImageMut, YuvRange,
-    YuvStandardMatrix,
+    YuvChromaSubsampling, YuvConversionMode, YuvPlanarImageMut, YuvRange, YuvStandardMatrix,
+    rgb_to_yuv444,
 };
 
 fn main() {

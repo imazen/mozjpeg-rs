@@ -23,9 +23,9 @@
 #![allow(clippy::too_many_lines)]
 
 #[cfg(target_arch = "x86_64")]
-use archmage::arcane;
-#[cfg(target_arch = "x86_64")]
 use archmage::X64V3Token;
+#[cfg(target_arch = "x86_64")]
+use archmage::arcane;
 #[cfg(target_arch = "x86_64")]
 use safe_unaligned_simd::x86_64 as mem_avx;
 #[cfg(target_arch = "x86_64")]

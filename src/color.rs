@@ -130,8 +130,8 @@ pub fn convert_rgb_to_ycbcr(
     height: usize,
 ) {
     use yuv::{
-        rgb_to_yuv444, BufferStoreMut, YuvConversionMode, YuvPlanarImageMut, YuvRange,
-        YuvStandardMatrix,
+        BufferStoreMut, YuvConversionMode, YuvPlanarImageMut, YuvRange, YuvStandardMatrix,
+        rgb_to_yuv444,
     };
 
     debug_assert_eq!(rgb.len(), width * height * 3);

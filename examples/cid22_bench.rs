@@ -239,8 +239,12 @@ fn main() {
     eprintln!("Processing {} images from CID22-512/training\n", total);
 
     // Header
-    println!("| Config | Q | Rust Size | C Size | Size Δ | DSSIM (R) | DSSIM (C) | Butteraugli (R) | Butteraugli (C) |");
-    println!("|--------|---|-----------|--------|--------|-----------|-----------|-----------------|-----------------|");
+    println!(
+        "| Config | Q | Rust Size | C Size | Size Δ | DSSIM (R) | DSSIM (C) | Butteraugli (R) | Butteraugli (C) |"
+    );
+    println!(
+        "|--------|---|-----------|--------|--------|-----------|-----------|-----------------|-----------------|"
+    );
 
     for config in CONFIGS {
         for &quality in QUALITIES {

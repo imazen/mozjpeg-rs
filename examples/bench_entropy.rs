@@ -4,7 +4,7 @@
 
 use mozjpeg_rs::bitstream::VecBitWriter;
 use mozjpeg_rs::consts::{
-    AC_LUMINANCE_BITS, AC_LUMINANCE_VALUES, DCTSIZE2, DC_LUMINANCE_BITS, DC_LUMINANCE_VALUES,
+    AC_LUMINANCE_BITS, AC_LUMINANCE_VALUES, DC_LUMINANCE_BITS, DC_LUMINANCE_VALUES, DCTSIZE2,
 };
 use mozjpeg_rs::entropy::EntropyEncoder;
 use mozjpeg_rs::fast_entropy::FastEntropyEncoder;

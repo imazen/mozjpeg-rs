@@ -102,7 +102,7 @@ fn main() {
             let _magic = lines.next()?; // P6
             let _dims = lines.next()?; // width height
             let _max = lines.next()?; // 255
-                                      // Find byte offset of pixel data
+            // Find byte offset of pixel data
             let header_end = s.find("255\n")? + 4;
             Some(&data[header_end..])
         }

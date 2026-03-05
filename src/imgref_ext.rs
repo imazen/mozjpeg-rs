@@ -23,7 +23,7 @@
 //! # Ok::<(), mozjpeg_rs::Error>(())
 //! ```
 
-use crate::encode::{try_alloc_vec, Encoder};
+use crate::encode::{Encoder, try_alloc_vec};
 use crate::error::Result;
 use imgref::ImgRef;
 use rgb::{Gray, RGB, RGBA};

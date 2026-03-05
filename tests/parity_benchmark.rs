@@ -13,7 +13,7 @@
 //! ```
 
 use mozjpeg_rs::corpus;
-use mozjpeg_rs::test_encoder::{encode_rust, TestEncoderConfig};
+use mozjpeg_rs::test_encoder::{TestEncoderConfig, encode_rust};
 use std::path::Path;
 
 // ---------------------------------------------------------------------------

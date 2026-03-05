@@ -19,8 +19,8 @@
 use codec_eval::{EvalConfig, EvalSession, ImageData, MetricConfig, ViewingCondition};
 
 use dssim::Dssim;
-use mozjpeg_rs::test_encoder::{encode_rust, TestEncoderConfig};
 use mozjpeg_rs::Subsampling;
+use mozjpeg_rs::test_encoder::{TestEncoderConfig, encode_rust};
 
 /// Encode using Rust with settings matching C mozjpeg baseline (Huffman opt only).
 /// This enables fair parity comparison - both implementations use same settings.

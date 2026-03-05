@@ -6,16 +6,17 @@
 //! Run with: cargo test --release timing_breakdown -- --nocapture
 
 use mozjpeg_rs::{
+    QuantTableIdx, TrellisConfig,
     bitstream::BitWriter,
     color,
     consts::{
-        AC_LUMINANCE_BITS, AC_LUMINANCE_VALUES, DCTSIZE, DCTSIZE2, DC_LUMINANCE_BITS,
-        DC_LUMINANCE_VALUES,
+        AC_LUMINANCE_BITS, AC_LUMINANCE_VALUES, DC_LUMINANCE_BITS, DC_LUMINANCE_VALUES, DCTSIZE,
+        DCTSIZE2,
     },
     dct,
     entropy::EntropyEncoder,
     huffman::{DerivedTable, HuffTable},
-    quant, sample, trellis, QuantTableIdx, TrellisConfig,
+    quant, sample, trellis,
 };
 use std::time::Instant;
 

@@ -139,11 +139,7 @@ fn main() {
     println!("C scans ({}):", c_scans.len());
     for (i, (nc, ss, se, ah, al)) in c_scans.iter().enumerate() {
         let scan_type = if *ss == 0 && *se == 0 {
-            if *ah > 0 {
-                "DC refine"
-            } else {
-                "DC first"
-            }
+            if *ah > 0 { "DC refine" } else { "DC first" }
         } else if *ah > 0 {
             "AC refine"
         } else {
@@ -178,11 +174,7 @@ fn main() {
     println!("Rust scans ({}):", rust_scans.len());
     for (i, (nc, ss, se, ah, al)) in rust_scans.iter().enumerate() {
         let scan_type = if *ss == 0 && *se == 0 {
-            if *ah > 0 {
-                "DC refine"
-            } else {
-                "DC first"
-            }
+            if *ah > 0 { "DC refine" } else { "DC first" }
         } else if *ah > 0 {
             "AC refine"
         } else {

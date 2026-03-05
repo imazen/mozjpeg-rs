@@ -1084,7 +1084,13 @@ fn test_encode_decode_permutations() {
                                 Err(e) => {
                                     panic!(
                                         "Encoding failed: prog={}, sub={:?}, huff={}, trellis={}, eob={}, q={}: {:?}",
-                                        progressive, subsampling, optimize_huffman, trellis, eob_opt, quality, e
+                                        progressive,
+                                        subsampling,
+                                        optimize_huffman,
+                                        trellis,
+                                        eob_opt,
+                                        quality,
+                                        e
                                     );
                                 }
                             };

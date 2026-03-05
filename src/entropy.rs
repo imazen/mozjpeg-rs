@@ -16,7 +16,7 @@
 
 use std::io::Write;
 
-use wide::{i16x8, CmpEq};
+use wide::{CmpEq, i16x8};
 
 use crate::bitstream::BitWriter;
 use crate::consts::{DCTSIZE2, JPEG_NATURAL_ORDER};
@@ -1220,7 +1220,7 @@ mod tests {
         block[1] = 10; // AC at natural position 1 (zigzag 1)
         block[8] = -5; // AC at natural position 8 (zigzag 2)
         block[16] = 3; // AC at natural position 16 (zigzag 3)
-                       // block[0] is DC, not encoded in AC scan
+        // block[0] is DC, not encoded in AC scan
 
         // Baseline-style AC encoding
         let mut base_writer = VecBitWriter::new_vec();

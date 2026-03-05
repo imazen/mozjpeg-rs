@@ -5,7 +5,7 @@
 
 use std::io::Write;
 
-use crate::consts::{QuantTableIdx, DCTSIZE, DCTSIZE2, JPEG_NATURAL_ORDER};
+use crate::consts::{DCTSIZE, DCTSIZE2, JPEG_NATURAL_ORDER, QuantTableIdx};
 use crate::error::{Error, Result};
 use crate::huffman::DerivedTable;
 use crate::marker::MarkerWriter;
@@ -15,8 +15,8 @@ use crate::simd::SimdOps;
 use crate::types::{ComponentInfo, PixelDensity, QuantTable, Subsampling};
 
 use super::{
-    create_std_ac_chroma_table, create_std_ac_luma_table, create_std_dc_chroma_table,
-    create_std_dc_luma_table, try_alloc_vec, Encode,
+    Encode, create_std_ac_chroma_table, create_std_ac_luma_table, create_std_dc_chroma_table,
+    create_std_dc_luma_table, try_alloc_vec,
 };
 
 /// Streaming JPEG encoder configuration.

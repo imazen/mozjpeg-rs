@@ -124,11 +124,7 @@ pub fn bundled_test_images_dir() -> Option<PathBuf> {
 pub fn bundled_test_image(name: &str) -> Option<PathBuf> {
     let dir = bundled_test_images_dir()?;
     let path = dir.join(name);
-    if path.is_file() {
-        Some(path)
-    } else {
-        None
-    }
+    if path.is_file() { Some(path) } else { None }
 }
 
 /// Returns the project root directory.

@@ -1,10 +1,10 @@
 //! Direct FFI comparison of quantization (non-trellis path)
 //! Uses sys-local for C DCT function
 
+use mozjpeg_rs::QuantTableIdx;
 use mozjpeg_rs::consts::DCTSIZE2;
 use mozjpeg_rs::dct::forward_dct_8x8;
 use mozjpeg_rs::quant::{create_quant_table, get_luminance_quant_table, quantize_block};
-use mozjpeg_rs::QuantTableIdx;
 use std::fs;
 
 fn main() {

@@ -3,8 +3,8 @@
 //! This test compares file sizes at Q75 with 4:4:4 subsampling.
 //! Requires the CID22 corpus - run `./scripts/fetch-corpus.sh` first.
 
-use mozjpeg_rs::corpus::{cid22_dir, png_files_in_dir};
 use mozjpeg_rs::Subsampling;
+use mozjpeg_rs::corpus::{cid22_dir, png_files_in_dir};
 use std::fs::File;
 use std::path::Path;
 

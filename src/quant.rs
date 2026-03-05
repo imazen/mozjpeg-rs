@@ -7,7 +7,7 @@
 //!
 //! Reference: mozjpeg/jcparam.c
 
-use crate::consts::{QuantTableIdx, DCTSIZE2, STD_CHROMINANCE_QUANT_TBL, STD_LUMINANCE_QUANT_TBL};
+use crate::consts::{DCTSIZE2, QuantTableIdx, STD_CHROMINANCE_QUANT_TBL, STD_LUMINANCE_QUANT_TBL};
 use crate::types::QuantTable;
 
 /// Convert a quality value (1-100) to a scaling factor.

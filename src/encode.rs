@@ -35,7 +35,7 @@ use std::time::{Duration, Instant};
 
 use crate::bitstream::BitWriter;
 use crate::color::convert_rgb_to_ycbcr_c_compat;
-use crate::consts::{QuantTableIdx, DCTSIZE, DCTSIZE2};
+use crate::consts::{DCTSIZE, DCTSIZE2, QuantTableIdx};
 use crate::deringing::preprocess_deringing;
 use crate::entropy::{EntropyEncoder, ProgressiveEncoder, ProgressiveSymbolCounter, SymbolCounter};
 use crate::error::{Error, Result};
@@ -45,11 +45,11 @@ use crate::marker::MarkerWriter;
 use crate::progressive::{generate_baseline_scan, generate_mozjpeg_max_compression_scans};
 use crate::quant::{create_quant_tables, quantize_block_raw};
 use crate::sample;
-use crate::scan_optimize::{generate_search_scans, ScanSearchConfig, ScanSelector};
+use crate::scan_optimize::{ScanSearchConfig, ScanSelector, generate_search_scans};
 use crate::scan_trial::ScanTrialEncoder;
+use crate::simd::SimdOps;
 #[cfg(target_arch = "x86_64")]
 use crate::simd::x86_64::entropy::SimdEntropyEncoder;
-use crate::simd::SimdOps;
 use crate::trellis::trellis_quantize_block;
 use crate::types::{Limits, PixelDensity, Preset, Subsampling, TrellisConfig};
 
