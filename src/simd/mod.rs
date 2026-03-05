@@ -50,7 +50,7 @@ use archmage::NeonToken;
 // ============================================================================
 
 /// Convert RGB to YCbCr using the yuv crate's SIMD-optimized implementation.
-/// This is ~10x faster than the scalar multiversion implementation.
+/// This is ~10x faster than the scalar autoversion implementation.
 #[cfg(feature = "fast-yuv")]
 fn convert_rgb_to_ycbcr_yuv(
     rgb: &[u8],
@@ -108,8 +108,8 @@ pub type ColorConvertFn = fn(&[u8], &mut [u8], &mut [u8], &mut [u8], usize);
 /// DCT implementation variant for dispatch.
 #[derive(Clone, Copy, Debug)]
 enum DctVariant {
-    /// Scalar with multiversion autovectorization
-    Multiversion,
+    /// Scalar with autoversion autovectorization
+    Autoversion,
     /// Hand-written AVX2 intrinsics (simd-intrinsics feature)
     #[cfg(all(target_arch = "x86_64", feature = "simd-intrinsics"))]
     Avx2Intrinsics,
@@ -152,7 +152,7 @@ impl SimdOps {
     /// 1. `fast-yuv` feature: Uses the `yuv` crate for color conversion (~10x faster)
     /// 2. Archmage AVX2: Safe SIMD with cached capability token (default on x86_64 with AVX2)
     /// 3. `simd-intrinsics` feature: Hand-written AVX2 intrinsics
-    /// 4. Default: `multiversion` autovectorization (safe, ~87% of intrinsics perf)
+    /// 4. Default: `autoversion` autovectorization (safe, ~87% of intrinsics perf)
     #[must_use]
     pub fn detect() -> Self {
         // Color conversion: prefer yuv crate (fastest), then intrinsics, then scalar
@@ -176,10 +176,10 @@ impl SimdOps {
         ))]
         let color_fn: ColorConvertFn = scalar::convert_rgb_to_ycbcr;
 
-        // DCT: Try archmage first (cached token), then intrinsics, then multiversion
+        // DCT: Try archmage first (cached token), then intrinsics, then autoversion
         #[cfg(target_arch = "x86_64")]
         let (dct_fn, dct_variant, avx2_token) = if let Some(token) = X64V3Token::try_new() {
-            // Archmage with cached token - use multiversion as the function pointer
+            // Archmage with cached token - use autoversion as the function pointer
             // but actual dispatch will use the token-based method
             (
                 scalar::forward_dct_8x8 as ForwardDctFn,
@@ -189,7 +189,7 @@ impl SimdOps {
         } else {
             (
                 scalar::forward_dct_8x8 as ForwardDctFn,
-                DctVariant::Multiversion,
+                DctVariant::Autoversion,
                 None,
             )
         };
@@ -204,7 +204,7 @@ impl SimdOps {
         } else {
             (
                 scalar::forward_dct_8x8 as ForwardDctFn,
-                DctVariant::Multiversion,
+                DctVariant::Autoversion,
                 None,
             )
         };
@@ -212,7 +212,7 @@ impl SimdOps {
         #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
         let (dct_fn, dct_variant) = (
             scalar::forward_dct_8x8 as ForwardDctFn,
-            DctVariant::Multiversion,
+            DctVariant::Autoversion,
         );
 
         Self {
@@ -258,7 +258,7 @@ impl SimdOps {
             DctVariant::Avx2Intrinsics => {
                 x86_64::avx2::forward_dct_8x8_i32_avx2_intrinsics(samples, coeffs);
             }
-            DctVariant::Multiversion => {
+            DctVariant::Autoversion => {
                 crate::dct::forward_dct_8x8_i32_multiversion(samples, coeffs);
             }
             #[cfg(target_arch = "x86_64")]
@@ -273,13 +273,13 @@ impl SimdOps {
         }
     }
 
-    /// Get scalar implementations (with multiversion autovectorization).
+    /// Get scalar implementations (with autoversion autovectorization).
     #[must_use]
     pub fn scalar() -> Self {
         Self {
             forward_dct: scalar::forward_dct_8x8,
             color_convert_rgb_to_ycbcr: scalar::convert_rgb_to_ycbcr,
-            dct_variant: DctVariant::Multiversion,
+            dct_variant: DctVariant::Autoversion,
             #[cfg(target_arch = "x86_64")]
             avx2_token: None,
             #[cfg(target_arch = "aarch64")]
@@ -346,7 +346,7 @@ impl SimdOps {
     /// Check which DCT variant is active.
     pub fn dct_variant_name(&self) -> &'static str {
         match self.dct_variant {
-            DctVariant::Multiversion => "multiversion",
+            DctVariant::Autoversion => "autoversion",
             #[cfg(all(target_arch = "x86_64", feature = "simd-intrinsics"))]
             DctVariant::Avx2Intrinsics => "avx2_intrinsics",
             #[cfg(target_arch = "x86_64")]
@@ -429,7 +429,7 @@ mod tests {
         let name = ops.dct_variant_name();
         // Should be one of the known variants
         assert!(
-            name == "multiversion"
+            name == "autoversion"
                 || name == "avx2_intrinsics"
                 || name == "avx2_archmage"
                 || name == "neon_archmage",
@@ -440,7 +440,7 @@ mod tests {
 
     #[cfg(target_arch = "x86_64")]
     #[test]
-    fn test_archmage_matches_multiversion() {
+    fn test_archmage_matches_autoversion() {
         if let Some(archmage_ops) = SimdOps::avx2_archmage() {
             let scalar_ops = SimdOps::scalar();
 

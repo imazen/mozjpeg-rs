@@ -1,14 +1,14 @@
-//! Scalar reference implementations with automatic SIMD via multiversion.
+//! Scalar reference implementations with automatic SIMD via autoversion.
 //!
-//! These implementations use `#[multiversion]` to automatically compile
+//! These implementations use `#[autoversion]` to automatically compile
 //! optimized versions for different CPU features (AVX2, SSE4.1, NEON)
 //! and dispatch at runtime. No unsafe code required.
 //!
 //! The DCT implementation is re-exported from `crate::dct` (single source of truth).
 
-use multiversion::multiversion;
+use archmage::prelude::*;
 
-// Re-export the canonical DCT implementation (multiversion autovectorization)
+// Re-export the canonical DCT implementation (autoversion autovectorization)
 // Aliased as forward_dct_8x8 for SimdOps dispatch compatibility
 pub use crate::dct::forward_dct_8x8_i32_multiversion as forward_dct_8x8;
 
@@ -56,15 +56,10 @@ pub fn rgb_to_ycbcr(r: u8, g: u8, b: u8) -> (u8, u8, u8) {
 
 /// RGB to YCbCr conversion for a buffer.
 ///
-/// Uses `multiversion` for automatic SIMD optimization via autovectorization.
-#[multiversion(targets(
-    "x86_64+avx2",
-    "x86_64+sse4.1",
-    "x86+avx2",
-    "x86+sse4.1",
-    "aarch64+neon",
-))]
+/// Uses `autoversion` for automatic SIMD optimization via autovectorization.
+#[autoversion]
 pub fn convert_rgb_to_ycbcr(
+    _token: SimdToken,
     rgb: &[u8],
     y_out: &mut [u8],
     cb_out: &mut [u8],

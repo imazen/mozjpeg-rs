@@ -20,7 +20,7 @@
 //! Proc. ICASSP 1989, pp. 988-991.
 
 use crate::consts::{DCTSIZE, DCTSIZE2};
-use multiversion::multiversion;
+use archmage::prelude::*;
 use wide::{i32x4, i32x8};
 
 // Fixed-point constants for 13-bit precision (CONST_BITS = 13)
@@ -57,19 +57,13 @@ fn descale(x: i32, n: i32) -> i32 {
 /// and matches libjpeg/mozjpeg behavior - the scaling is removed during
 /// quantization.
 ///
-/// Uses `multiversion` for automatic SIMD optimization via autovectorization.
+/// Uses `autoversion` for automatic SIMD optimization via autovectorization.
 ///
 /// # Arguments
 /// * `samples` - Input 8x8 block of pixel samples (typically centered around 0)
 /// * `coeffs` - Output 8x8 block of DCT coefficients
-#[multiversion(targets(
-    "x86_64+avx2",
-    "x86_64+sse4.1",
-    "x86+avx2",
-    "x86+sse4.1",
-    "aarch64+neon",
-))]
-pub fn forward_dct_8x8_i32_multiversion(samples: &[i16; DCTSIZE2], coeffs: &mut [i16; DCTSIZE2]) {
+#[autoversion]
+pub fn forward_dct_8x8_i32_multiversion(_token: SimdToken, samples: &[i16; DCTSIZE2], coeffs: &mut [i16; DCTSIZE2]) {
     // Work buffer (we modify in place across both passes)
     let mut data = [0i32; DCTSIZE2];
 
@@ -298,7 +292,7 @@ fn dct_1d_simd(
 /// - Unrolled loops for row/column batches
 #[deprecated(
     since = "0.5.0",
-    note = "Not used by encoder. Use forward_dct_8x8 (with multiversion autovectorization) \
+    note = "Not used by encoder. Use forward_dct_8x8 (with autoversion autovectorization) \
             or enable simd-intrinsics feature for hand-written AVX2."
 )]
 pub fn forward_dct_8x8_i32_wide_gather(samples: &[i16; DCTSIZE2], coeffs: &mut [i16; DCTSIZE2]) {
