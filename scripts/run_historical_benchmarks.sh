@@ -7,8 +7,9 @@
 
 set -e
 
-MAIN_REPO="/home/lilith/work/mozjpeg-rs"
-HIST_REPO="/home/lilith/work/mzjprs"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+MAIN_REPO="${MOZJPEG_RS_DIR:-$SCRIPT_DIR}"
+HIST_REPO="${MOZJPEG_RS_HIST_DIR:-$(dirname "$MAIN_REPO")/mzjprs}"
 RESULTS_DIR="$MAIN_REPO/tests/benchmark_tracking/results"
 TEST_IMAGE="$MAIN_REPO/tests/images/1.png"
 
