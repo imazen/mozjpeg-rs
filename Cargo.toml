@@ -52,7 +52,7 @@ imgref = ["dep:imgref", "dep:rgb"]
 [dependencies]
 bytemuck = "1.14"
 # Optional PNG support for corpus loading
-png = { version = "0.17", optional = true }
+png = { version = "0.18", optional = true }
 # Used by dct.rs and color.rs for portable SIMD
 wide = "1.1.1"
 # Safe SIMD with capability tokens
@@ -74,7 +74,7 @@ yuv = "0.8"
 rgb = "0.8"
 imgref = "1.10"
 ssimulacra2 = "0.5"
-png = "0.17"
+png = "0.18"
 proptest = "1.4"
 criterion = "0.5"
 jpeg-decoder = "0.3"
@@ -87,7 +87,7 @@ mozjpeg = "0.10"
 # Codec testing infrastructure (provides DSSIM, SSIMULACRA2, Butteraugli metrics, ICC support)
 codec-eval = { git = "https://github.com/imazen/codec-eval", rev = "0ee46bc" }
 # Butteraugli perceptual image quality metric
-butteraugli = "0.3"
+butteraugli = "0.7"
 chrono = { version = "0.4.42", features = ["serde"] }
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.148"

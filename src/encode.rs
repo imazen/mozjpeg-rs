@@ -104,15 +104,15 @@ impl<'a> CancellationContext<'a> {
     /// Returns `Ok(())` if encoding should continue, or `Err` if cancelled/timed out.
     #[inline]
     pub fn check(&self) -> Result<()> {
-        if let Some(c) = self.cancel {
-            if c.load(Ordering::Relaxed) {
-                return Err(Error::Cancelled);
-            }
+        if let Some(c) = self.cancel
+            && c.load(Ordering::Relaxed)
+        {
+            return Err(Error::Cancelled);
         }
-        if let Some(d) = self.deadline {
-            if Instant::now() > d {
-                return Err(Error::TimedOut);
-            }
+        if let Some(d) = self.deadline
+            && Instant::now() > d
+        {
+            return Err(Error::TimedOut);
         }
         Ok(())
     }
@@ -835,15 +835,14 @@ impl Encoder {
         }
 
         // Check ICC profile size limit
-        if limits.max_icc_profile_bytes > 0 {
-            if let Some(ref icc) = self.icc_profile {
-                if icc.len() > limits.max_icc_profile_bytes {
-                    return Err(Error::IccProfileTooLarge {
-                        size: icc.len(),
-                        limit: limits.max_icc_profile_bytes,
-                    });
-                }
-            }
+        if limits.max_icc_profile_bytes > 0
+            && let Some(ref icc) = self.icc_profile
+            && icc.len() > limits.max_icc_profile_bytes
+        {
+            return Err(Error::IccProfileTooLarge {
+                size: icc.len(),
+                limit: limits.max_icc_profile_bytes,
+            });
         }
 
         Ok(())
@@ -1643,23 +1642,21 @@ impl Encoder {
             }
 
             // Run DC trellis optimization if enabled
-            if dc_trellis_enabled {
-                if let Some(ref y_raw) = y_raw_dct {
-                    run_dc_trellis_by_row(
-                        y_raw,
-                        &mut y_blocks,
-                        luma_qtable.values[0],
-                        &dc_luma_derived,
-                        self.trellis.lambda_log_scale1,
-                        self.trellis.lambda_log_scale2,
-                        mcu_rows,
-                        mcu_cols,
-                        mcu_cols,
-                        1,
-                        1,
-                        self.trellis.delta_dc_weight,
-                    );
-                }
+            if dc_trellis_enabled && let Some(ref y_raw) = y_raw_dct {
+                run_dc_trellis_by_row(
+                    y_raw,
+                    &mut y_blocks,
+                    luma_qtable.values[0],
+                    &dc_luma_derived,
+                    self.trellis.lambda_log_scale1,
+                    self.trellis.lambda_log_scale2,
+                    mcu_rows,
+                    mcu_cols,
+                    mcu_cols,
+                    1,
+                    1,
+                    self.trellis.delta_dc_weight,
+                );
             }
 
             // Run EOB optimization if enabled (cross-block EOBRUN optimization)

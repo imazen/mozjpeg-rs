@@ -161,11 +161,12 @@ pub fn png_files_in_dir(dir: &Path) -> Vec<PathBuf> {
 #[cfg(feature = "png")]
 pub fn load_png_as_rgb(path: &Path) -> Option<(Vec<u8>, u32, u32)> {
     use std::fs::File;
+    use std::io::BufReader;
 
     let file = File::open(path).ok()?;
-    let decoder = png::Decoder::new(file);
+    let decoder = png::Decoder::new(BufReader::new(file));
     let mut reader = decoder.read_info().ok()?;
-    let mut buf = vec![0; reader.output_buffer_size()];
+    let mut buf = vec![0; reader.output_buffer_size()?];
     let info = reader.next_frame(&mut buf).ok()?;
     let bytes = &buf[..info.buffer_size()];
 

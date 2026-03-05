@@ -29,7 +29,7 @@ jobs:
           # macOS x64 (Intel)
           - os: macOS
             arch: x64
-            runner: macos-15
+            runner: macos-26-intel
           # macOS ARM64 (Apple Silicon)
           - os: macOS
             arch: arm64
