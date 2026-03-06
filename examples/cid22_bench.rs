@@ -3,7 +3,7 @@
 //! Usage: cargo run --release --example cid22_bench
 //!
 //! Set CODEC_CORPUS_DIR to point to your codec-corpus checkout.
-use butteraugli::ButteraugliParams;
+use butteraugli::{ButteraugliParams, Img, RGB8};
 use dssim::Dssim;
 use mozjpeg_rs::{Encoder, Subsampling, TrellisConfig};
 use rgb::RGB8;
@@ -174,8 +174,14 @@ fn compute_dssim(original: &[u8], decoded: &[u8], w: u32, h: u32) -> f64 {
 }
 
 fn compute_butteraugli(original: &[u8], decoded: &[u8], w: u32, h: u32) -> f64 {
-    let params = ButteraugliParams::default();
-    butteraugli::compute_butteraugli(original, decoded, w as usize, h as usize, &params)
+    let to_pixels = |rgb: &[u8]| -> Vec<RGB8> {
+        rgb.chunks_exact(3).map(|c| RGB8::new(c[0], c[1], c[2])).collect()
+    };
+    let width = w as usize;
+    let height = h as usize;
+    let img1 = Img::new(to_pixels(original), width, height);
+    let img2 = Img::new(to_pixels(decoded), width, height);
+    butteraugli::butteraugli(img1.as_ref(), img2.as_ref(), &ButteraugliParams::default())
         .map(|r| r.score)
         .unwrap_or(f64::MAX)
 }

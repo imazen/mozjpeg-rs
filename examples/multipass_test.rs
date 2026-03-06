@@ -14,15 +14,16 @@ fn decode_jpeg(jpeg_data: &[u8]) -> (Vec<u8>, u32, u32) {
 
 fn compute_butteraugli_score(original: &[u8], decoded: &[u8], width: u32, height: u32) -> f64 {
     // Butteraugli: lower is better (perceptual distance)
-    let params = butteraugli::ButteraugliParams::default();
-    let result = butteraugli::compute_butteraugli(
-        original,
-        decoded,
-        width as usize,
-        height as usize,
-        &params,
-    )
-    .expect("butteraugli computation failed");
+    use butteraugli::{ButteraugliParams, Img, RGB8};
+    let w = width as usize;
+    let h = height as usize;
+    let to_pixels = |rgb: &[u8]| -> Vec<RGB8> {
+        rgb.chunks_exact(3).map(|c| RGB8::new(c[0], c[1], c[2])).collect()
+    };
+    let img1 = Img::new(to_pixels(original), w, h);
+    let img2 = Img::new(to_pixels(decoded), w, h);
+    let result = butteraugli::butteraugli(img1.as_ref(), img2.as_ref(), &ButteraugliParams::default())
+        .expect("butteraugli computation failed");
     result.score
 }
 
