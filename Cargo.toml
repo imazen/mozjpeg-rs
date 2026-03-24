@@ -56,7 +56,7 @@ png = { version = "0.18", optional = true }
 # Used by dct.rs and color.rs for portable SIMD
 wide = "1.1.1"
 # Safe SIMD with capability tokens
-archmage = { version = "0.9.6", features = ["macros"] }
+archmage = { version = "0.9.7", features = ["macros"] }
 # Safe unaligned SIMD memory operations (no token parameter needed)
 safe_unaligned_simd = "0.2.5"
 # Optional: mozjpeg-sys configuration (configure C encoder from our settings)
