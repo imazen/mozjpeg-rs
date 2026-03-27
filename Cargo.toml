@@ -50,7 +50,7 @@ mozjpeg-sys-config = ["dep:mozjpeg-sys", "dep:libc"]
 imgref = ["dep:imgref", "dep:rgb"]
 # zencodec trait implementations (EncoderConfig, EncodeJob, Encoder).
 # Provides MozjpegEncoderConfig for use in the zen codec ecosystem.
-zencodec = ["dep:zencodec", "dep:zenpixels", "dep:enough"]
+zencodec = ["dep:zencodec", "dep:zenpixels"]
 # Self-documenting pipeline node definitions (EncodeMozjpeg node).
 # Provides RIAPI querystring parsing and NodeDef/NodeInstance implementations.
 zennode = ["dep:zennode", "zencodec"]
@@ -73,10 +73,11 @@ yuv = { version = "0.8.12", optional = true }
 # Optional: imgref integration for type-safe pixel formats
 imgref = { version = "1.12.0", optional = true }
 rgb = { version = "0.8", optional = true }
+# Cooperative cancellation trait (zero-cost when using Unstoppable)
+enough = { version = "0.4.2", features = ["std"] }
 # Optional: zencodec trait implementations for zen codec ecosystem
 zencodec = { version = "0.1.5", optional = true }
 zenpixels = { version = "0.2.0", optional = true }
-enough = { version = "0.4.2", optional = true, features = ["std"] }
 # Optional: self-documenting pipeline node definitions
 zennode = { path = "../zen/zennode/zennode", optional = true, default-features = false, features = ["derive"] }
 

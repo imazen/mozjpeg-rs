@@ -14,11 +14,7 @@
 //! | `Encoder` | [`MozjpegEncoder`] |
 //! | `AnimationFrameEncoder` | `()` (JPEG has no animation) |
 
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
-
 use zencodec::encode::{EncodeCapabilities, EncodeOutput, EncodePolicy};
-use zencodec::enough::Stop;
 use zencodec::{ImageFormat, Metadata, ResourceLimits, StopToken, UnsupportedOperation};
 use zenpixels::{PixelDescriptor, PixelSlice};
 
@@ -299,18 +295,12 @@ impl MozjpegEncoder {
         enc
     }
 
-    /// Create an `AtomicBool` cancellation bridge from the stop token.
-    ///
-    /// Returns `None` if there is no stop token. The caller should check
-    /// the returned flag after encoding completes to propagate cancellation.
-    fn make_cancel_flag(&self) -> Option<Arc<AtomicBool>> {
-        self.stop.as_ref().map(|stop| {
-            let flag = Arc::new(AtomicBool::new(false));
-            if stop.should_stop() {
-                flag.store(true, Ordering::Relaxed);
-            }
-            flag
-        })
+    /// Get a reference to the stop token for passing to encode methods.
+    fn stop_ref(&self) -> &dyn enough::Stop {
+        match self.stop {
+            Some(ref s) => s,
+            None => &enough::Unstoppable,
+        }
     }
 
     /// Encode RGB or grayscale data using the prepared encoder.
@@ -322,13 +312,11 @@ impl MozjpegEncoder {
         height: u32,
         is_gray: bool,
     ) -> Result<Vec<u8>, Error> {
-        let cancel_flag = self.make_cancel_flag();
-        let cancel_ref = cancel_flag.as_deref();
-
+        let stop = self.stop_ref();
         if is_gray {
-            enc.encode_gray_cancellable(data, width, height, cancel_ref, None)
+            enc.encode_gray_with_stop(data, width, height, stop)
         } else {
-            enc.encode_rgb_cancellable(data, width, height, cancel_ref, None)
+            enc.encode_rgb_with_stop(data, width, height, stop)
         }
     }
 }
@@ -418,17 +406,22 @@ impl zencodec::encode::Encoder for MozjpegEncoder {
 
     fn finish(self) -> Result<EncodeOutput, Error> {
         let enc = self.prepare_encoder();
-        let cancel_flag = self.make_cancel_flag();
-        let cancel_ref = cancel_flag.as_deref();
 
         let acc = self.accumulator.ok_or(Error::UnsupportedFeature(
             "finish() called without any push_rows()",
         ))?;
 
+        // Use stop token or Unstoppable — must resolve after moving accumulator
+        // since stop_ref() borrows self.
+        let stop: &dyn enough::Stop = match &self.stop {
+            Some(s) => s,
+            None => &enough::Unstoppable,
+        };
+
         let jpeg_data = if acc.is_gray {
-            enc.encode_gray_cancellable(&acc.data, acc.width, acc.total_rows, cancel_ref, None)?
+            enc.encode_gray_with_stop(&acc.data, acc.width, acc.total_rows, stop)?
         } else {
-            enc.encode_rgb_cancellable(&acc.data, acc.width, acc.total_rows, cancel_ref, None)?
+            enc.encode_rgb_with_stop(&acc.data, acc.width, acc.total_rows, stop)?
         };
         Ok(EncodeOutput::new(jpeg_data, ImageFormat::Jpeg))
     }

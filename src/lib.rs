@@ -297,6 +297,26 @@ pub mod imgref_ext;
 /// ```
 pub use encode::{Encode, Encoder, EncodingStream, StreamingEncoder};
 
+/// Cooperative cancellation trait for long-running encoding operations.
+///
+/// Re-exported from the [`enough`] crate. Use [`Unstoppable`] when you don't
+/// need cancellation (zero runtime cost).
+///
+/// # Example
+///
+/// ```no_run
+/// use mozjpeg_rs::{Encoder, Preset, Unstoppable};
+///
+/// # fn main() -> Result<(), mozjpeg_rs::Error> {
+/// # let pixels: Vec<u8> = vec![0; 64 * 64 * 3];
+/// let jpeg = Encoder::new(Preset::default())
+///     .quality(85)
+///     .encode_rgb_with_stop(&pixels, 64, 64, &Unstoppable)?;
+/// # Ok(())
+/// # }
+/// ```
+pub use enough::{Stop, Unstoppable};
+
 /// Error type for encoding operations.
 ///
 /// All encoding errors are represented by this type. Use the [`Error`] variants

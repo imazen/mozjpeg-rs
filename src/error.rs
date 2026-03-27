@@ -214,6 +214,41 @@ impl From<std::collections::TryReserveError> for Error {
     }
 }
 
+impl From<enough::StopReason> for Error {
+    fn from(reason: enough::StopReason) -> Self {
+        match reason {
+            enough::StopReason::TimedOut => Error::TimedOut,
+            _ => Error::Cancelled,
+        }
+    }
+}
+
+#[cfg(feature = "zencodec")]
+impl From<zencodec::LimitExceeded> for Error {
+    fn from(limit: zencodec::LimitExceeded) -> Self {
+        use zencodec::LimitExceeded;
+        match limit {
+            LimitExceeded::Width { actual, .. } | LimitExceeded::Height { actual, .. } => {
+                Error::DimensionLimitExceeded {
+                    width: actual,
+                    height: 0,
+                    max_width: 0,
+                    max_height: 0,
+                }
+            }
+            LimitExceeded::Pixels { actual, max } => Error::PixelCountExceeded {
+                pixel_count: actual,
+                limit: max,
+            },
+            LimitExceeded::Memory { actual, max } => Error::AllocationLimitExceeded {
+                estimated: actual as usize,
+                limit: max as usize,
+            },
+            _ => Error::InternalError("resource limit exceeded"),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

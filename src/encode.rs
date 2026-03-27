@@ -72,6 +72,9 @@ pub use streaming::{EncodingStream, StreamingEncoder};
 ///
 /// This is passed through the encoding pipeline to allow periodic
 /// cancellation checks without function signature changes everywhere.
+///
+/// Implements [`enough::Stop`] so it can be used interchangeably with
+/// any cooperative cancellation source.
 #[derive(Clone, Copy)]
 pub(crate) struct CancellationContext<'a> {
     /// Optional cancellation flag - if set to true, encoding should abort.
@@ -128,6 +131,26 @@ impl<'a> CancellationContext<'a> {
         } else {
             Ok(())
         }
+    }
+}
+
+impl enough::Stop for CancellationContext<'_> {
+    fn check(&self) -> std::result::Result<(), enough::StopReason> {
+        if let Some(c) = self.cancel
+            && c.load(Ordering::Relaxed)
+        {
+            return Err(enough::StopReason::Cancelled);
+        }
+        if let Some(d) = self.deadline
+            && Instant::now() > d
+        {
+            return Err(enough::StopReason::TimedOut);
+        }
+        Ok(())
+    }
+
+    fn may_stop(&self) -> bool {
+        self.cancel.is_some() || self.deadline.is_some()
     }
 }
 
@@ -1348,47 +1371,38 @@ impl Encoder {
         self.encode_gray(&contiguous, width, height)
     }
 
-    /// Encode RGB image data to JPEG with cancellation and timeout support.
+    /// Encode RGB image data to JPEG with cooperative cancellation.
     ///
-    /// This method allows encoding to be cancelled mid-operation via an atomic flag,
-    /// or to automatically abort if a timeout is exceeded.
+    /// Accepts any [`Stop`](enough::Stop) implementation for cooperative
+    /// cancellation. Use [`Unstoppable`](enough::Unstoppable) when
+    /// cancellation is not needed (zero runtime cost).
     ///
     /// # Arguments
     /// * `rgb_data` - RGB pixel data (3 bytes per pixel, row-major)
     /// * `width` - Image width in pixels
     /// * `height` - Image height in pixels
-    /// * `cancel` - Optional cancellation flag. Set to `true` to abort encoding.
-    /// * `timeout` - Optional maximum encoding duration.
+    /// * `stop` - Cancellation token checked before, during, and after encoding.
     ///
     /// # Returns
     /// * `Ok(Vec<u8>)` - JPEG-encoded data
-    /// * `Err(Error::Cancelled)` - If cancelled via the flag
-    /// * `Err(Error::TimedOut)` - If the timeout was exceeded
+    /// * `Err(Error::Cancelled)` - If stopped via the token
+    /// * `Err(Error::TimedOut)` - If a deadline-based stop timed out
     ///
     /// # Example
     /// ```no_run
-    /// use mozjpeg_rs::{Encoder, Preset};
-    /// use std::sync::atomic::AtomicBool;
-    /// use std::time::Duration;
+    /// use mozjpeg_rs::{Encoder, Preset, Unstoppable};
     ///
     /// let encoder = Encoder::new(Preset::ProgressiveBalanced);
     /// let pixels: Vec<u8> = vec![128; 1920 * 1080 * 3];
-    /// let cancel = AtomicBool::new(false);
     ///
-    /// // Encode with 5 second timeout
-    /// let result = encoder.encode_rgb_cancellable(
-    ///     &pixels, 1920, 1080,
-    ///     Some(&cancel),
-    ///     Some(Duration::from_secs(5)),
-    /// );
+    /// let result = encoder.encode_rgb_with_stop(&pixels, 1920, 1080, &Unstoppable);
     /// ```
-    pub fn encode_rgb_cancellable(
+    pub fn encode_rgb_with_stop(
         &self,
         rgb_data: &[u8],
         width: u32,
         height: u32,
-        cancel: Option<&AtomicBool>,
-        timeout: Option<Duration>,
+        stop: &dyn enough::Stop,
     ) -> Result<Vec<u8>> {
         // Validate dimensions
         if width == 0 || height == 0 {
@@ -1411,11 +1425,8 @@ impl Encoder {
             });
         }
 
-        // Create cancellation context
-        let ctx = CancellationContext::new(cancel, timeout);
-
         // Check for immediate cancellation
-        ctx.check()?;
+        stop.check()?;
 
         // Apply smoothing if enabled
         let rgb_data = if self.smoothing > 0 {
@@ -1430,38 +1441,35 @@ impl Encoder {
         };
 
         let mut output = Vec::new();
-        // For now, use the regular encoder (cancellation hooks can be added to
-        // internal functions in a follow-up). Check cancellation before and after.
-        ctx.check()?;
+        // Check cancellation before and after encoding.
+        stop.check()?;
         self.encode_rgb_to_writer(&rgb_data, width, height, &mut output)?;
-        ctx.check()?;
+        stop.check()?;
 
         Ok(output)
     }
 
-    /// Encode grayscale image data to JPEG with cancellation and timeout support.
+    /// Encode grayscale image data to JPEG with cooperative cancellation.
     ///
-    /// This method allows encoding to be cancelled mid-operation via an atomic flag,
-    /// or to automatically abort if a timeout is exceeded.
+    /// Accepts any [`Stop`](enough::Stop) implementation. Use
+    /// [`Unstoppable`](enough::Unstoppable) when cancellation is not needed.
     ///
     /// # Arguments
     /// * `gray_data` - Grayscale pixel data (1 byte per pixel, row-major)
     /// * `width` - Image width in pixels
     /// * `height` - Image height in pixels
-    /// * `cancel` - Optional cancellation flag. Set to `true` to abort encoding.
-    /// * `timeout` - Optional maximum encoding duration.
+    /// * `stop` - Cancellation token checked before, during, and after encoding.
     ///
     /// # Returns
     /// * `Ok(Vec<u8>)` - JPEG-encoded data
-    /// * `Err(Error::Cancelled)` - If cancelled via the flag
-    /// * `Err(Error::TimedOut)` - If the timeout was exceeded
-    pub fn encode_gray_cancellable(
+    /// * `Err(Error::Cancelled)` - If stopped via the token
+    /// * `Err(Error::TimedOut)` - If a deadline-based stop timed out
+    pub fn encode_gray_with_stop(
         &self,
         gray_data: &[u8],
         width: u32,
         height: u32,
-        cancel: Option<&AtomicBool>,
-        timeout: Option<Duration>,
+        stop: &dyn enough::Stop,
     ) -> Result<Vec<u8>> {
         // Validate dimensions
         if width == 0 || height == 0 {
@@ -1483,11 +1491,8 @@ impl Encoder {
             });
         }
 
-        // Create cancellation context
-        let ctx = CancellationContext::new(cancel, timeout);
-
         // Check for immediate cancellation
-        ctx.check()?;
+        stop.check()?;
 
         // Apply smoothing if enabled
         let gray_data = if self.smoothing > 0 {
@@ -1502,13 +1507,52 @@ impl Encoder {
         };
 
         let mut output = Vec::new();
-        // For now, use the regular encoder (cancellation hooks can be added to
-        // internal functions in a follow-up). Check cancellation before and after.
-        ctx.check()?;
+        // Check cancellation before and after encoding.
+        stop.check()?;
         self.encode_gray_to_writer(&gray_data, width, height, &mut output)?;
-        ctx.check()?;
+        stop.check()?;
 
         Ok(output)
+    }
+
+    /// Encode RGB image data to JPEG with cancellation and timeout support.
+    ///
+    /// **Deprecated:** Use [`encode_rgb_with_stop()`](Self::encode_rgb_with_stop) instead,
+    /// which accepts any [`Stop`](enough::Stop) implementation.
+    #[deprecated(
+        since = "0.10.0",
+        note = "Use encode_rgb_with_stop() with any enough::Stop implementation"
+    )]
+    pub fn encode_rgb_cancellable(
+        &self,
+        rgb_data: &[u8],
+        width: u32,
+        height: u32,
+        cancel: Option<&AtomicBool>,
+        timeout: Option<Duration>,
+    ) -> Result<Vec<u8>> {
+        let ctx = CancellationContext::new(cancel, timeout);
+        self.encode_rgb_with_stop(rgb_data, width, height, &ctx)
+    }
+
+    /// Encode grayscale image data to JPEG with cancellation and timeout support.
+    ///
+    /// **Deprecated:** Use [`encode_gray_with_stop()`](Self::encode_gray_with_stop) instead,
+    /// which accepts any [`Stop`](enough::Stop) implementation.
+    #[deprecated(
+        since = "0.10.0",
+        note = "Use encode_gray_with_stop() with any enough::Stop implementation"
+    )]
+    pub fn encode_gray_cancellable(
+        &self,
+        gray_data: &[u8],
+        width: u32,
+        height: u32,
+        cancel: Option<&AtomicBool>,
+        timeout: Option<Duration>,
+    ) -> Result<Vec<u8>> {
+        let ctx = CancellationContext::new(cancel, timeout);
+        self.encode_gray_with_stop(gray_data, width, height, &ctx)
     }
 
     /// Encode grayscale image data to a writer.
@@ -4468,10 +4512,98 @@ mod tests {
     }
 
     // =========================================================================
-    // Cancellation Tests
+    // Stop-based Cancellation Tests
     // =========================================================================
 
     #[test]
+    fn test_encode_rgb_with_stop_unstoppable() {
+        use enough::Unstoppable;
+        let encoder = Encoder::new(Preset::BaselineFastest);
+        let pixels = vec![128u8; 64 * 64 * 3];
+
+        let result = encoder.encode_rgb_with_stop(&pixels, 64, 64, &Unstoppable);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_encode_rgb_with_stop_pre_cancelled() {
+        // Use CancellationContext with an already-set flag as our Stop impl
+        let cancel = AtomicBool::new(true);
+        let ctx = CancellationContext::new(Some(&cancel), None);
+
+        let encoder = Encoder::new(Preset::BaselineFastest);
+        let pixels = vec![128u8; 64 * 64 * 3];
+        let result = encoder.encode_rgb_with_stop(&pixels, 64, 64, &ctx);
+
+        assert!(matches!(result, Err(Error::Cancelled)));
+    }
+
+    #[test]
+    fn test_encode_gray_with_stop_unstoppable() {
+        use enough::Unstoppable;
+        let encoder = Encoder::new(Preset::BaselineFastest);
+        let pixels = vec![128u8; 64 * 64];
+
+        let result = encoder.encode_gray_with_stop(&pixels, 64, 64, &Unstoppable);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_encode_with_stop_limits() {
+        use enough::Unstoppable;
+        let limits = Limits::default().max_width(32);
+        let encoder = Encoder::new(Preset::BaselineFastest).limits(limits);
+
+        let pixels = vec![128u8; 64 * 64 * 3];
+        let result = encoder.encode_rgb_with_stop(&pixels, 64, 64, &Unstoppable);
+
+        assert!(matches!(result, Err(Error::DimensionLimitExceeded { .. })));
+    }
+
+    #[test]
+    fn test_cancellation_context_implements_stop() {
+        let ctx = CancellationContext::none();
+        assert!(!enough::Stop::may_stop(&ctx));
+        assert!(enough::Stop::check(&ctx).is_ok());
+
+        let cancel = AtomicBool::new(false);
+        let ctx = CancellationContext::new(Some(&cancel), None);
+        assert!(enough::Stop::may_stop(&ctx));
+        assert!(enough::Stop::check(&ctx).is_ok());
+
+        cancel.store(true, Ordering::Relaxed);
+        assert!(enough::Stop::check(&ctx).is_err());
+    }
+
+    #[test]
+    fn test_cancellation_context_timeout_via_stop() {
+        let ctx = CancellationContext {
+            cancel: None,
+            deadline: Some(Instant::now() - Duration::from_secs(1)),
+        };
+        assert!(enough::Stop::may_stop(&ctx));
+        let err = enough::Stop::check(&ctx).unwrap_err();
+        assert!(matches!(err, enough::StopReason::TimedOut));
+    }
+
+    #[test]
+    fn test_stop_reason_to_error_cancelled() {
+        let err: Error = enough::StopReason::Cancelled.into();
+        assert!(matches!(err, Error::Cancelled));
+    }
+
+    #[test]
+    fn test_stop_reason_to_error_timed_out() {
+        let err: Error = enough::StopReason::TimedOut.into();
+        assert!(matches!(err, Error::TimedOut));
+    }
+
+    // =========================================================================
+    // Deprecated Cancellation Tests (backwards compat)
+    // =========================================================================
+
+    #[test]
+    #[allow(deprecated)]
     fn test_cancellable_with_no_cancellation() {
         let encoder = Encoder::new(Preset::BaselineFastest);
         let pixels = vec![128u8; 64 * 64 * 3];
@@ -4482,6 +4614,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(deprecated)]
     fn test_cancellable_immediate_cancel() {
         let encoder = Encoder::new(Preset::BaselineFastest);
         let pixels = vec![128u8; 64 * 64 * 3];
@@ -4493,6 +4626,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(deprecated)]
     fn test_cancellable_with_timeout() {
         let encoder = Encoder::new(Preset::BaselineFastest);
         let pixels = vec![128u8; 64 * 64 * 3];
@@ -4505,6 +4639,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(deprecated)]
     fn test_cancellable_gray() {
         let encoder = Encoder::new(Preset::BaselineFastest);
         let pixels = vec![128u8; 64 * 64];
@@ -4515,6 +4650,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(deprecated)]
     fn test_cancellable_with_limits() {
         // Test that limits work in cancellable method too
         let limits = Limits::default().max_width(32);
@@ -4642,6 +4778,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(deprecated)]
     fn test_cancellable_gray_with_limits() {
         let limits = Limits::default().max_width(32);
         let encoder = Encoder::new(Preset::BaselineFastest).limits(limits);
