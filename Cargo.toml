@@ -48,49 +48,61 @@ mozjpeg-sys-config = ["dep:mozjpeg-sys", "dep:libc"]
 # Enables imgref integration for type-safe pixel formats with automatic stride handling.
 # Provides encode() method that accepts ImgRef<RGB8>, ImgRef<RGBA8>, etc.
 imgref = ["dep:imgref", "dep:rgb"]
+# zencodec trait implementations (EncoderConfig, EncodeJob, Encoder).
+# Provides MozjpegEncoderConfig for use in the zen codec ecosystem.
+zencodec = ["dep:zencodec", "dep:zenpixels", "dep:enough"]
+# Self-documenting pipeline node definitions (EncodeMozjpeg node).
+# Provides RIAPI querystring parsing and NodeDef/NodeInstance implementations.
+zennode = ["dep:zennode", "zencodec"]
 
 [dependencies]
-bytemuck = "1.14"
+bytemuck = "1.25.0"
 # Optional PNG support for corpus loading
-png = { version = "0.18", optional = true }
+png = { version = "0.18.1", optional = true }
 # Used by dct.rs and color.rs for portable SIMD
-wide = "1.1.1"
+wide = "1.2.0"
 # Safe SIMD with capability tokens
-archmage = { version = "0.9.9", features = ["macros"] }
+archmage = { version = "0.9.12", features = ["macros"] }
 # Safe unaligned SIMD memory operations (no token parameter needed)
 safe_unaligned_simd = "0.2.5"
 # Optional: mozjpeg-sys configuration (configure C encoder from our settings)
 mozjpeg-sys = { version = "2.2", optional = true }
-libc = { version = "0.2", optional = true }
+libc = { version = "0.2.183", optional = true }
 # Optional: yuv crate for fast SIMD color conversion (AVX-512/AVX2/SSE/NEON/WASM)
-yuv = { version = "0.8", optional = true }
+yuv = { version = "0.8.12", optional = true }
 # Optional: imgref integration for type-safe pixel formats
-imgref = { version = "1.12", optional = true }
+imgref = { version = "1.12.0", optional = true }
 rgb = { version = "0.8", optional = true }
+# Optional: zencodec trait implementations for zen codec ecosystem
+zencodec = { version = "0.1.5", optional = true }
+zenpixels = { version = "0.2.0", optional = true }
+enough = { version = "0.4.2", optional = true, features = ["std"] }
+# Optional: self-documenting pipeline node definitions
+zennode = { path = "../zen/zennode/zennode", optional = true, default-features = false, features = ["derive"] }
 
 [dev-dependencies]
-dssim = "3.4"
-yuv = "0.8"
+dssim = "3.4.0"
+yuv = "0.8.12"
 rgb = "0.8"
-imgref = "1.10"
-ssimulacra2 = "0.5"
-png = "0.18"
-proptest = "1.4"
-criterion = "0.8"
-jpeg-decoder = "0.3"
-zune-jpeg = "0.5"
-libc = "0.2"
+imgref = "1.12.0"
+ssimulacra2 = "0.5.1"
+png = "0.18.1"
+proptest = "1.11.0"
+criterion = "0.8.2"
+jpeg-decoder = "0.3.2"
+zune-jpeg = "0.5.15"
+libc = "0.2.183"
 # Use existing mozjpeg-sys from crates.io for basic FFI validation
 mozjpeg-sys = "2.2"
 # High-level mozjpeg wrapper for parity testing
-mozjpeg = "0.10"
+mozjpeg = "0.10.13"
 # Codec testing infrastructure (provides DSSIM, SSIMULACRA2, Butteraugli metrics, ICC support)
 codec-eval = { git = "https://github.com/imazen/codec-eval", rev = "0ee46bc" }
 # Butteraugli perceptual image quality metric
-butteraugli = "0.8"
-chrono = { version = "0.4.42", features = ["serde"] }
+butteraugli = "0.9.0"
+chrono = { version = "0.4.44", features = ["serde"] }
 serde = { version = "1.0.228", features = ["derive"] }
-serde_json = "1.0.148"
+serde_json = "1.0.149"
 
 [[bench]]
 name = "encode"
@@ -118,7 +130,7 @@ name = "quant_ffi_compare"
 required-features = ["_instrument-c-mozjpeg-internals"]
 
 [lints.rust]
-unexpected_cfgs = { level = "warn", check-cfg = ["cfg(feature, values(\"_instrument-c-mozjpeg-internals\", \"ffi-test\", \"avx512\"))"] }
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(feature, values(\"_instrument-c-mozjpeg-internals\", \"ffi-test\", \"avx512\", \"zencodec\", \"zennode\"))"] }
 
 [lints.clippy]
 all = { level = "warn", priority = -1 }

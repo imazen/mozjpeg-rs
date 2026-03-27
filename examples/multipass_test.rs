@@ -18,12 +18,15 @@ fn compute_butteraugli_score(original: &[u8], decoded: &[u8], width: u32, height
     let w = width as usize;
     let h = height as usize;
     let to_pixels = |rgb: &[u8]| -> Vec<RGB8> {
-        rgb.chunks_exact(3).map(|c| RGB8::new(c[0], c[1], c[2])).collect()
+        rgb.chunks_exact(3)
+            .map(|c| RGB8::new(c[0], c[1], c[2]))
+            .collect()
     };
     let img1 = Img::new(to_pixels(original), w, h);
     let img2 = Img::new(to_pixels(decoded), w, h);
-    let result = butteraugli::butteraugli(img1.as_ref(), img2.as_ref(), &ButteraugliParams::default())
-        .expect("butteraugli computation failed");
+    let result =
+        butteraugli::butteraugli(img1.as_ref(), img2.as_ref(), &ButteraugliParams::default())
+            .expect("butteraugli computation failed");
     result.score
 }
 

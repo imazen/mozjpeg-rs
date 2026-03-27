@@ -175,7 +175,9 @@ fn compute_dssim(original: &[u8], decoded: &[u8], w: u32, h: u32) -> f64 {
 
 fn compute_butteraugli(original: &[u8], decoded: &[u8], w: u32, h: u32) -> f64 {
     let to_pixels = |rgb: &[u8]| -> Vec<RGB8> {
-        rgb.chunks_exact(3).map(|c| RGB8::new(c[0], c[1], c[2])).collect()
+        rgb.chunks_exact(3)
+            .map(|c| RGB8::new(c[0], c[1], c[2]))
+            .collect()
     };
     let width = w as usize;
     let height = h as usize;

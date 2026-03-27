@@ -236,6 +236,14 @@ mod error;
 #[cfg(feature = "mozjpeg-sys-config")]
 pub mod compat;
 
+// Optional zencodec trait implementations
+#[cfg(feature = "zencodec")]
+pub mod codec;
+
+// Optional zennode pipeline node definitions
+#[cfg(feature = "zennode")]
+pub mod zennode_defs;
+
 // ============================================================================
 // Test support modules - hidden from public API
 // ============================================================================
@@ -557,3 +565,34 @@ pub use compat::CMozjpeg;
 /// Enable with `features = ["imgref"]` in Cargo.toml.
 #[cfg(feature = "imgref")]
 pub use imgref_ext::EncodeablePixel;
+
+/// zencodec encoder configuration for the zen codec ecosystem.
+///
+/// Enable with `features = ["zencodec"]` in Cargo.toml.
+///
+/// # Example
+///
+/// ```ignore
+/// use mozjpeg_rs::MozjpegEncoderConfig;
+/// use zencodec::encode::{EncoderConfig, EncodeJob, Encoder};
+///
+/// let config = MozjpegEncoderConfig::new()
+///     .with_generic_quality(85.0)
+///     .with_generic_effort(2);
+///
+/// let output = config.job().encoder()?.encode(pixels)?;
+/// ```
+#[cfg(feature = "zencodec")]
+pub use codec::MozjpegEncoderConfig;
+
+/// zencodec encode job for mozjpeg-rs.
+///
+/// Enable with `features = ["zencodec"]` in Cargo.toml.
+#[cfg(feature = "zencodec")]
+pub use codec::MozjpegEncodeJob;
+
+/// zencodec encoder for mozjpeg-rs.
+///
+/// Enable with `features = ["zencodec"]` in Cargo.toml.
+#[cfg(feature = "zencodec")]
+pub use codec::MozjpegEncoder;
