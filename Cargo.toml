@@ -76,7 +76,7 @@ rgb = { version = "0.8", optional = true }
 # Cooperative cancellation trait (zero-cost when using Unstoppable)
 enough = { version = "0.4.2", features = ["std"] }
 # Optional: zencodec trait implementations for zen codec ecosystem
-zencodec = { version = "0.1.12", optional = true }
+zencodec = { version = "0.1.13", optional = true }
 zenpixels = { version = "0.2.1", optional = true }
 # Optional: self-documenting pipeline node definitions
 zennode = { path = "../zen/zennode/zennode", optional = true, default-features = false, features = ["derive"] }
