@@ -29,6 +29,7 @@ use crate::types::{Preset, Subsampling};
 static MOZJPEG_ENCODE_CAPS: EncodeCapabilities = EncodeCapabilities::new()
     .with_icc(true)
     .with_exif(true)
+    .with_xmp(true)
     .with_stop(true)
     .with_lossy(true)
     .with_push_rows(true)
@@ -141,6 +142,10 @@ impl zencodec::encode::EncoderConfig for MozjpegEncoderConfig {
 
     fn generic_effort(&self) -> Option<i32> {
         Some(self.effort)
+    }
+
+    fn is_lossless(&self) -> Option<bool> {
+        Some(false)
     }
 
     fn job(self) -> Self::Job {
