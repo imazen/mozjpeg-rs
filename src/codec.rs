@@ -568,6 +568,61 @@ mod tests {
     }
 
     #[test]
+    fn max_pixels_limit_enforced() {
+        // 64x64 = 4096 pixels; limit set to 100 → must reject.
+        let pixels = test_pixels_rgb(64, 64);
+        let config = MozjpegEncoderConfig::new();
+        let slice = PixelSlice::new(&pixels, 64, 64, 64 * 3, PixelDescriptor::RGB8_SRGB).unwrap();
+
+        let limits = ResourceLimits::none().with_max_pixels(100);
+        let result = config
+            .job()
+            .with_limits(limits)
+            .encoder()
+            .unwrap()
+            .encode(slice);
+
+        let err = result.expect_err("encode should fail when pixel limit exceeded");
+        assert!(
+            matches!(err, Error::PixelCountExceeded { .. }),
+            "expected PixelCountExceeded, got: {err:?}"
+        );
+    }
+
+    #[test]
+    fn stop_token_cancels_encode() {
+        use enough::{Stop, StopReason};
+
+        struct AlreadyCancelled;
+        impl Stop for AlreadyCancelled {
+            fn check(&self) -> Result<(), StopReason> {
+                Err(StopReason::Cancelled)
+            }
+            fn may_stop(&self) -> bool {
+                true
+            }
+        }
+
+        let pixels = test_pixels_rgb(64, 64);
+        let config = MozjpegEncoderConfig::new();
+        let slice = PixelSlice::new(&pixels, 64, 64, 64 * 3, PixelDescriptor::RGB8_SRGB).unwrap();
+
+        let stop = zencodec::StopToken::new(AlreadyCancelled);
+        let result = config
+            .job()
+            .with_stop(stop)
+            .encoder()
+            .unwrap()
+            .encode(slice);
+
+        let err = result.expect_err("encode should fail when stop token reports cancelled");
+        assert!(
+            matches!(err, Error::Cancelled),
+            "expected Error::Cancelled, got: {err:?}"
+        );
+    }
+
+    #[test]
     fn strip_metadata_with_policy() {
         let pixels = test_pixels_rgb(32, 32);
         let config = MozjpegEncoderConfig::new();
