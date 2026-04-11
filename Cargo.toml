@@ -51,9 +51,6 @@ imgref = ["dep:imgref", "dep:rgb"]
 # zencodec trait implementations (EncoderConfig, EncodeJob, Encoder).
 # Provides MozjpegEncoderConfig for use in the zen codec ecosystem.
 zencodec = ["dep:zencodec", "dep:zenpixels"]
-# Self-documenting pipeline node definitions (EncodeMozjpeg node).
-# Provides RIAPI querystring parsing and NodeDef/NodeInstance implementations.
-zennode = ["dep:zennode", "zencodec"]
 
 [dependencies]
 bytemuck = "1.25.0"
@@ -78,8 +75,6 @@ enough = { version = "0.4.2", features = ["std"] }
 # Optional: zencodec trait implementations for zen codec ecosystem
 zencodec = { version = "0.1.13", optional = true }
 zenpixels = { version = "0.2.1", optional = true }
-# Optional: self-documenting pipeline node definitions
-zennode = { path = "../zennode/zennode", optional = true, default-features = false, features = ["derive"] }
 
 [dev-dependencies]
 dssim = "3.4.0"
@@ -131,7 +126,7 @@ name = "quant_ffi_compare"
 required-features = ["_instrument-c-mozjpeg-internals"]
 
 [lints.rust]
-unexpected_cfgs = { level = "warn", check-cfg = ["cfg(feature, values(\"_instrument-c-mozjpeg-internals\", \"ffi-test\", \"avx512\", \"zencodec\", \"zennode\"))"] }
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(feature, values(\"_instrument-c-mozjpeg-internals\", \"ffi-test\", \"avx512\", \"zencodec\"))"] }
 
 [lints.clippy]
 all = { level = "warn", priority = -1 }

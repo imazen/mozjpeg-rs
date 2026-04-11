@@ -240,10 +240,6 @@ pub mod compat;
 #[cfg(feature = "zencodec")]
 pub mod codec;
 
-// Optional zennode pipeline node definitions
-#[cfg(feature = "zennode")]
-pub mod zennode_defs;
-
 // ============================================================================
 // Test support modules - hidden from public API
 // ============================================================================
