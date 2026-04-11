@@ -79,7 +79,7 @@ enough = { version = "0.4.2", features = ["std"] }
 zencodec = { version = "0.1.13", optional = true }
 zenpixels = { version = "0.2.1", optional = true }
 # Optional: self-documenting pipeline node definitions
-zennode = { path = "../zen/zennode/zennode", optional = true, default-features = false, features = ["derive"] }
+zennode = { path = "../zennode/zennode", optional = true, default-features = false, features = ["derive"] }
 
 [dev-dependencies]
 dssim = "3.4.0"
