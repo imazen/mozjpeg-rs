@@ -223,9 +223,18 @@ pub fn preprocess_deringing(data: &mut [i16; DCTSIZE2], dc_quant: u16) {
 
         // Calculate upward slopes at the edges
         // Use the steeper of: slope from two samples back, or slope to max
-        // This ensures we get an upward slope even if the edge is already clipped
-        let mut fslope = (f1 - f2).max(MAX_SAMPLE - f1);
-        let mut lslope = (l1 - l2).max(MAX_SAMPLE - l1);
+        // This ensures we get an upward slope even if the edge is already clipped.
+        //
+        // Widened to i32 so pathological inputs can't wrap: for in-contract
+        // level-shifted samples (-128..=127) and overshoot values up to 158,
+        // the largest magnitude is (158 - (-128)) = 286 which fits in i16,
+        // so the saturating cast is a no-op for real data but defends against
+        // future callers passing wider-range samples. Matches the i32 widening
+        // pattern already used in catmull_rom() above.
+        let fslope_i32 = (f1 as i32 - f2 as i32).max(MAX_SAMPLE as i32 - f1 as i32);
+        let lslope_i32 = (l1 as i32 - l2 as i32).max(MAX_SAMPLE as i32 - l1 as i32);
+        let mut fslope = fslope_i32.clamp(i16::MIN as i32, i16::MAX as i32) as i16;
+        let mut lslope = lslope_i32.clamp(i16::MIN as i32, i16::MAX as i32) as i16;
 
         // If at the start/end of the block, make the curve symmetric
         if start == 0 {
