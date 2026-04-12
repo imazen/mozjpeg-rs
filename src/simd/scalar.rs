@@ -59,7 +59,6 @@ pub fn rgb_to_ycbcr(r: u8, g: u8, b: u8) -> (u8, u8, u8) {
 /// Uses `autoversion` for automatic SIMD optimization via autovectorization.
 #[autoversion]
 pub fn convert_rgb_to_ycbcr(
-    _token: SimdToken,
     rgb: &[u8],
     y_out: &mut [u8],
     cb_out: &mut [u8],

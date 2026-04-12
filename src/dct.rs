@@ -64,7 +64,6 @@ fn descale(x: i32, n: i32) -> i32 {
 /// * `coeffs` - Output 8x8 block of DCT coefficients
 #[autoversion]
 pub fn forward_dct_8x8_i32_multiversion(
-    _token: SimdToken,
     samples: &[i16; DCTSIZE2],
     coeffs: &mut [i16; DCTSIZE2],
 ) {
