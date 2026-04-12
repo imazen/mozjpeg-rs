@@ -202,9 +202,8 @@ pub mod sample;
 pub(crate) mod smooth;
 
 /// Scan optimization (internal).
-#[doc(hidden)]
 #[allow(dead_code)]
-pub mod scan_optimize;
+pub(crate) mod scan_optimize;
 
 /// Sequential scan trial encoding (internal).
 #[allow(dead_code)]
@@ -221,9 +220,8 @@ pub mod simd;
 pub mod trellis;
 
 /// Type definitions (internal).
-#[doc(hidden)]
 #[allow(dead_code)]
-pub mod types;
+pub(crate) mod types;
 
 // Main encoder module (not hidden)
 mod encode;
