@@ -235,10 +235,10 @@ impl SimdOps {
         match self.dct_variant {
             #[cfg(target_arch = "x86_64")]
             DctVariant::Avx2Archmage => {
-                // Use archmage with cached token
+                // Use the canonical archmage AVX2 DCT from simd/x86_64/avx2.rs
+                // with the cached token (no per-call X64V3Token::try_new()).
                 if let Some(token) = self.avx2_token {
-                    #[allow(deprecated)]
-                    crate::dct::avx2_archmage::forward_dct_8x8_i32(token, samples, coeffs);
+                    x86_64::avx2::forward_dct_8x8_i32_avx2_impl(token, samples, coeffs);
                 } else {
                     // Fallback (shouldn't happen if variant is Avx2Archmage)
                     crate::dct::forward_dct_8x8_i32_multiversion(samples, coeffs);

@@ -261,7 +261,7 @@ fn dct_1d_pass_avx2(_token: X64V3Token, data: &mut [__m256i; 8], pass1: bool) {
 ///
 /// Uses archmage `#[arcane]` for safe SIMD - token proves AVX2 is available.
 #[arcane]
-fn forward_dct_8x8_i32_avx2_impl(
+pub(crate) fn forward_dct_8x8_i32_avx2_impl(
     token: X64V3Token,
     samples: &[i16; DCTSIZE2],
     coeffs: &mut [i16; DCTSIZE2],
