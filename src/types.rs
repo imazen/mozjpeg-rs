@@ -864,8 +864,8 @@ pub struct TrellisConfig {
     pub lambda_log_scale2: f32,
     /// Frequency split point for spectral selection.
     ///
-    /// Used by scan optimization ([`crate::scan_optimize::ScanSearchConfig`]) for
-    /// progressive scan structure. Not used in the trellis DP loop itself.
+    /// Used by scan optimization for progressive scan structure.
+    /// Not used in the trellis DP loop itself.
     pub freq_split: i32,
     /// Number of trellis optimization loops.
     ///

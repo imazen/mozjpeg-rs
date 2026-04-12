@@ -199,7 +199,6 @@ jobs:
             --test edge_padding \
             --test edge_cropping \
             --test block_comparison \
-            --test scan_verification \
             --lcov --output-path lcov.info
 
       - name: Upload coverage to Codecov
