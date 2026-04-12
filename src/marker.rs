@@ -436,11 +436,6 @@ impl<W: Write> MarkerWriter<W> {
         self.output
     }
 
-    /// Get a reference to the underlying output.
-    pub fn get_ref(&self) -> &W {
-        &self.output
-    }
-
     /// Get a mutable reference to the underlying output.
     pub fn get_mut(&mut self) -> &mut W {
         &mut self.output

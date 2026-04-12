@@ -179,9 +179,8 @@ pub mod fast_entropy;
 pub mod huffman;
 
 /// JPEG marker writing (internal).
-#[doc(hidden)]
 #[allow(dead_code)]
-pub mod marker;
+pub(crate) mod marker;
 
 /// Progressive scan generation (internal).
 #[doc(hidden)]
@@ -199,9 +198,8 @@ pub mod quant;
 pub mod sample;
 
 /// Input smoothing filter (internal).
-#[doc(hidden)]
 #[allow(dead_code)]
-pub mod smooth;
+pub(crate) mod smooth;
 
 /// Scan optimization (internal).
 #[doc(hidden)]
@@ -209,9 +207,8 @@ pub mod smooth;
 pub mod scan_optimize;
 
 /// Sequential scan trial encoding (internal).
-#[doc(hidden)]
 #[allow(dead_code)]
-pub mod scan_trial;
+pub(crate) mod scan_trial;
 
 /// SIMD acceleration (internal).
 #[doc(hidden)]
