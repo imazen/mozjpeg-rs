@@ -63,10 +63,7 @@ fn descale(x: i32, n: i32) -> i32 {
 /// * `samples` - Input 8x8 block of pixel samples (typically centered around 0)
 /// * `coeffs` - Output 8x8 block of DCT coefficients
 #[autoversion]
-pub fn forward_dct_8x8_i32_multiversion(
-    samples: &[i16; DCTSIZE2],
-    coeffs: &mut [i16; DCTSIZE2],
-) {
+pub fn forward_dct_8x8_i32_multiversion(samples: &[i16; DCTSIZE2], coeffs: &mut [i16; DCTSIZE2]) {
     // Work buffer (we modify in place across both passes)
     let mut data = [0i32; DCTSIZE2];
 
