@@ -5,20 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.9.1] - 2026-04-14
 
 ### Added
 - **RGBA8 encoding** — Native 4-channel input support without intermediate RGB buffer (7a55b85, 6f0ffcc)
-  - `encode_rgba()`, `encode_rgba_with_stop()`, `encode_rgba_to_writer()`
-  - Direct RGBA→YCbCr color conversion using C mozjpeg-compatible algorithm
-  - For BGRA input, swizzle to RGBA first with `garb::bytes::bgra_to_rgba` (or in-place variant)
-- **zencodec RGBA8 support** — `RGBA8_SRGB` added to supported encode descriptors (d5d60ab)
+  - `Encoder::encode_rgba()`, `encode_rgba_with_stop()`, `encode_rgba_to_writer()`
+  - `color::convert_rgba_to_ycbcr_c_compat()` — direct RGBA→YCbCr, alpha ignored
+  - For BGRA input, swizzle to RGBA first with `garb::bytes::bgra_to_rgba_inplace`
+- **zencodec RGBA8 support** — `RGBA8_SRGB` added to supported encode descriptors (d5d60ab, 06c5e4b)
   - `encode()` routes to native RGBA path based on pixel descriptor
-  - `encode_srgba8()` uses native RGBA path for contiguous data, garb SIMD swizzle for strided
-  - `push_rows()` / `finish()` handle all three pixel formats (RGB8, RGBA8, GRAY8)
+  - `encode_srgba8()` uses native RGBA path for contiguous data, `garb::rgba_to_rgb_strided` for strided
+  - `push_rows()` / `finish()` handle RGB8, RGBA8, and GRAY8
 - **garb dependency** (optional, via `zencodec` feature) for SIMD-optimized pixel format conversions
 
 ### Changed
+- Swapped `yuv` crate for `zenyuv` in the `fast-yuv` path (2667a98) — internal Imazen crate, same 15-bit fixed-point BT.601 output, enables future Sharp YUV opt-in
 - Refactored `encode_rgb_to_writer` to share downsample+MCU+encode pipeline via `encode_ycbcr_planes_to_writer` helper (6f0ffcc)
 
 ## [0.8.0] - 2026-02-08
@@ -208,6 +209,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Platforms: Linux, macOS, Windows (x64 and ARM64)
 - Output compatible with all standard JPEG decoders
 
+[0.9.1]: https://github.com/imazen/mozjpeg-rs/compare/v0.9.0...v0.9.1
 [0.6.0]: https://github.com/imazen/mozjpeg-rs/compare/v0.5.5...v0.6.0
 [0.5.5]: https://github.com/imazen/mozjpeg-rs/compare/v0.5.4...v0.5.5
 [0.5.4]: https://github.com/imazen/mozjpeg-rs/compare/v0.5.3...v0.5.4

@@ -124,8 +124,17 @@ let jpeg = Encoder::new()
 // Faster color conversion (trades exact C parity for ~40% faster RGB→YCbCr)
 let jpeg = Encoder::new()
     .quality(85)
-    .fast_color(true)  // Uses yuv crate, ±1 rounding difference
+    .fast_color(true)  // Uses zenyuv, ±1 rounding difference
     .encode_rgb(&pixels, width, height)?;
+
+// Encode 4-channel input directly (alpha ignored, no intermediate buffer)
+let jpeg = Encoder::new()
+    .quality(85)
+    .encode_rgba(&rgba_pixels, width, height)?;
+
+// For BGRA input, swizzle to RGBA first with the `garb` crate:
+//   garb::bytes::bgra_to_rgba_inplace(&mut bgra_buf).unwrap();
+//   let jpeg = Encoder::new().encode_rgba(&bgra_buf, w, h)?;
 ```
 
 ### Type-Safe Encoding with imgref (default feature)
