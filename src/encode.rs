@@ -1515,6 +1515,144 @@ impl Encoder {
         Ok(output)
     }
 
+    /// Encode BGRA image data to JPEG.
+    ///
+    /// Reads 4 bytes per pixel (B, G, R, A), ignores alpha, and encodes to JPEG.
+    /// No intermediate RGB buffer is needed — the color conversion reads BGRA directly.
+    ///
+    /// # Arguments
+    /// * `bgra_data` - BGRA pixel data (4 bytes per pixel, row-major)
+    /// * `width` - Image width in pixels
+    /// * `height` - Image height in pixels
+    ///
+    /// # Returns
+    /// JPEG-encoded data as a `Vec<u8>`.
+    pub fn encode_bgra(&self, bgra_data: &[u8], width: u32, height: u32) -> Result<Vec<u8>> {
+        if width == 0 || height == 0 {
+            return Err(Error::InvalidDimensions { width, height });
+        }
+        self.check_limits(width, height, false)?;
+
+        let expected_len = (width as usize)
+            .checked_mul(height as usize)
+            .and_then(|n| n.checked_mul(4))
+            .ok_or(Error::InvalidDimensions { width, height })?;
+
+        if bgra_data.len() != expected_len {
+            return Err(Error::BufferSizeMismatch {
+                expected: expected_len,
+                actual: bgra_data.len(),
+            });
+        }
+
+        let mut output = Vec::new();
+        self.encode_bgra_to_writer(bgra_data, width, height, &mut output)?;
+        Ok(output)
+    }
+
+    /// Encode RGBA image data to JPEG.
+    ///
+    /// Reads 4 bytes per pixel (R, G, B, A), ignores alpha, and encodes to JPEG.
+    /// No intermediate RGB buffer is needed — the color conversion reads RGBA directly.
+    ///
+    /// # Arguments
+    /// * `rgba_data` - RGBA pixel data (4 bytes per pixel, row-major)
+    /// * `width` - Image width in pixels
+    /// * `height` - Image height in pixels
+    ///
+    /// # Returns
+    /// JPEG-encoded data as a `Vec<u8>`.
+    pub fn encode_rgba(&self, rgba_data: &[u8], width: u32, height: u32) -> Result<Vec<u8>> {
+        if width == 0 || height == 0 {
+            return Err(Error::InvalidDimensions { width, height });
+        }
+        self.check_limits(width, height, false)?;
+
+        let expected_len = (width as usize)
+            .checked_mul(height as usize)
+            .and_then(|n| n.checked_mul(4))
+            .ok_or(Error::InvalidDimensions { width, height })?;
+
+        if rgba_data.len() != expected_len {
+            return Err(Error::BufferSizeMismatch {
+                expected: expected_len,
+                actual: rgba_data.len(),
+            });
+        }
+
+        let mut output = Vec::new();
+        self.encode_rgba_to_writer(rgba_data, width, height, &mut output)?;
+        Ok(output)
+    }
+
+    /// Encode BGRA image data to JPEG with cooperative cancellation.
+    ///
+    /// Reads 4 bytes per pixel (B, G, R, A), ignores alpha.
+    pub fn encode_bgra_with_stop(
+        &self,
+        bgra_data: &[u8],
+        width: u32,
+        height: u32,
+        stop: &dyn enough::Stop,
+    ) -> Result<Vec<u8>> {
+        if width == 0 || height == 0 {
+            return Err(Error::InvalidDimensions { width, height });
+        }
+        self.check_limits(width, height, false)?;
+
+        let expected_len = (width as usize)
+            .checked_mul(height as usize)
+            .and_then(|n| n.checked_mul(4))
+            .ok_or(Error::InvalidDimensions { width, height })?;
+
+        if bgra_data.len() != expected_len {
+            return Err(Error::BufferSizeMismatch {
+                expected: expected_len,
+                actual: bgra_data.len(),
+            });
+        }
+
+        stop.check()?;
+        let mut output = Vec::new();
+        self.encode_bgra_to_writer(bgra_data, width, height, &mut output)?;
+        stop.check()?;
+        Ok(output)
+    }
+
+    /// Encode RGBA image data to JPEG with cooperative cancellation.
+    ///
+    /// Reads 4 bytes per pixel (R, G, B, A), ignores alpha.
+    pub fn encode_rgba_with_stop(
+        &self,
+        rgba_data: &[u8],
+        width: u32,
+        height: u32,
+        stop: &dyn enough::Stop,
+    ) -> Result<Vec<u8>> {
+        if width == 0 || height == 0 {
+            return Err(Error::InvalidDimensions { width, height });
+        }
+        self.check_limits(width, height, false)?;
+
+        let expected_len = (width as usize)
+            .checked_mul(height as usize)
+            .and_then(|n| n.checked_mul(4))
+            .ok_or(Error::InvalidDimensions { width, height })?;
+
+        if rgba_data.len() != expected_len {
+            return Err(Error::BufferSizeMismatch {
+                expected: expected_len,
+                actual: rgba_data.len(),
+            });
+        }
+
+        stop.check()?;
+        let mut output = Vec::new();
+        self.encode_rgba_to_writer(rgba_data, width, height, &mut output)?;
+        stop.check()?;
+        Ok(output)
+    }
+
     /// Encode RGB image data to JPEG with cancellation and timeout support.
     ///
     /// **Deprecated:** Use [`encode_rgb_with_stop()`](Self::encode_rgb_with_stop) instead,
@@ -2250,8 +2388,6 @@ impl Encoder {
         let width = width as usize;
         let height = height as usize;
 
-        // Step 1: Convert RGB to YCbCr
-        // Use checked arithmetic for num_pixels calculation
         let num_pixels = width.checked_mul(height).ok_or(Error::InvalidDimensions {
             width: width as u32,
             height: height as u32,
@@ -2262,7 +2398,6 @@ impl Encoder {
         let mut cr_plane = try_alloc_vec(0u8, num_pixels)?;
 
         if self.c_compat_color {
-            // Use C mozjpeg-compatible color conversion for exact baseline parity
             convert_rgb_to_ycbcr_c_compat(
                 rgb_data,
                 &mut y_plane,
@@ -2271,7 +2406,6 @@ impl Encoder {
                 num_pixels,
             );
         } else {
-            // Use fast SIMD color conversion (default)
             (self.simd.color_convert_rgb_to_ycbcr)(
                 rgb_data,
                 &mut y_plane,
@@ -2281,7 +2415,93 @@ impl Encoder {
             );
         }
 
-        // Step 2: Downsample chroma if needed
+        self.encode_ycbcr_planes_to_writer(
+            &y_plane, &cb_plane, &cr_plane, width, height, output,
+        )
+    }
+
+    /// Encode BGRA image data to a writer.
+    ///
+    /// Reads 4 bytes per pixel (B, G, R, A), ignores alpha, and encodes to JPEG.
+    /// Uses the C mozjpeg-compatible color conversion (no intermediate RGB buffer).
+    pub fn encode_bgra_to_writer<W: Write>(
+        &self,
+        bgra_data: &[u8],
+        width: u32,
+        height: u32,
+        output: W,
+    ) -> Result<()> {
+        let width = width as usize;
+        let height = height as usize;
+
+        let num_pixels = width.checked_mul(height).ok_or(Error::InvalidDimensions {
+            width: width as u32,
+            height: height as u32,
+        })?;
+
+        let mut y_plane = try_alloc_vec(0u8, num_pixels)?;
+        let mut cb_plane = try_alloc_vec(0u8, num_pixels)?;
+        let mut cr_plane = try_alloc_vec(0u8, num_pixels)?;
+
+        crate::color::convert_bgra_to_ycbcr_c_compat(
+            bgra_data,
+            &mut y_plane,
+            &mut cb_plane,
+            &mut cr_plane,
+            num_pixels,
+        );
+
+        self.encode_ycbcr_planes_to_writer(
+            &y_plane, &cb_plane, &cr_plane, width, height, output,
+        )
+    }
+
+    /// Encode RGBA image data to a writer.
+    ///
+    /// Reads 4 bytes per pixel (R, G, B, A), ignores alpha, and encodes to JPEG.
+    /// Uses the C mozjpeg-compatible color conversion (no intermediate RGB buffer).
+    pub fn encode_rgba_to_writer<W: Write>(
+        &self,
+        rgba_data: &[u8],
+        width: u32,
+        height: u32,
+        output: W,
+    ) -> Result<()> {
+        let width = width as usize;
+        let height = height as usize;
+
+        let num_pixels = width.checked_mul(height).ok_or(Error::InvalidDimensions {
+            width: width as u32,
+            height: height as u32,
+        })?;
+
+        let mut y_plane = try_alloc_vec(0u8, num_pixels)?;
+        let mut cb_plane = try_alloc_vec(0u8, num_pixels)?;
+        let mut cr_plane = try_alloc_vec(0u8, num_pixels)?;
+
+        crate::color::convert_rgba_to_ycbcr_c_compat(
+            rgba_data,
+            &mut y_plane,
+            &mut cb_plane,
+            &mut cr_plane,
+            num_pixels,
+        );
+
+        self.encode_ycbcr_planes_to_writer(
+            &y_plane, &cb_plane, &cr_plane, width, height, output,
+        )
+    }
+
+    /// Internal helper: downsample, MCU-align, and encode Y/Cb/Cr planes.
+    fn encode_ycbcr_planes_to_writer<W: Write>(
+        &self,
+        y_plane: &[u8],
+        cb_plane: &[u8],
+        cr_plane: &[u8],
+        width: usize,
+        height: usize,
+        output: W,
+    ) -> Result<()> {
         let (luma_h, luma_v) = self.subsampling.luma_factors();
         let (chroma_width, chroma_height) =
             sample::subsampled_dimensions(width, height, luma_h as usize, luma_v as usize);
@@ -2293,7 +2513,7 @@ impl Encoder {
         let mut cr_subsampled = try_alloc_vec(0u8, chroma_size)?;
 
         sample::downsample_plane(
-            &cb_plane,
+            cb_plane,
             width,
             height,
             luma_h as usize,
@@ -2301,7 +2521,7 @@ impl Encoder {
             &mut cb_subsampled,
         );
         sample::downsample_plane(
-            &cr_plane,
+            cr_plane,
             width,
             height,
             luma_h as usize,
@@ -2309,7 +2529,6 @@ impl Encoder {
             &mut cr_subsampled,
         );
 
-        // Step 3: Expand planes to MCU-aligned dimensions
         let (mcu_width, mcu_height) =
             sample::mcu_aligned_dimensions(width, height, luma_h as usize, luma_v as usize);
         let (mcu_chroma_w, mcu_chroma_h) =
@@ -2325,7 +2544,7 @@ impl Encoder {
         let mut cb_mcu = try_alloc_vec(0u8, mcu_chroma_size)?;
         let mut cr_mcu = try_alloc_vec(0u8, mcu_chroma_size)?;
 
-        sample::expand_to_mcu(&y_plane, width, height, &mut y_mcu, mcu_width, mcu_height);
+        sample::expand_to_mcu(y_plane, width, height, &mut y_mcu, mcu_width, mcu_height);
         sample::expand_to_mcu(
             &cb_subsampled,
             chroma_width,
@@ -2343,7 +2562,6 @@ impl Encoder {
             mcu_chroma_h,
         );
 
-        // Encode using shared helper
         self.encode_ycbcr_mcu_to_writer(
             &y_mcu,
             &cb_mcu,

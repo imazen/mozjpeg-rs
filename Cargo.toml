@@ -50,7 +50,7 @@ mozjpeg-sys-config = ["dep:mozjpeg-sys", "dep:libc"]
 imgref = ["dep:imgref", "dep:rgb"]
 # zencodec trait implementations (EncoderConfig, EncodeJob, Encoder).
 # Provides MozjpegEncoderConfig for use in the zen codec ecosystem.
-zencodec = ["dep:zencodec", "dep:zenpixels"]
+zencodec = ["dep:zencodec", "dep:zenpixels", "dep:garb"]
 
 [dependencies]
 bytemuck = "1.25.0"
@@ -75,6 +75,8 @@ enough = { version = "0.4.2", features = ["std"] }
 # Optional: zencodec trait implementations for zen codec ecosystem
 zencodec = { version = "0.1.13", optional = true }
 zenpixels = { version = "0.2.1", optional = true }
+# Optional: SIMD-optimized pixel format conversions (BGRA↔RGB swizzle)
+garb = { version = "0.2.5", optional = true, default-features = false }
 
 [dev-dependencies]
 dssim = "3.4.0"
