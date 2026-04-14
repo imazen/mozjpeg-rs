@@ -40,8 +40,16 @@ static MOZJPEG_ENCODE_CAPS: EncodeCapabilities = EncodeCapabilities::new()
     .with_effort_range(0, 3);
 
 /// Supported encode pixel formats.
-static ENCODE_DESCRIPTORS: &[PixelDescriptor] =
-    &[PixelDescriptor::RGB8_SRGB, PixelDescriptor::GRAY8_SRGB];
+///
+/// BGRA8 and RGBA8 are supported — alpha is ignored during encoding.
+/// BGRA8 is listed first after RGB8 because it's the most common 4-channel
+/// format in Windows/DirectX pipelines (imageflow's native format).
+static ENCODE_DESCRIPTORS: &[PixelDescriptor] = &[
+    PixelDescriptor::RGB8_SRGB,
+    PixelDescriptor::BGRA8_SRGB,
+    PixelDescriptor::RGBA8_SRGB,
+    PixelDescriptor::GRAY8_SRGB,
+];
 
 // ============================================================================
 // EncoderConfig
@@ -246,7 +254,7 @@ struct RowAccumulator {
     data: Vec<u8>,
     width: u32,
     total_rows: u32,
-    is_gray: bool,
+    descriptor: PixelDescriptor,
 }
 
 impl MozjpegEncoder {
@@ -308,19 +316,24 @@ impl MozjpegEncoder {
         }
     }
 
-    /// Encode RGB or grayscale data using the prepared encoder.
-    fn encode_data(
+    /// Encode data in the given pixel format using the prepared encoder.
+    fn encode_for_descriptor(
         &self,
         enc: &crate::Encoder,
         data: &[u8],
         width: u32,
         height: u32,
-        is_gray: bool,
+        descriptor: PixelDescriptor,
     ) -> Result<Vec<u8>, Error> {
         let stop = self.stop_ref();
-        if is_gray {
+        if descriptor == PixelDescriptor::GRAY8_SRGB {
             enc.encode_gray_with_stop(data, width, height, stop)
+        } else if descriptor == PixelDescriptor::BGRA8_SRGB {
+            enc.encode_bgra_with_stop(data, width, height, stop)
+        } else if descriptor == PixelDescriptor::RGBA8_SRGB {
+            enc.encode_rgba_with_stop(data, width, height, stop)
         } else {
+            // RGB8 or any other 3-byte format
             enc.encode_rgb_with_stop(data, width, height, stop)
         }
     }
@@ -345,10 +358,10 @@ impl zencodec::encode::Encoder for MozjpegEncoder {
         let enc = self.prepare_encoder();
         let width = pixels.width();
         let height = pixels.rows();
+        let descriptor = pixels.descriptor();
         let data = pixels.contiguous_bytes();
-        let is_gray = pixels.descriptor() == PixelDescriptor::GRAY8_SRGB;
 
-        let jpeg_data = self.encode_data(&enc, &data, width, height, is_gray)?;
+        let jpeg_data = self.encode_for_descriptor(&enc, &data, width, height, descriptor)?;
         Ok(EncodeOutput::new(jpeg_data, ImageFormat::Jpeg))
     }
 
@@ -360,27 +373,42 @@ impl zencodec::encode::Encoder for MozjpegEncoder {
         height: u32,
         stride_pixels: u32,
     ) -> Result<EncodeOutput, Error> {
-        // Strip alpha: extract RGB from RGBA
-        let stride_bytes = stride_pixels as usize * 4;
-        let mut rgb = Vec::with_capacity(width as usize * height as usize * 3);
-        for y in 0..height as usize {
-            let row_start = y * stride_bytes;
-            for x in 0..width as usize {
-                let px = row_start + x * 4;
-                rgb.push(data[px]);
-                rgb.push(data[px + 1]);
-                rgb.push(data[px + 2]);
-            }
+        let enc = self.prepare_encoder();
+        let stop = self.stop_ref();
+
+        // If stride matches width (contiguous), encode RGBA directly — no intermediate buffer.
+        if stride_pixels == width {
+            let jpeg_data = enc.encode_rgba_with_stop(data, width, height, stop)?;
+            return Ok(EncodeOutput::new(jpeg_data, ImageFormat::Jpeg));
         }
 
-        let enc = self.prepare_encoder();
-        let jpeg_data = self.encode_data(&enc, &rgb, width, height, false)?;
+        // Strided: use garb to swizzle RGBA→RGB, stripping alpha and padding in one pass.
+        let w = width as usize;
+        let h = height as usize;
+        let rgb_len = w * h * 3;
+        let mut rgb = vec![0u8; rgb_len];
+        garb::bytes::rgba_to_rgb_strided(
+            data,
+            &mut rgb,
+            w,
+            h,
+            stride_pixels as usize * 4,
+            w * 3,
+        )
+        .map_err(|_| {
+            Error::BufferSizeMismatch {
+                expected: stride_pixels as usize * h * 4,
+                actual: data.len(),
+            }
+        })?;
+
+        let jpeg_data = enc.encode_rgb_with_stop(&rgb, width, height, stop)?;
         Ok(EncodeOutput::new(jpeg_data, ImageFormat::Jpeg))
     }
 
     fn push_rows(&mut self, rows: PixelSlice<'_>) -> Result<(), Error> {
         let width = rows.width();
-        let is_gray = rows.descriptor() == PixelDescriptor::GRAY8_SRGB;
+        let descriptor = rows.descriptor();
         let data = rows.contiguous_bytes();
 
         match &mut self.accumulator {
@@ -393,11 +421,11 @@ impl zencodec::encode::Encoder for MozjpegEncoder {
                     data: buf,
                     width,
                     total_rows: rows.rows(),
-                    is_gray,
+                    descriptor,
                 });
             }
             Some(acc) => {
-                if acc.width != width || acc.is_gray != is_gray {
+                if acc.width != width || acc.descriptor != descriptor {
                     return Err(Error::UnsupportedFeature(
                         "push_rows: width or format changed between calls",
                     ));
@@ -416,15 +444,17 @@ impl zencodec::encode::Encoder for MozjpegEncoder {
             "finish() called without any push_rows()",
         ))?;
 
-        // Use stop token or Unstoppable — must resolve after moving accumulator
-        // since stop_ref() borrows self.
         let stop: &dyn enough::Stop = match &self.stop {
             Some(s) => s,
             None => &enough::Unstoppable,
         };
 
-        let jpeg_data = if acc.is_gray {
+        let jpeg_data = if acc.descriptor == PixelDescriptor::GRAY8_SRGB {
             enc.encode_gray_with_stop(&acc.data, acc.width, acc.total_rows, stop)?
+        } else if acc.descriptor == PixelDescriptor::BGRA8_SRGB {
+            enc.encode_bgra_with_stop(&acc.data, acc.width, acc.total_rows, stop)?
+        } else if acc.descriptor == PixelDescriptor::RGBA8_SRGB {
+            enc.encode_rgba_with_stop(&acc.data, acc.width, acc.total_rows, stop)?
         } else {
             enc.encode_rgb_with_stop(&acc.data, acc.width, acc.total_rows, stop)?
         };
