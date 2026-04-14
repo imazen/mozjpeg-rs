@@ -29,9 +29,9 @@ members = ["crates/*"]
 
 [features]
 default = ["fast-yuv", "imgref"]
-# Use the `yuv` crate for SIMD color conversion (AVX-512/AVX2/SSE/NEON/WASM).
-# ~60% faster than hand-written AVX2, with ±1 level precision (invisible after JPEG quantization).
-fast-yuv = ["dep:yuv"]
+# Use `zenyuv` for SIMD color conversion (AVX2/NEON/WASM SIMD128 with scalar fallback).
+# Comparable perf to the `yuv` crate, with ±1 level precision (invisible after JPEG quantization).
+fast-yuv = ["dep:zenyuv"]
 # Use hand-written SIMD intrinsics for ~15% better DCT/color performance.
 # Without this, uses `autoversion` autovectorization (safe, ~87% of intrinsics perf).
 simd-intrinsics = []
@@ -65,8 +65,8 @@ safe_unaligned_simd = "0.2.5"
 # Optional: mozjpeg-sys configuration (configure C encoder from our settings)
 mozjpeg-sys = { version = "2.2", optional = true }
 libc = { version = "0.2.183", optional = true }
-# Optional: yuv crate for fast SIMD color conversion (AVX-512/AVX2/SSE/NEON/WASM)
-yuv = { version = "0.8.12", optional = true }
+# Optional: zenyuv for fast SIMD color conversion (AVX2/NEON/WASM + scalar)
+zenyuv = { version = "0.1.0", optional = true, default-features = false, features = ["std"] }
 # Optional: imgref integration for type-safe pixel formats
 imgref = { version = "1.12.0", optional = true }
 rgb = { version = "0.8", optional = true }

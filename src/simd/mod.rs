@@ -49,8 +49,10 @@ use archmage::NeonToken;
 // Fast YUV color conversion using the yuv crate (when feature enabled)
 // ============================================================================
 
-/// Convert RGB to YCbCr using the yuv crate's SIMD-optimized implementation.
-/// This is ~10x faster than the scalar autoversion implementation.
+/// Convert RGB to YCbCr using zenyuv's SIMD-optimized implementation.
+///
+/// Uses BT.601 full-range (JPEG standard). Dispatches to AVX2 on x86_64,
+/// NEON on aarch64, WASM SIMD128 on wasm32, scalar f32x8 otherwise.
 #[cfg(feature = "fast-yuv")]
 fn convert_rgb_to_ycbcr_yuv(
     rgb: &[u8],
@@ -59,35 +61,10 @@ fn convert_rgb_to_ycbcr_yuv(
     cr_out: &mut [u8],
     num_pixels: usize,
 ) {
-    use yuv::{
-        BufferStoreMut, YuvConversionMode, YuvPlanarImageMut, YuvRange, YuvStandardMatrix,
-        rgb_to_yuv444,
-    };
-
-    // Treat as 1D image (width=num_pixels, height=1)
-    let w = num_pixels as u32;
-    let h = 1u32;
-
-    let mut yuv_image = YuvPlanarImageMut {
-        y_plane: BufferStoreMut::Borrowed(y_out),
-        y_stride: w,
-        u_plane: BufferStoreMut::Borrowed(cb_out),
-        u_stride: w,
-        v_plane: BufferStoreMut::Borrowed(cr_out),
-        v_stride: w,
-        width: w,
-        height: h,
-    };
-
-    rgb_to_yuv444(
-        &mut yuv_image,
-        rgb,
-        w * 3,
-        YuvRange::Full,
-        YuvStandardMatrix::Bt601,
-        YuvConversionMode::default(),
-    )
-    .expect("yuv conversion failed");
+    // YuvContext::new is zero-cost (no alloc for u8 box-average 4:4:4).
+    // Treat as 1D image (width=num_pixels, height=1).
+    let mut ctx = zenyuv::YuvContext::new(zenyuv::Range::Full, zenyuv::Matrix::Bt601);
+    ctx.encode_444_u8(rgb, y_out, cb_out, cr_out, num_pixels, 1);
 }
 
 /// Function pointer type for forward DCT.

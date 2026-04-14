@@ -13,10 +13,9 @@
 //!
 //! ## Performance
 //!
-//! By default (with `fast-yuv` feature), this module uses the `yuv` crate for
-//! SIMD-optimized color conversion. The `yuv` crate provides ~60% better
-//! performance than our hand-written AVX2 code, with support for AVX-512,
-//! AVX2, SSE, NEON, and WASM SIMD.
+//! By default (with `fast-yuv` feature), this module uses the `zenyuv` crate for
+//! SIMD-optimized color conversion. zenyuv provides AVX2, NEON, and WASM SIMD128
+//! kernels with a scalar fallback, dispatched at runtime via archmage tokens.
 //!
 //! The precision difference is ±1 level, which is invisible after JPEG
 //! quantization (which loses 2-4+ levels at Q85).
@@ -109,8 +108,8 @@ pub fn rgb_to_gray(r: u8, g: u8, b: u8) -> u8 {
 /// The input is interleaved RGB data, and the output is three separate
 /// component planes (Y, Cb, Cr), matching libjpeg's internal format.
 ///
-/// With the `fast-yuv` feature (default), this uses the `yuv` crate for
-/// ~60% better performance with AVX-512/AVX2/SSE/NEON/WASM SIMD support.
+/// With the `fast-yuv` feature (default), this uses the `zenyuv` crate for
+/// SIMD-accelerated RGB→YCbCr conversion (AVX2/NEON/WASM SIMD128 + scalar).
 /// Without `fast-yuv`, uses the `wide` crate for portable SIMD (i32x8).
 ///
 /// # Arguments
@@ -129,42 +128,14 @@ pub fn convert_rgb_to_ycbcr(
     width: usize,
     height: usize,
 ) {
-    use yuv::{
-        BufferStoreMut, YuvConversionMode, YuvPlanarImageMut, YuvRange, YuvStandardMatrix,
-        rgb_to_yuv444,
-    };
-
     debug_assert_eq!(rgb.len(), width * height * 3);
     debug_assert_eq!(y_out.len(), width * height);
     debug_assert_eq!(cb_out.len(), width * height);
     debug_assert_eq!(cr_out.len(), width * height);
 
-    let w = width as u32;
-    let h = height as u32;
-
-    // Create a YUV planar image that directly borrows our output buffers (zero-copy)
-    let mut yuv_image = YuvPlanarImageMut {
-        y_plane: BufferStoreMut::Borrowed(y_out),
-        y_stride: w,
-        u_plane: BufferStoreMut::Borrowed(cb_out),
-        u_stride: w,
-        v_plane: BufferStoreMut::Borrowed(cr_out),
-        v_stride: w,
-        width: w,
-        height: h,
-    };
-
-    // Convert RGB to YUV using the yuv crate's SIMD-optimized implementation
-    // Uses BT.601 matrix (same as JPEG) with full range (0-255)
-    rgb_to_yuv444(
-        &mut yuv_image,
-        rgb,
-        w * 3,
-        YuvRange::Full,
-        YuvStandardMatrix::Bt601,
-        YuvConversionMode::default(), // Balanced mode: good precision + speed
-    )
-    .expect("yuv conversion failed");
+    // YuvContext::new is zero-cost; u8 box-average 4:4:4 allocates nothing.
+    let mut ctx = zenyuv::YuvContext::new(zenyuv::Range::Full, zenyuv::Matrix::Bt601);
+    ctx.encode_444_u8(rgb, y_out, cb_out, cr_out, width, height);
 }
 
 /// Convert an RGB image buffer to YCbCr in-place component buffers.
