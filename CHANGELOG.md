@@ -8,14 +8,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
-- **BGRA8 and RGBA8 encoding** — Native 4-channel input support without intermediate RGB buffer (7a55b85, 6f0ffcc)
-  - `encode_bgra()`, `encode_rgba()`, `encode_bgra_with_stop()`, `encode_rgba_with_stop()`
-  - `encode_bgra_to_writer()`, `encode_rgba_to_writer()`
-  - Direct BGRA/RGBA→YCbCr color conversion using C mozjpeg-compatible algorithm
-- **zencodec BGRA8/RGBA8 support** — `BGRA8_SRGB` and `RGBA8_SRGB` added to supported encode descriptors (d5d60ab)
-  - `encode()` routes to native BGRA/RGBA paths based on pixel descriptor
+- **RGBA8 encoding** — Native 4-channel input support without intermediate RGB buffer (7a55b85, 6f0ffcc)
+  - `encode_rgba()`, `encode_rgba_with_stop()`, `encode_rgba_to_writer()`
+  - Direct RGBA→YCbCr color conversion using C mozjpeg-compatible algorithm
+  - For BGRA input, swizzle to RGBA first with `garb::bytes::bgra_to_rgba` (or in-place variant)
+- **zencodec RGBA8 support** — `RGBA8_SRGB` added to supported encode descriptors (d5d60ab)
+  - `encode()` routes to native RGBA path based on pixel descriptor
   - `encode_srgba8()` uses native RGBA path for contiguous data, garb SIMD swizzle for strided
-  - `push_rows()` / `finish()` handle all four pixel formats (RGB8, BGRA8, RGBA8, GRAY8)
+  - `push_rows()` / `finish()` handle all three pixel formats (RGB8, RGBA8, GRAY8)
 - **garb dependency** (optional, via `zencodec` feature) for SIMD-optimized pixel format conversions
 
 ### Changed

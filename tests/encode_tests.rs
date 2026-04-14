@@ -1647,44 +1647,8 @@ fn test_strided_crop_simulation() {
 }
 
 // ============================================================================
-// BGRA / RGBA encode tests
+// RGBA encode tests
 // ============================================================================
-
-/// Verify encode_bgra produces valid, decodable JPEG output.
-#[test]
-fn test_encode_bgra() {
-    let w = 64u32;
-    let h = 64u32;
-    let mut bgra = vec![0u8; (w * h * 4) as usize];
-    for i in 0..(w * h) as usize {
-        bgra[i * 4] = 30; // B
-        bgra[i * 4 + 1] = 128; // G
-        bgra[i * 4 + 2] = 220; // R
-        bgra[i * 4 + 3] = 255; // A (ignored)
-    }
-
-    let encoder = Encoder::default().quality(85);
-    let jpeg = encoder.encode_bgra(&bgra, w, h).unwrap();
-
-    // Must be valid JPEG
-    assert_eq!(&jpeg[..2], &[0xFF, 0xD8]);
-    assert_eq!(&jpeg[jpeg.len() - 2..], &[0xFF, 0xD9]);
-
-    // Must decode successfully
-    let mut decoder = jpeg_decoder::Decoder::new(&jpeg[..]);
-    let pixels = decoder.decode().unwrap();
-    let info = decoder.info().unwrap();
-    assert_eq!(info.width, w as u16);
-    assert_eq!(info.height, h as u16);
-
-    // Decoded pixels should be close to the original (R=220, G=128, B=30)
-    let r_diff = (pixels[0] as i16 - 220).abs();
-    let g_diff = (pixels[1] as i16 - 128).abs();
-    let b_diff = (pixels[2] as i16 - 30).abs();
-    assert!(r_diff < 5, "R diff too large: {r_diff}");
-    assert!(g_diff < 5, "G diff too large: {g_diff}");
-    assert!(b_diff < 5, "B diff too large: {b_diff}");
-}
 
 /// Verify encode_rgba produces valid, decodable JPEG output.
 #[test]
@@ -1713,35 +1677,6 @@ fn test_encode_rgba() {
     assert!(r_diff < 5, "R diff too large: {r_diff}");
     assert!(g_diff < 5, "G diff too large: {g_diff}");
     assert!(b_diff < 5, "B diff too large: {b_diff}");
-}
-
-/// BGRA and RGB encode the same pixels — output must be byte-identical.
-#[test]
-fn test_bgra_rgb_parity() {
-    let w = 48u32;
-    let h = 48u32;
-    let (r, g, b) = (180u8, 90, 45);
-
-    let mut rgb = vec![0u8; (w * h * 3) as usize];
-    let mut bgra = vec![0u8; (w * h * 4) as usize];
-    for i in 0..(w * h) as usize {
-        rgb[i * 3] = r;
-        rgb[i * 3 + 1] = g;
-        rgb[i * 3 + 2] = b;
-        bgra[i * 4] = b;
-        bgra[i * 4 + 1] = g;
-        bgra[i * 4 + 2] = r;
-        bgra[i * 4 + 3] = 77; // arbitrary alpha
-    }
-
-    let encoder = Encoder::default().quality(75);
-    let jpeg_rgb = encoder.encode_rgb(&rgb, w, h).unwrap();
-    let jpeg_bgra = encoder.encode_bgra(&bgra, w, h).unwrap();
-
-    assert_eq!(
-        jpeg_rgb, jpeg_bgra,
-        "BGRA encode must produce identical JPEG to RGB encode"
-    );
 }
 
 /// RGBA and RGB encode the same pixels — output must be byte-identical.
@@ -1773,18 +1708,18 @@ fn test_rgba_rgb_parity() {
     );
 }
 
-/// encode_bgra rejects wrong buffer size.
+/// encode_rgba rejects wrong buffer size.
 #[test]
-fn test_encode_bgra_buffer_validation() {
+fn test_encode_rgba_buffer_validation() {
     let encoder = Encoder::default();
     // Too small buffer
-    let result = encoder.encode_bgra(&[0u8; 10], 64, 64);
+    let result = encoder.encode_rgba(&[0u8; 10], 64, 64);
     assert!(result.is_err());
 }
 
-/// encode_bgra_with_stop respects cancellation.
+/// encode_rgba_with_stop respects cancellation.
 #[test]
-fn test_encode_bgra_with_stop() {
+fn test_encode_rgba_with_stop() {
     use enough::{Stop, StopReason};
 
     struct AlreadyCancelled;
@@ -1797,8 +1732,8 @@ fn test_encode_bgra_with_stop() {
         }
     }
 
-    let bgra = vec![128u8; 64 * 64 * 4];
+    let rgba = vec![128u8; 64 * 64 * 4];
     let encoder = Encoder::default();
-    let result = encoder.encode_bgra_with_stop(&bgra, 64, 64, &AlreadyCancelled);
+    let result = encoder.encode_rgba_with_stop(&rgba, 64, 64, &AlreadyCancelled);
     assert!(result.is_err());
 }

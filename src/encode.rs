@@ -1515,45 +1515,13 @@ impl Encoder {
         Ok(output)
     }
 
-    /// Encode BGRA image data to JPEG.
-    ///
-    /// Reads 4 bytes per pixel (B, G, R, A), ignores alpha, and encodes to JPEG.
-    /// No intermediate RGB buffer is needed — the color conversion reads BGRA directly.
-    ///
-    /// # Arguments
-    /// * `bgra_data` - BGRA pixel data (4 bytes per pixel, row-major)
-    /// * `width` - Image width in pixels
-    /// * `height` - Image height in pixels
-    ///
-    /// # Returns
-    /// JPEG-encoded data as a `Vec<u8>`.
-    pub fn encode_bgra(&self, bgra_data: &[u8], width: u32, height: u32) -> Result<Vec<u8>> {
-        if width == 0 || height == 0 {
-            return Err(Error::InvalidDimensions { width, height });
-        }
-        self.check_limits(width, height, false)?;
-
-        let expected_len = (width as usize)
-            .checked_mul(height as usize)
-            .and_then(|n| n.checked_mul(4))
-            .ok_or(Error::InvalidDimensions { width, height })?;
-
-        if bgra_data.len() != expected_len {
-            return Err(Error::BufferSizeMismatch {
-                expected: expected_len,
-                actual: bgra_data.len(),
-            });
-        }
-
-        let mut output = Vec::new();
-        self.encode_bgra_to_writer(bgra_data, width, height, &mut output)?;
-        Ok(output)
-    }
-
     /// Encode RGBA image data to JPEG.
     ///
     /// Reads 4 bytes per pixel (R, G, B, A), ignores alpha, and encodes to JPEG.
     /// No intermediate RGB buffer is needed — the color conversion reads RGBA directly.
+    ///
+    /// To encode BGRA data, swizzle to RGBA first with `garb::bytes::bgra_to_rgba`
+    /// (or an in-place variant).
     ///
     /// # Arguments
     /// * `rgba_data` - RGBA pixel data (4 bytes per pixel, row-major)
@@ -1582,40 +1550,6 @@ impl Encoder {
 
         let mut output = Vec::new();
         self.encode_rgba_to_writer(rgba_data, width, height, &mut output)?;
-        Ok(output)
-    }
-
-    /// Encode BGRA image data to JPEG with cooperative cancellation.
-    ///
-    /// Reads 4 bytes per pixel (B, G, R, A), ignores alpha.
-    pub fn encode_bgra_with_stop(
-        &self,
-        bgra_data: &[u8],
-        width: u32,
-        height: u32,
-        stop: &dyn enough::Stop,
-    ) -> Result<Vec<u8>> {
-        if width == 0 || height == 0 {
-            return Err(Error::InvalidDimensions { width, height });
-        }
-        self.check_limits(width, height, false)?;
-
-        let expected_len = (width as usize)
-            .checked_mul(height as usize)
-            .and_then(|n| n.checked_mul(4))
-            .ok_or(Error::InvalidDimensions { width, height })?;
-
-        if bgra_data.len() != expected_len {
-            return Err(Error::BufferSizeMismatch {
-                expected: expected_len,
-                actual: bgra_data.len(),
-            });
-        }
-
-        stop.check()?;
-        let mut output = Vec::new();
-        self.encode_bgra_to_writer(bgra_data, width, height, &mut output)?;
-        stop.check()?;
         Ok(output)
     }
 
@@ -2415,45 +2349,7 @@ impl Encoder {
             );
         }
 
-        self.encode_ycbcr_planes_to_writer(
-            &y_plane, &cb_plane, &cr_plane, width, height, output,
-        )
-    }
-
-    /// Encode BGRA image data to a writer.
-    ///
-    /// Reads 4 bytes per pixel (B, G, R, A), ignores alpha, and encodes to JPEG.
-    /// Uses the C mozjpeg-compatible color conversion (no intermediate RGB buffer).
-    pub fn encode_bgra_to_writer<W: Write>(
-        &self,
-        bgra_data: &[u8],
-        width: u32,
-        height: u32,
-        output: W,
-    ) -> Result<()> {
-        let width = width as usize;
-        let height = height as usize;
-
-        let num_pixels = width.checked_mul(height).ok_or(Error::InvalidDimensions {
-            width: width as u32,
-            height: height as u32,
-        })?;
-
-        let mut y_plane = try_alloc_vec(0u8, num_pixels)?;
-        let mut cb_plane = try_alloc_vec(0u8, num_pixels)?;
-        let mut cr_plane = try_alloc_vec(0u8, num_pixels)?;
-
-        crate::color::convert_bgra_to_ycbcr_c_compat(
-            bgra_data,
-            &mut y_plane,
-            &mut cb_plane,
-            &mut cr_plane,
-            num_pixels,
-        );
-
-        self.encode_ycbcr_planes_to_writer(
-            &y_plane, &cb_plane, &cr_plane, width, height, output,
-        )
+        self.encode_ycbcr_planes_to_writer(&y_plane, &cb_plane, &cr_plane, width, height, output)
     }
 
     /// Encode RGBA image data to a writer.
@@ -2487,9 +2383,7 @@ impl Encoder {
             num_pixels,
         );
 
-        self.encode_ycbcr_planes_to_writer(
-            &y_plane, &cb_plane, &cr_plane, width, height, output,
-        )
+        self.encode_ycbcr_planes_to_writer(&y_plane, &cb_plane, &cr_plane, width, height, output)
     }
 
     /// Internal helper: downsample, MCU-align, and encode Y/Cb/Cr planes.
