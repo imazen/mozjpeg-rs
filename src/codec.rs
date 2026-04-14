@@ -387,19 +387,10 @@ impl zencodec::encode::Encoder for MozjpegEncoder {
         let h = height as usize;
         let rgb_len = w * h * 3;
         let mut rgb = vec![0u8; rgb_len];
-        garb::bytes::rgba_to_rgb_strided(
-            data,
-            &mut rgb,
-            w,
-            h,
-            stride_pixels as usize * 4,
-            w * 3,
-        )
-        .map_err(|_| {
-            Error::BufferSizeMismatch {
-                expected: stride_pixels as usize * h * 4,
-                actual: data.len(),
-            }
+        garb::bytes::rgba_to_rgb_strided(data, &mut rgb, w, h, stride_pixels as usize * 4, w * 3)
+            .map_err(|_| Error::BufferSizeMismatch {
+            expected: stride_pixels as usize * h * 4,
+            actual: data.len(),
         })?;
 
         let jpeg_data = enc.encode_rgb_with_stop(&rgb, width, height, stop)?;
@@ -684,5 +675,173 @@ mod tests {
 
         // The version with metadata should be larger
         assert!(output_with_meta.data().len() > output_stripped.data().len());
+    }
+
+    #[test]
+    fn bgra8_encode() {
+        // BGRA8 pixel data: B=0, G=128, R=255, A=200
+        let mut bgra = vec![0u8; 64 * 64 * 4];
+        for i in 0..64 * 64 {
+            bgra[i * 4] = 0; // B
+            bgra[i * 4 + 1] = 128; // G
+            bgra[i * 4 + 2] = 255; // R
+            bgra[i * 4 + 3] = 200; // A (should be ignored)
+        }
+        let config = MozjpegEncoderConfig::new();
+        let slice = PixelSlice::new(&bgra, 64, 64, 64 * 4, PixelDescriptor::BGRA8_SRGB).unwrap();
+
+        let output = config.job().encoder().unwrap().encode(slice).unwrap();
+        assert!(!output.data().is_empty());
+        assert_eq!(&output.data()[..2], &[0xFF, 0xD8]);
+    }
+
+    #[test]
+    fn rgba8_encode() {
+        // RGBA8 pixel data: R=255, G=128, B=0, A=200
+        let mut rgba = vec![0u8; 64 * 64 * 4];
+        for i in 0..64 * 64 {
+            rgba[i * 4] = 255; // R
+            rgba[i * 4 + 1] = 128; // G
+            rgba[i * 4 + 2] = 0; // B
+            rgba[i * 4 + 3] = 200; // A (should be ignored)
+        }
+        let config = MozjpegEncoderConfig::new();
+        let slice = PixelSlice::new(&rgba, 64, 64, 64 * 4, PixelDescriptor::RGBA8_SRGB).unwrap();
+
+        let output = config.job().encoder().unwrap().encode(slice).unwrap();
+        assert!(!output.data().is_empty());
+        assert_eq!(&output.data()[..2], &[0xFF, 0xD8]);
+    }
+
+    #[test]
+    fn bgra8_matches_rgb_encode() {
+        // Encode the same pixel colors via BGRA8 and RGB8 — output should match.
+        let (r, g, b) = (200u8, 100, 50);
+        let w: u32 = 32;
+        let h: u32 = 32;
+        let n = (w * h) as usize;
+
+        let mut rgb = vec![0u8; n * 3];
+        let mut bgra = vec![0u8; n * 4];
+        for i in 0..n {
+            rgb[i * 3] = r;
+            rgb[i * 3 + 1] = g;
+            rgb[i * 3 + 2] = b;
+            bgra[i * 4] = b;
+            bgra[i * 4 + 1] = g;
+            bgra[i * 4 + 2] = r;
+            bgra[i * 4 + 3] = 255; // alpha ignored
+        }
+
+        let config = MozjpegEncoderConfig::new().with_generic_effort(0);
+        let rgb_slice =
+            PixelSlice::new(&rgb, w, h, w as usize * 3, PixelDescriptor::RGB8_SRGB).unwrap();
+        let rgb_output = config
+            .clone()
+            .job()
+            .encoder()
+            .unwrap()
+            .encode(rgb_slice)
+            .unwrap();
+
+        let bgra_slice =
+            PixelSlice::new(&bgra, w, h, w as usize * 4, PixelDescriptor::BGRA8_SRGB).unwrap();
+        let bgra_output = config.job().encoder().unwrap().encode(bgra_slice).unwrap();
+
+        // File sizes should be identical (same pixel data, same encoder config).
+        assert_eq!(
+            rgb_output.data().len(),
+            bgra_output.data().len(),
+            "BGRA and RGB encodes should produce identical output for the same pixel colors"
+        );
+        assert_eq!(rgb_output.data(), bgra_output.data());
+    }
+
+    #[test]
+    fn rgba8_matches_rgb_encode() {
+        // Encode the same pixel colors via RGBA8 and RGB8 — output should match.
+        let (r, g, b) = (200u8, 100, 50);
+        let w: u32 = 32;
+        let h: u32 = 32;
+        let n = (w * h) as usize;
+
+        let mut rgb = vec![0u8; n * 3];
+        let mut rgba = vec![0u8; n * 4];
+        for i in 0..n {
+            rgb[i * 3] = r;
+            rgb[i * 3 + 1] = g;
+            rgb[i * 3 + 2] = b;
+            rgba[i * 4] = r;
+            rgba[i * 4 + 1] = g;
+            rgba[i * 4 + 2] = b;
+            rgba[i * 4 + 3] = 128; // alpha ignored
+        }
+
+        let config = MozjpegEncoderConfig::new().with_generic_effort(0);
+        let rgb_slice =
+            PixelSlice::new(&rgb, w, h, w as usize * 3, PixelDescriptor::RGB8_SRGB).unwrap();
+        let rgb_output = config
+            .clone()
+            .job()
+            .encoder()
+            .unwrap()
+            .encode(rgb_slice)
+            .unwrap();
+
+        let rgba_slice =
+            PixelSlice::new(&rgba, w, h, w as usize * 4, PixelDescriptor::RGBA8_SRGB).unwrap();
+        let rgba_output = config.job().encoder().unwrap().encode(rgba_slice).unwrap();
+
+        assert_eq!(
+            rgb_output.data().len(),
+            rgba_output.data().len(),
+            "RGBA and RGB encodes should produce identical output for the same pixel colors"
+        );
+        assert_eq!(rgb_output.data(), rgba_output.data());
+    }
+
+    #[test]
+    fn bgra8_push_rows() {
+        let mut bgra = vec![0u8; 32 * 32 * 4];
+        for i in 0..32 * 32 {
+            bgra[i * 4] = 64; // B
+            bgra[i * 4 + 1] = 128; // G
+            bgra[i * 4 + 2] = 192; // R
+            bgra[i * 4 + 3] = 255; // A
+        }
+        let config = MozjpegEncoderConfig::new().with_generic_effort(0);
+        let mut encoder = config.job().with_canvas_size(32, 32).encoder().unwrap();
+
+        for chunk_start in (0..32u32).step_by(16) {
+            let rows = 16u32.min(32 - chunk_start);
+            let start = chunk_start as usize * 32 * 4;
+            let end = start + rows as usize * 32 * 4;
+            let slice = PixelSlice::new(
+                &bgra[start..end],
+                32,
+                rows,
+                32 * 4,
+                PixelDescriptor::BGRA8_SRGB,
+            )
+            .unwrap();
+            encoder.push_rows(slice).unwrap();
+        }
+
+        let output = encoder.finish().unwrap();
+        assert!(!output.data().is_empty());
+        assert_eq!(&output.data()[..2], &[0xFF, 0xD8]);
+    }
+
+    #[test]
+    fn supported_descriptors_include_bgra_rgba() {
+        let descs = MozjpegEncoderConfig::supported_descriptors();
+        assert!(
+            descs.contains(&PixelDescriptor::BGRA8_SRGB),
+            "BGRA8_SRGB must be in supported descriptors"
+        );
+        assert!(
+            descs.contains(&PixelDescriptor::RGBA8_SRGB),
+            "RGBA8_SRGB must be in supported descriptors"
+        );
     }
 }
