@@ -579,6 +579,74 @@ fn convert_rgb_to_ycbcr_c_compat_dispatch(
     convert_rgb_to_ycbcr_c_compat_scalar(rgb, y_out, cb_out, cr_out, num_pixels);
 }
 
+// ============================================================================
+// 4-channel (BGRA/RGBA) to YCbCr conversion
+// ============================================================================
+
+/// Convert BGRA image to YCbCr using C mozjpeg-compatible algorithm.
+///
+/// Reads 4 bytes per pixel (B, G, R, A), ignores alpha, and produces
+/// Y/Cb/Cr planes. This eliminates the need for an intermediate RGB buffer
+/// when the source data is BGRA (common in Windows/DirectX/imageflow).
+///
+/// # Arguments
+/// * `bgra` - Interleaved BGRA data (4 bytes per pixel)
+/// * `y_out` - Output Y plane
+/// * `cb_out` - Output Cb plane
+/// * `cr_out` - Output Cr plane
+/// * `num_pixels` - Number of pixels to convert
+pub fn convert_bgra_to_ycbcr_c_compat(
+    bgra: &[u8],
+    y_out: &mut [u8],
+    cb_out: &mut [u8],
+    cr_out: &mut [u8],
+    num_pixels: usize,
+) {
+    for i in 0..num_pixels {
+        let base = i * 4;
+        let b = bgra[base];
+        let g = bgra[base + 1];
+        let r = bgra[base + 2];
+        // alpha at bgra[base + 3] is ignored
+        let (y, cb, cr) = rgb_to_ycbcr_c_compat(r, g, b);
+        y_out[i] = y;
+        cb_out[i] = cb;
+        cr_out[i] = cr;
+    }
+}
+
+/// Convert RGBA image to YCbCr using C mozjpeg-compatible algorithm.
+///
+/// Reads 4 bytes per pixel (R, G, B, A), ignores alpha, and produces
+/// Y/Cb/Cr planes. This eliminates the need for an intermediate RGB buffer
+/// when the source data is RGBA.
+///
+/// # Arguments
+/// * `rgba` - Interleaved RGBA data (4 bytes per pixel)
+/// * `y_out` - Output Y plane
+/// * `cb_out` - Output Cb plane
+/// * `cr_out` - Output Cr plane
+/// * `num_pixels` - Number of pixels to convert
+pub fn convert_rgba_to_ycbcr_c_compat(
+    rgba: &[u8],
+    y_out: &mut [u8],
+    cb_out: &mut [u8],
+    cr_out: &mut [u8],
+    num_pixels: usize,
+) {
+    for i in 0..num_pixels {
+        let base = i * 4;
+        let r = rgba[base];
+        let g = rgba[base + 1];
+        let b = rgba[base + 2];
+        // alpha at rgba[base + 3] is ignored
+        let (y, cb, cr) = rgb_to_ycbcr_c_compat(r, g, b);
+        y_out[i] = y;
+        cb_out[i] = cb;
+        cr_out[i] = cr;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -972,6 +1040,82 @@ mod tests {
             assert_eq!(cb_out[i], cb);
             assert_eq!(cr_out[i], cr);
         }
+    }
+
+    #[test]
+    fn test_bgra_to_ycbcr_matches_rgb() {
+        // BGRA conversion should produce identical YCbCr as RGB for the same pixel colors
+        let num_pixels = 51; // Not a multiple of 8
+        let mut rgb = vec![0u8; num_pixels * 3];
+        let mut bgra = vec![0u8; num_pixels * 4];
+
+        for i in 0..num_pixels {
+            let r = ((i * 7) % 256) as u8;
+            let g = ((i * 11) % 256) as u8;
+            let b = ((i * 13) % 256) as u8;
+            let a = ((i * 3) % 256) as u8; // alpha varies but should be ignored
+
+            rgb[i * 3] = r;
+            rgb[i * 3 + 1] = g;
+            rgb[i * 3 + 2] = b;
+
+            bgra[i * 4] = b;
+            bgra[i * 4 + 1] = g;
+            bgra[i * 4 + 2] = r;
+            bgra[i * 4 + 3] = a;
+        }
+
+        let mut y_rgb = vec![0u8; num_pixels];
+        let mut cb_rgb = vec![0u8; num_pixels];
+        let mut cr_rgb = vec![0u8; num_pixels];
+        convert_rgb_to_ycbcr_c_compat(&rgb, &mut y_rgb, &mut cb_rgb, &mut cr_rgb, num_pixels);
+
+        let mut y_bgra = vec![0u8; num_pixels];
+        let mut cb_bgra = vec![0u8; num_pixels];
+        let mut cr_bgra = vec![0u8; num_pixels];
+        convert_bgra_to_ycbcr_c_compat(&bgra, &mut y_bgra, &mut cb_bgra, &mut cr_bgra, num_pixels);
+
+        assert_eq!(y_rgb, y_bgra);
+        assert_eq!(cb_rgb, cb_bgra);
+        assert_eq!(cr_rgb, cr_bgra);
+    }
+
+    #[test]
+    fn test_rgba_to_ycbcr_matches_rgb() {
+        // RGBA conversion should produce identical YCbCr as RGB for the same pixel colors
+        let num_pixels = 51;
+        let mut rgb = vec![0u8; num_pixels * 3];
+        let mut rgba = vec![0u8; num_pixels * 4];
+
+        for i in 0..num_pixels {
+            let r = ((i * 7) % 256) as u8;
+            let g = ((i * 11) % 256) as u8;
+            let b = ((i * 13) % 256) as u8;
+            let a = ((i * 3) % 256) as u8;
+
+            rgb[i * 3] = r;
+            rgb[i * 3 + 1] = g;
+            rgb[i * 3 + 2] = b;
+
+            rgba[i * 4] = r;
+            rgba[i * 4 + 1] = g;
+            rgba[i * 4 + 2] = b;
+            rgba[i * 4 + 3] = a;
+        }
+
+        let mut y_rgb = vec![0u8; num_pixels];
+        let mut cb_rgb = vec![0u8; num_pixels];
+        let mut cr_rgb = vec![0u8; num_pixels];
+        convert_rgb_to_ycbcr_c_compat(&rgb, &mut y_rgb, &mut cb_rgb, &mut cr_rgb, num_pixels);
+
+        let mut y_rgba = vec![0u8; num_pixels];
+        let mut cb_rgba = vec![0u8; num_pixels];
+        let mut cr_rgba = vec![0u8; num_pixels];
+        convert_rgba_to_ycbcr_c_compat(&rgba, &mut y_rgba, &mut cb_rgba, &mut cr_rgba, num_pixels);
+
+        assert_eq!(y_rgb, y_rgba);
+        assert_eq!(cb_rgb, cb_rgba);
+        assert_eq!(cr_rgb, cr_rgba);
     }
 }
 
