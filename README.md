@@ -2,11 +2,11 @@
 
 **100% safe Rust** JPEG encoder (`#![forbid(unsafe_code)]`) with **byte-identical output** to C mozjpeg in baseline and progressive modes (0.00% avg diff). Trellis modes produce **0.05-0.80% smaller files** than C mozjpeg while being **6% faster** at 2048×2048. Uses safe SIMD (archmage) on x86_64 (AVX2) and aarch64 (NEON).
 
-[![Crates.io](https://img.shields.io/crates/v/mozjpeg-rs.svg)](https://crates.io/crates/mozjpeg-rs)
-[![Documentation](https://docs.rs/mozjpeg-rs/badge.svg)](https://docs.rs/mozjpeg-rs)
-[![CI](https://github.com/imazen/mozjpeg-rs/actions/workflows/ci.yml/badge.svg)](https://github.com/imazen/mozjpeg-rs/actions/workflows/ci.yml)
-[![codecov](https://codecov.io/gh/imazen/mozjpeg-rs/graph/badge.svg)](https://codecov.io/gh/imazen/mozjpeg-rs)
-[![License](https://img.shields.io/crates/l/mozjpeg-rs.svg)](LICENSE)
+[![Crates.io](https://img.shields.io/crates/v/mozjpeg-rs?style=flat-square)](https://crates.io/crates/mozjpeg-rs)
+[![Documentation](https://img.shields.io/docsrs/mozjpeg-rs?style=flat-square)](https://docs.rs/mozjpeg-rs)
+[![CI](https://img.shields.io/github/actions/workflow/status/imazen/mozjpeg-rs/ci.yml?style=flat-square&label=CI)](https://github.com/imazen/mozjpeg-rs/actions/workflows/ci.yml)
+[![codecov](https://img.shields.io/codecov/c/github/imazen/mozjpeg-rs?style=flat-square)](https://codecov.io/gh/imazen/mozjpeg-rs)
+[![License](https://img.shields.io/crates/l/mozjpeg-rs?style=flat-square)](LICENSE)
 
 ## Encoder Only
 

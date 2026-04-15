@@ -610,13 +610,13 @@ impl Encoder {
     /// # Example
     ///
     /// ```
-    /// use mozjpeg_rs::Encoder;
+    /// use mozjpeg_rs::{Encoder, Preset};
     ///
     /// // Faster color conversion
-    /// let encoder = Encoder::new().quality(85).fast_color(true);
+    /// let encoder = Encoder::new(Preset::default()).quality(85).fast_color(true);
     ///
     /// // Exact C mozjpeg parity (default, explicit)
-    /// let encoder = Encoder::new().quality(85).fast_color(false);
+    /// let encoder = Encoder::new(Preset::default()).quality(85).fast_color(false);
     /// ```
     #[cfg(feature = "fast-yuv")]
     pub fn fast_color(mut self, enable: bool) -> Self {
