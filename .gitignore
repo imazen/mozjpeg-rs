@@ -20,3 +20,6 @@ perf.data*
 perf_*.data
 *.profile.json
 *_profile.json
+
+# main-with-lockfile agent coordination
+.workongoing

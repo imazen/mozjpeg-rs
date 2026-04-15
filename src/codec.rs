@@ -41,12 +41,15 @@ static MOZJPEG_ENCODE_CAPS: EncodeCapabilities = EncodeCapabilities::new()
 
 /// Supported encode pixel formats.
 ///
-/// RGBA8 is supported — alpha is ignored during encoding. For BGRA8 input,
-/// callers should swizzle to RGBA with `garb::bytes::bgra_to_rgba_inplace`
-/// (or the buffered variant) before encoding.
+/// RGBA8 is supported — alpha is ignored during encoding. RGBX8 has the same
+/// 4-byte layout with undefined padding in byte 3; it routes through the same
+/// 4-byte-per-pixel path (mozjpeg discards byte 3 for JCS_EXT_RGBA / RGBX).
+/// For BGRA8 input, callers should swizzle to RGBA with
+/// `garb::bytes::bgra_to_rgba_inplace` (or the buffered variant) first.
 static ENCODE_DESCRIPTORS: &[PixelDescriptor] = &[
     PixelDescriptor::RGB8_SRGB,
     PixelDescriptor::RGBA8_SRGB,
+    PixelDescriptor::RGBX8_SRGB,
     PixelDescriptor::GRAY8_SRGB,
 ];
 
@@ -327,7 +330,10 @@ impl MozjpegEncoder {
         let stop = self.stop_ref();
         if descriptor == PixelDescriptor::GRAY8_SRGB {
             enc.encode_gray_with_stop(data, width, height, stop)
-        } else if descriptor == PixelDescriptor::RGBA8_SRGB {
+        } else if descriptor == PixelDescriptor::RGBA8_SRGB
+            || descriptor == PixelDescriptor::RGBX8_SRGB
+        {
+            // Both use 4-byte RGBA layout; byte 3 is ignored by the JPEG encoder.
             enc.encode_rgba_with_stop(data, width, height, stop)
         } else {
             // RGB8 or any other 3-byte format
@@ -439,7 +445,9 @@ impl zencodec::encode::Encoder for MozjpegEncoder {
 
         let jpeg_data = if acc.descriptor == PixelDescriptor::GRAY8_SRGB {
             enc.encode_gray_with_stop(&acc.data, acc.width, acc.total_rows, stop)?
-        } else if acc.descriptor == PixelDescriptor::RGBA8_SRGB {
+        } else if acc.descriptor == PixelDescriptor::RGBA8_SRGB
+            || acc.descriptor == PixelDescriptor::RGBX8_SRGB
+        {
             enc.encode_rgba_with_stop(&acc.data, acc.width, acc.total_rows, stop)?
         } else {
             enc.encode_rgb_with_stop(&acc.data, acc.width, acc.total_rows, stop)?
@@ -772,5 +780,128 @@ mod tests {
             descs.contains(&PixelDescriptor::RGBA8_SRGB),
             "RGBA8_SRGB must be in supported descriptors"
         );
+    }
+
+    #[test]
+    fn supported_descriptors_include_rgbx() {
+        let descs = MozjpegEncoderConfig::supported_descriptors();
+        assert!(
+            descs.contains(&PixelDescriptor::RGBX8_SRGB),
+            "RGBX8_SRGB must be in supported descriptors"
+        );
+    }
+
+    #[test]
+    fn rgbx8_encode() {
+        // RGBX8 pixel data: R=255, G=128, B=0, X=any (padding).
+        let mut rgbx = vec![0u8; 16 * 16 * 4];
+        for i in 0..16 * 16 {
+            rgbx[i * 4] = 255; // R
+            rgbx[i * 4 + 1] = 128; // G
+            rgbx[i * 4 + 2] = 0; // B
+            rgbx[i * 4 + 3] = 0x13; // padding — deliberately non-opaque
+        }
+        let config = MozjpegEncoderConfig::new();
+        let slice = PixelSlice::new(&rgbx, 16, 16, 16 * 4, PixelDescriptor::RGBX8_SRGB).unwrap();
+
+        let output = config.job().encoder().unwrap().encode(slice).unwrap();
+        assert!(!output.data().is_empty());
+        // JPEG SOI marker.
+        assert_eq!(&output.data()[..2], &[0xFF, 0xD8]);
+    }
+
+    #[test]
+    fn rgbx8_matches_rgba8_and_rgb8() {
+        // RGBX and RGBA should produce byte-identical output because mozjpeg
+        // ignores the 4th byte for both. RGB (3-byte) should match as well
+        // when the three colour bytes are identical.
+        let (r, g, b) = (200u8, 100, 50);
+        let w: u32 = 32;
+        let h: u32 = 32;
+        let n = (w * h) as usize;
+
+        let mut rgb = vec![0u8; n * 3];
+        let mut rgba = vec![0u8; n * 4];
+        let mut rgbx = vec![0u8; n * 4];
+        for i in 0..n {
+            rgb[i * 3] = r;
+            rgb[i * 3 + 1] = g;
+            rgb[i * 3 + 2] = b;
+            rgba[i * 4] = r;
+            rgba[i * 4 + 1] = g;
+            rgba[i * 4 + 2] = b;
+            rgba[i * 4 + 3] = 128;
+            rgbx[i * 4] = r;
+            rgbx[i * 4 + 1] = g;
+            rgbx[i * 4 + 2] = b;
+            rgbx[i * 4 + 3] = 0x55;
+        }
+
+        let config = MozjpegEncoderConfig::new().with_generic_effort(0);
+        let rgb_slice =
+            PixelSlice::new(&rgb, w, h, w as usize * 3, PixelDescriptor::RGB8_SRGB).unwrap();
+        let rgba_slice =
+            PixelSlice::new(&rgba, w, h, w as usize * 4, PixelDescriptor::RGBA8_SRGB).unwrap();
+        let rgbx_slice =
+            PixelSlice::new(&rgbx, w, h, w as usize * 4, PixelDescriptor::RGBX8_SRGB).unwrap();
+
+        let rgb_out = config
+            .clone()
+            .job()
+            .encoder()
+            .unwrap()
+            .encode(rgb_slice)
+            .unwrap();
+        let rgba_out = config
+            .clone()
+            .job()
+            .encoder()
+            .unwrap()
+            .encode(rgba_slice)
+            .unwrap();
+        let rgbx_out = config.job().encoder().unwrap().encode(rgbx_slice).unwrap();
+
+        assert_eq!(
+            rgbx_out.data(),
+            rgba_out.data(),
+            "RGBX must match RGBA (padding byte ignored)"
+        );
+        assert_eq!(
+            rgbx_out.data(),
+            rgb_out.data(),
+            "RGBX must match RGB when colour bytes are identical"
+        );
+    }
+
+    #[test]
+    fn rgbx8_push_rows() {
+        let mut rgbx = vec![0u8; 32 * 32 * 4];
+        for i in 0..32 * 32 {
+            rgbx[i * 4] = 192;
+            rgbx[i * 4 + 1] = 128;
+            rgbx[i * 4 + 2] = 64;
+            rgbx[i * 4 + 3] = 0x42; // padding
+        }
+        let config = MozjpegEncoderConfig::new().with_generic_effort(0);
+        let mut encoder = config.job().with_canvas_size(32, 32).encoder().unwrap();
+
+        for chunk_start in (0..32u32).step_by(16) {
+            let rows = 16u32.min(32 - chunk_start);
+            let start = chunk_start as usize * 32 * 4;
+            let end = start + rows as usize * 32 * 4;
+            let slice = PixelSlice::new(
+                &rgbx[start..end],
+                32,
+                rows,
+                32 * 4,
+                PixelDescriptor::RGBX8_SRGB,
+            )
+            .unwrap();
+            encoder.push_rows(slice).unwrap();
+        }
+
+        let output = encoder.finish().unwrap();
+        assert!(!output.data().is_empty());
+        assert_eq!(&output.data()[..2], &[0xFF, 0xD8]);
     }
 }
