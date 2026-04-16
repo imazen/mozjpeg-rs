@@ -11,6 +11,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 <!-- Breaking changes that will ship together in the next major (or minor for 0.x) release.
      Add items here as you discover them. Do NOT ship these piecemeal — batch them. -->
 
+### Added
+- **RGBX8 descriptor in zencodec dispatch** — `RGBX8_SRGB` added to `ENCODE_DESCRIPTORS` alongside `RGBA8_SRGB`, routing through `encode_rgba_with_stop` since mozjpeg reads 4 bytes per pixel and ignores byte 3 regardless of whether it's alpha or padding (ed47868)
+  - Handled in both the one-shot encode path and the `push_rows` / `finish` streaming path
+  - Tests confirm RGBX produces byte-identical output to RGBA and to RGB when colour bytes match
+
+### Changed
+- Routed all README badges through shields.io with `?style=flat-square` for consistent sizing (9f10ab2)
+
+### Fixed
+- `fast_color` doctest in `src/encode.rs` now passes `Preset::default()` to `Encoder::new()` to match the current API signature (9f10ab2)
+
 ## [0.9.1] - 2026-04-14
 
 ### Added
