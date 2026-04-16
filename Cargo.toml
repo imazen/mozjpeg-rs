@@ -19,9 +19,24 @@ exclude = [
     "comparison_outputs/",
     ".github/",
     "tests/images/*.png",
+    "tests/benchmark_tracking/",
     "perf*.data",
     "*.json",
     "examples/profile_*.rs",
+    # Internal docs and dev files — README.md and CHANGELOG.md are kept
+    "CLAUDE.md",
+    "ENTROPY_OPTIMIZATION_NOTES.md",
+    "SAFETY_REVIEW.md",
+    "SIMD_TRACKING.md",
+    "API_IMPROVEMENT_NOTES.md",
+    "OPTIMIZE_SCANS_PARITY.md",
+    "SIMD_SPEEDUP_NOTES.md",
+    "scans-lq.md",
+    "docs/",
+    ".cargo/config.toml",
+    "Cross.toml",
+    "codecov.yml",
+    "justfile",
 ]
 
 [workspace]
