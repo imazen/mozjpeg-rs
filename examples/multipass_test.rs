@@ -243,33 +243,33 @@ fn main() {
             if path.extension().is_some_and(|e| e == "png")
                 && let Some((rgb, w, h)) = load_png(&path)
             {
-                    let jpeg_no_mp = encode_c_mozjpeg(&rgb, w, h, 85, true, true, false);
-                    let jpeg_mp = encode_c_mozjpeg(&rgb, w, h, 85, true, true, true);
+                let jpeg_no_mp = encode_c_mozjpeg(&rgb, w, h, 85, true, true, false);
+                let jpeg_mp = encode_c_mozjpeg(&rgb, w, h, 85, true, true, true);
 
-                    let size_no_mp = jpeg_no_mp.len();
-                    let size_mp = jpeg_mp.len();
+                let size_no_mp = jpeg_no_mp.len();
+                let size_mp = jpeg_mp.len();
 
-                    // Decode and measure quality
-                    let (decoded_no_mp, _, _) = decode_jpeg(&jpeg_no_mp);
-                    let (decoded_mp, _, _) = decode_jpeg(&jpeg_mp);
+                // Decode and measure quality
+                let (decoded_no_mp, _, _) = decode_jpeg(&jpeg_no_mp);
+                let (decoded_mp, _, _) = decode_jpeg(&jpeg_mp);
 
-                    let q_no_mp = compute_butteraugli_score(&rgb, &decoded_no_mp, w, h);
-                    let q_mp = compute_butteraugli_score(&rgb, &decoded_mp, w, h);
+                let q_no_mp = compute_butteraugli_score(&rgb, &decoded_no_mp, w, h);
+                let q_mp = compute_butteraugli_score(&rgb, &decoded_mp, w, h);
 
-                    let size_diff_pct =
-                        (size_mp as f64 - size_no_mp as f64) / size_no_mp as f64 * 100.0;
-                    let q_diff = q_mp - q_no_mp;
-                    let name = path.file_name().unwrap().to_str().unwrap();
-                    println!(
-                        "| {} | {} | {} | {:+.2}% | {:.2} | {:.2} | {:+.3} |",
-                        name, size_no_mp, size_mp, size_diff_pct, q_no_mp, q_mp, q_diff
-                    );
+                let size_diff_pct =
+                    (size_mp as f64 - size_no_mp as f64) / size_no_mp as f64 * 100.0;
+                let q_diff = q_mp - q_no_mp;
+                let name = path.file_name().unwrap().to_str().unwrap();
+                println!(
+                    "| {} | {} | {} | {:+.2}% | {:.2} | {:.2} | {:+.3} |",
+                    name, size_no_mp, size_mp, size_diff_pct, q_no_mp, q_mp, q_diff
+                );
 
-                    total_no_mp += size_no_mp;
-                    total_mp += size_mp;
-                    total_q_no_mp += q_no_mp;
-                    total_q_mp += q_mp;
-                    count += 1;
+                total_no_mp += size_no_mp;
+                total_mp += size_mp;
+                total_q_no_mp += q_no_mp;
+                total_q_mp += q_mp;
+                count += 1;
             }
         }
 
