@@ -1,6 +1,6 @@
 [package]
 name = "mozjpeg-rs"
-version = "0.9.1"
+version = "0.9.2"
 edition = "2024"
 rust-version = "1.89"
 license = "BSD-3-Clause"
@@ -70,7 +70,7 @@ rgb = { version = "0.8", optional = true }
 # Cooperative cancellation trait (zero-cost when using Unstoppable)
 enough = { version = "0.4.2", features = ["std"] }
 # Optional: zencodec trait implementations for zen codec ecosystem
-zencodec = { version = "0.1.13", optional = true }
+zencodec = { version = "0.1.19", optional = true }
 zenpixels = { version = "0.2.1", optional = true }
 # Optional: SIMD-optimized pixel format conversions (BGRA↔RGB swizzle)
 garb = { version = "0.2.5", optional = true, default-features = false }
