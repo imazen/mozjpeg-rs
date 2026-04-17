@@ -2,6 +2,8 @@
 //!
 //! Run with: cargo run --example compare_outputs
 
+#![allow(unsafe_op_in_unsafe_fn)]
+
 use mozjpeg_rs::{Encoder, Subsampling};
 use std::fs;
 

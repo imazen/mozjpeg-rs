@@ -2,6 +2,8 @@
 //!
 //! Run with: cargo run --release --example multipass_test
 
+#![allow(unsafe_op_in_unsafe_fn)]
+
 use std::time::Instant;
 
 fn decode_jpeg(jpeg_data: &[u8]) -> (Vec<u8>, u32, u32) {
@@ -238,8 +240,9 @@ fn main() {
         for entry in std::fs::read_dir(&cid22_dir).unwrap() {
             let entry = entry.unwrap();
             let path = entry.path();
-            if path.extension().is_some_and(|e| e == "png") {
-                if let Some((rgb, w, h)) = load_png(&path) {
+            if path.extension().is_some_and(|e| e == "png")
+                && let Some((rgb, w, h)) = load_png(&path)
+            {
                     let jpeg_no_mp = encode_c_mozjpeg(&rgb, w, h, 85, true, true, false);
                     let jpeg_mp = encode_c_mozjpeg(&rgb, w, h, 85, true, true, true);
 
@@ -267,7 +270,6 @@ fn main() {
                     total_q_no_mp += q_no_mp;
                     total_q_mp += q_mp;
                     count += 1;
-                }
             }
         }
 

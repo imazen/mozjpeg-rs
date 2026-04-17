@@ -3,6 +3,8 @@
 //! These tests verify that our Rust port produces identical results to the
 //! original C implementation at each layer.
 
+#![allow(unsafe_op_in_unsafe_fn)]
+
 use mozjpeg_rs::consts::{DCTSIZE2, STD_CHROMINANCE_QUANT_TBL, STD_LUMINANCE_QUANT_TBL};
 use mozjpeg_rs::quant::quality_to_scale_factor;
 

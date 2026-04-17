@@ -3,6 +3,7 @@
 //! Traces through the de-interleaving and color conversion step by step.
 
 #![allow(unsafe_code)]
+#![allow(unsafe_op_in_unsafe_fn)]
 
 #[cfg(target_arch = "x86_64")]
 use std::arch::x86_64::*;

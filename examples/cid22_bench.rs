@@ -6,7 +6,6 @@
 use butteraugli::{ButteraugliParams, Img, RGB8};
 use dssim::Dssim;
 use mozjpeg_rs::{Encoder, Subsampling, TrellisConfig};
-use rgb::RGB8;
 use std::fs::File;
 use std::path::Path;
 

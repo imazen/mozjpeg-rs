@@ -1,5 +1,7 @@
 //! Debug data2_6 computation specifically
 
+#![allow(unsafe_op_in_unsafe_fn)]
+
 use std::arch::x86_64::*;
 
 const DCTSIZE: usize = 8;

@@ -5,6 +5,8 @@
 //! Requires corpus images. Run `./scripts/fetch-corpus.sh --full` first,
 //! or set CODEC_CORPUS_DIR to your codec-corpus location.
 
+#![allow(unsafe_op_in_unsafe_fn)]
+
 use mozjpeg_rs::corpus::{clic_validation_dir, png_files_in_dir};
 use mozjpeg_rs::{Encoder, Subsampling};
 use std::fs;
