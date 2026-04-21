@@ -185,6 +185,12 @@ pub trait Encode {
 pub struct Encoder {
     /// Quality level (1-100)
     quality: u8,
+    /// Optional independent chroma quality (1-100). `None` means reuse
+    /// [`Self::quality`] for the chrominance quant table (the
+    /// historical behaviour, bit-identical to pre-PR callers).
+    /// `Some(cq)` scales the chrominance base table by `cq`'s
+    /// quality-scale factor while luma is scaled by `quality`.
+    chroma_quality: Option<u8>,
     /// Enable progressive mode
     progressive: bool,
     /// Chroma subsampling mode
@@ -345,6 +351,7 @@ impl Encoder {
             progressive: false,
             subsampling: Subsampling::S420,
             quant_table_idx: QuantTableIdx::ImageMagick,
+            chroma_quality: None,
             custom_luma_qtable: None,
             custom_chroma_qtable: None,
             trellis: TrellisConfig::default(),
@@ -405,6 +412,7 @@ impl Encoder {
             progressive: true,
             subsampling: Subsampling::S420,
             quant_table_idx: QuantTableIdx::ImageMagick,
+            chroma_quality: None,
             custom_luma_qtable: None,
             custom_chroma_qtable: None,
             trellis: TrellisConfig::default(),
@@ -466,6 +474,7 @@ impl Encoder {
             progressive: true,
             subsampling: Subsampling::S420,
             quant_table_idx: QuantTableIdx::ImageMagick,
+            chroma_quality: None,
             custom_luma_qtable: None,
             custom_chroma_qtable: None,
             trellis: TrellisConfig::default(),
@@ -523,6 +532,7 @@ impl Encoder {
             progressive: false,
             subsampling: Subsampling::S420,
             quant_table_idx: QuantTableIdx::ImageMagick,
+            chroma_quality: None,
             custom_luma_qtable: None,
             custom_chroma_qtable: None,
             trellis: TrellisConfig::disabled(),
@@ -548,6 +558,39 @@ impl Encoder {
     pub fn quality(mut self, quality: u8) -> Self {
         self.quality = quality.clamp(1, 100);
         self
+    }
+
+    /// Set an independent chroma quality (1-100).
+    ///
+    /// `None` (the default) uses [`Self::quality`] for both luma and
+    /// chroma quant tables — bit-identical to pre-PR behaviour.
+    /// `Some(cq)` scales the chrominance base table with `cq`'s
+    /// quality-scale factor while luma continues to use
+    /// [`Self::quality`].
+    ///
+    /// Typical uses:
+    /// - Flat-chroma photos: `chroma_quality(Some(quality - 15))`
+    ///   drops ~10-15% bytes with imperceptible chroma degradation.
+    /// - Analyzer-driven (e.g. `evalchroma::adjust_sampling().chroma_quality`):
+    ///   pass the analyzer's recommendation directly.
+    ///
+    /// Grayscale encodes ignore this setting. Clamped to 1..=100.
+    ///
+    /// *Hidden from rustdoc while the surface is experimental and
+    /// downstream calibration is ongoing. The API is stable and
+    /// tested, but semantics may tighten before the setter is
+    /// promoted to public documentation.*
+    #[doc(hidden)]
+    pub fn chroma_quality(mut self, chroma_quality: Option<u8>) -> Self {
+        self.chroma_quality = chroma_quality.map(|q| q.clamp(1, 100));
+        self
+    }
+
+    /// Returns the configured independent chroma quality, or `None`
+    /// when the encoder should use [`Self::quality`] for both tables.
+    #[doc(hidden)]
+    pub fn get_chroma_quality(&self) -> Option<u8> {
+        self.chroma_quality
     }
 
     /// Enable or disable progressive mode.
@@ -2496,15 +2539,22 @@ impl Encoder {
 
         // Step 4: Create quantization tables
         let (luma_qtable, chroma_qtable) = {
-            let (default_luma, default_chroma) =
-                create_quant_tables(self.quality, self.quant_table_idx, self.force_baseline);
+            // Chroma quality falls back to luma quality when unset —
+            // bit-identical to pre-chroma_quality callers.
+            let chroma_q = self.chroma_quality.unwrap_or(self.quality);
+            let (default_luma, default_chroma) = crate::quant::create_quant_tables_split(
+                self.quality,
+                self.chroma_quality,
+                self.quant_table_idx,
+                self.force_baseline,
+            );
             let luma = if let Some(ref custom) = self.custom_luma_qtable {
                 crate::quant::create_quant_table(custom, self.quality, self.force_baseline)
             } else {
                 default_luma
             };
             let chroma = if let Some(ref custom) = self.custom_chroma_qtable {
-                crate::quant::create_quant_table(custom, self.quality, self.force_baseline)
+                crate::quant::create_quant_table(custom, chroma_q, self.force_baseline)
             } else {
                 default_chroma
             };

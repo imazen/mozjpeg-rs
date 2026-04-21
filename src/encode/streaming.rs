@@ -10,7 +10,7 @@ use crate::error::{Error, Result};
 use crate::huffman::DerivedTable;
 use crate::marker::MarkerWriter;
 use crate::progressive::generate_baseline_scan;
-use crate::quant::{create_quant_tables, quantize_block};
+use crate::quant::quantize_block;
 use crate::simd::SimdOps;
 use crate::types::{ComponentInfo, PixelDensity, QuantTable, Subsampling};
 
@@ -49,6 +49,9 @@ use super::{
 pub struct StreamingEncoder {
     /// Quality level (1-100)
     quality: u8,
+    /// Optional independent chroma quality (1-100). `None` = reuse
+    /// luma quality (historical behaviour).
+    chroma_quality: Option<u8>,
     /// Chroma subsampling mode
     subsampling: Subsampling,
     /// Quantization table variant
@@ -102,6 +105,7 @@ impl StreamingEncoder {
     pub fn baseline_fastest() -> Self {
         Self {
             quality: 75,
+            chroma_quality: None,
             subsampling: Subsampling::S420,
             quant_table_idx: QuantTableIdx::ImageMagick,
             custom_luma_qtable: None,
@@ -119,6 +123,20 @@ impl StreamingEncoder {
     /// Set quality level (1-100).
     pub fn quality(mut self, quality: u8) -> Self {
         self.quality = quality.clamp(1, 100);
+        self
+    }
+
+    /// Set an independent chroma quality (1-100).
+    ///
+    /// `None` (default) = reuse [`Self::quality`] for the chroma
+    /// quant table. `Some(cq)` = scale the chrominance base table
+    /// by `cq`'s quality-scale factor. See [`crate::Encoder::chroma_quality`]
+    /// for semantics.
+    ///
+    /// *Hidden from rustdoc while the surface is experimental.*
+    #[doc(hidden)]
+    pub fn chroma_quality(mut self, chroma_quality: Option<u8>) -> Self {
+        self.chroma_quality = chroma_quality.map(|q| q.clamp(1, 100));
         self
     }
 
@@ -340,9 +358,12 @@ impl<W: Write> EncodingStream<W> {
 
         let mcus_per_row = (width + mcu_width - 1) / mcu_width;
 
-        // Create quantization tables
-        let (luma_qtable, chroma_qtable) = create_quant_tables(
+        // Create quantization tables. Optional chroma_quality lets
+        // callers scale the chroma base table with a different quality
+        // than luma; `None` is bit-identical to pre-PR behaviour.
+        let (luma_qtable, chroma_qtable) = crate::quant::create_quant_tables_split(
             config.quality,
+            config.chroma_quality,
             config.quant_table_idx,
             config.force_baseline,
         );

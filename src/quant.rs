@@ -101,6 +101,26 @@ pub fn create_quant_tables(
     table_idx: QuantTableIdx,
     force_baseline: bool,
 ) -> (QuantTable, QuantTable) {
+    create_quant_tables_split(quality, None, table_idx, force_baseline)
+}
+
+/// Create luminance and chrominance quantization tables with an optional
+/// independent chroma quality.
+///
+/// `chroma_quality = None` → chroma table scaled with `quality` (the
+/// historical behaviour, bit-identical to [`create_quant_tables`]).
+///
+/// `chroma_quality = Some(cq)` → chroma table scaled with `cq` instead.
+/// Lets callers apply asymmetric compression: e.g. `quality=85, cq=70`
+/// preserves luma detail while compressing chroma more aggressively —
+/// useful on images evalchroma (or similar analyzers) has flagged as
+/// flat-chroma.
+pub fn create_quant_tables_split(
+    quality: u8,
+    chroma_quality: Option<u8>,
+    table_idx: QuantTableIdx,
+    force_baseline: bool,
+) -> (QuantTable, QuantTable) {
     let luma = create_quant_table(
         get_luminance_quant_table(table_idx),
         quality,
@@ -108,7 +128,7 @@ pub fn create_quant_tables(
     );
     let chroma = create_quant_table(
         get_chrominance_quant_table(table_idx),
-        quality,
+        chroma_quality.unwrap_or(quality),
         force_baseline,
     );
     (luma, chroma)
