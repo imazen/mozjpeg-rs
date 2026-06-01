@@ -11,6 +11,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 <!-- Breaking changes that will ship together in the next major (or minor for 0.x) release.
      Add items here as you discover them. Do NOT ship these piecemeal — batch them. -->
 
+### Changed
+- Removed `tests/*.rs` and `benches/**` from the published crate `include` list — downstream consumers don't need test/bench source; local `cargo test`/`cargo bench` are unaffected (TBD)
+
 ## [0.9.2] - 2026-04-17
 
 ### Added

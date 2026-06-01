@@ -13,8 +13,6 @@ keywords = ["jpeg", "encoder", "mozjpeg", "compression", "image"]
 categories = ["encoding", "multimedia::images"]
 include = [
     "/src/**",
-    "/tests/*.rs",
-    "/benches/**",
     "/examples/**",
     "/README.md",
     "/CHANGELOG.md",
