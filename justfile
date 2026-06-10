@@ -41,6 +41,15 @@ clippy:
 fmt-check:
     cargo fmt --all -- --check
 
-# Format
+# Format (+ regenerate the public-API surface snapshot)
 fmt:
     cargo fmt --all
+    cargo test --test public_api_doc
+
+# Regenerate the public-API surface snapshot only
+api-doc:
+    cargo test --test public_api_doc
+
+# Verify the committed snapshot is current (what CI runs)
+api-doc-check:
+    ZEN_API_DOC=check cargo test --test public_api_doc
