@@ -20,6 +20,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - Removed `tests/*.rs` and `benches/**` from the published crate `include` list — downstream consumers don't need test/bench source; local `cargo test`/`cargo bench` are unaffected (TBD)
 
+### Fixed
+- CI clippy break from `wide` 1.5.0 deprecating the `CmpEq` trait: dropped the
+  now-unused trait imports in `entropy.rs`/`fast_entropy.rs` (`simd_eq` is an
+  inherent method) and raised the `wide` minimum to 1.5.0 to match (TBD)
+
 ## [0.9.2] - 2026-04-17
 
 ### Added

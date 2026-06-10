@@ -16,7 +16,7 @@
 
 use std::io::Write;
 
-use wide::{CmpEq, i16x8};
+use wide::i16x8;
 
 use crate::bitstream::BitWriter;
 use crate::consts::{DCTSIZE2, JPEG_NATURAL_ORDER};

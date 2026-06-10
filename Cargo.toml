@@ -52,7 +52,8 @@ bytemuck = "1.25.0"
 # Optional PNG support for corpus loading
 png = { version = "0.18.1", optional = true }
 # Used by dct.rs and color.rs for portable SIMD
-wide = "1.2.0"
+# (1.5.0 minimum: simd_eq is an inherent method; the CmpEq trait is deprecated)
+wide = "1.5.0"
 # Safe SIMD with capability tokens
 archmage = { version = "0.9.17", features = ["macros"] }
 # Safe unaligned SIMD memory operations (no token parameter needed)
