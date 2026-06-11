@@ -1,0 +1,78 @@
+# mozjpeg-rs public API — additions from non-default features
+# features: fast-yuv,imgref,mozjpeg-sys-config,png,simd,simd-intrinsics,zencodec
+# (regenerated on every `cargo test` by zenutils-apidoc; ZEN_API_DOC=check verifies, =off skips).
+# Encodings: crate-name prefix stripped; auto traits collapse to a
+# count + exceptions; trait impls collapse to one roster line per
+# type (method signatures live at the trait definition); blanket
+# impls omitted; re-export duplicates annotated `[also: path]`.
+# DO NOT EDIT BY HAND — commit regenerated changes with the code.
+
+## summary
+#
+#   pub modules                                 2
+#   pub types (struct/enum/trait/alias)        12
+#   inherent methods                           13
+#   struct fields                               6
+#   enum variants                               8
+#   trait roster entries (type × trait)        17
+#   auto-trait-complete types                   4
+#   auto-trait exceptions                       2
+#
+# per-module pub lines:
+#   (root)                           17
+#   codec                             7
+#   compat                           17
+
+## items (35 lines)
+
+pub mod codec
+pub fn codec::MozjpegEncoderConfig::new() -> Self
+pub fn codec::MozjpegEncoderConfig::with_subsampling(self, Subsampling) -> Self
+pub mod compat
+pub compat::ConfigError::CustomQuantTablesNotSupported
+pub compat::ConfigError::UnsupportedQuantTable(crate::consts::QuantTableIdx)
+pub compat::ConfigError::UnsupportedSubsampling(Subsampling)
+pub unsafe fn compat::CMozjpeg::configure_cinfo(&self, &mut mozjpeg_sys::jpeg_compress_struct, u32, u32) -> core::result::Result<compat::ConfigWarnings, compat::ConfigError>
+pub fn compat::CMozjpeg::encode_grayscale(&self, &[u8], u32, u32) -> Result<alloc::vec::Vec<u8>>
+pub fn compat::CMozjpeg::encode_rgb(&self, &[u8], u32, u32) -> Result<alloc::vec::Vec<u8>>
+pub fn compat::CMozjpeg::encode_ycbcr_planar(&self, &[u8], &[u8], &[u8], u32, u32) -> Result<alloc::vec::Vec<u8>>
+pub compat::ConfigWarnings::has_custom_markers: bool
+pub compat::ConfigWarnings::has_exif: bool
+pub compat::ConfigWarnings::has_icc_profile: bool
+pub fn compat::ConfigWarnings::has_warnings(&self) -> bool
+pub enum ConfigError [also: compat]
+pub ConfigError::CustomQuantTablesNotSupported
+pub ConfigError::UnsupportedQuantTable(crate::consts::QuantTableIdx)
+pub ConfigError::UnsupportedSubsampling(Subsampling)
+pub struct CMozjpeg [also: compat]
+pub unsafe fn compat::CMozjpeg::configure_cinfo(&self, &mut mozjpeg_sys::jpeg_compress_struct, u32, u32) -> core::result::Result<compat::ConfigWarnings, compat::ConfigError>
+pub fn compat::CMozjpeg::encode_grayscale(&self, &[u8], u32, u32) -> Result<alloc::vec::Vec<u8>>
+pub fn compat::CMozjpeg::encode_rgb(&self, &[u8], u32, u32) -> Result<alloc::vec::Vec<u8>>
+pub fn compat::CMozjpeg::encode_ycbcr_planar(&self, &[u8], &[u8], &[u8], u32, u32) -> Result<alloc::vec::Vec<u8>>
+pub struct ConfigWarnings [also: compat]
+pub ConfigWarnings::has_custom_markers: bool
+pub ConfigWarnings::has_exif: bool
+pub ConfigWarnings::has_icc_profile: bool
+pub fn compat::ConfigWarnings::has_warnings(&self) -> bool
+pub fn Encoder::to_c_mozjpeg(&self) -> compat::CMozjpeg
+pub struct MozjpegEncodeJob [also: codec]
+pub struct MozjpegEncoder [also: codec]
+pub struct MozjpegEncoderConfig [also: codec]
+pub fn codec::MozjpegEncoderConfig::new() -> Self
+pub fn codec::MozjpegEncoderConfig::with_subsampling(self, Subsampling) -> Self
+
+## trait impls (7 types)
+
+Error: From<zencodec::capabilities::UnsupportedOperation>, From<zencodec::limits::LimitExceeded>
+codec::MozjpegEncodeJob: zencodec::traits::encoding::EncodeJob
+codec::MozjpegEncoder: zencodec::traits::encoder::Encoder
+codec::MozjpegEncoderConfig: Clone, Debug, Default, zencodec::traits::encoding::EncoderConfig
+compat::CMozjpeg: Clone, Debug
+compat::ConfigError: Clone, Debug, Display, Error
+compat::ConfigWarnings: Clone, Debug, Default
+
+## auto traits
+
+4 types implement all of: Freeze, RefUnwindSafe, Send, Sync, Unpin, UnwindSafe
+codec::MozjpegEncodeJob: !RefUnwindSafe !UnwindSafe
+codec::MozjpegEncoder: !RefUnwindSafe !UnwindSafe

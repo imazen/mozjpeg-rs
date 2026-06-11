@@ -1,5 +1,9 @@
 /target
 Cargo.lock
+# apidoc/ snapshot runner: its target dir is ignored, its lockfile is
+# committed (negation must follow the global Cargo.lock ignore above).
+apidoc/target/
+!apidoc/Cargo.lock
 
 # Downloaded corpus and comparison outputs
 /corpus/

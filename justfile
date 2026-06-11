@@ -41,15 +41,17 @@ clippy:
 fmt-check:
     cargo fmt --all -- --check
 
-# Format (+ regenerate the public-API surface snapshot)
+# Format (+ regenerate the public-API surface snapshot).
+# The snapshot runner lives in the workspace-excluded apidoc/ package, so it
+# is never built or run by plain `cargo test` or any CI job.
 fmt:
     cargo fmt --all
-    cargo test --test public_api_doc
+    cargo test --manifest-path apidoc/Cargo.toml
 
 # Regenerate the public-API surface snapshot only
 api-doc:
-    cargo test --test public_api_doc
+    cargo test --manifest-path apidoc/Cargo.toml
 
-# Verify the committed snapshot is current (what CI runs)
+# Verify the committed snapshot is current
 api-doc-check:
-    ZEN_API_DOC=check cargo test --test public_api_doc
+    ZEN_API_DOC=check cargo test --manifest-path apidoc/Cargo.toml
