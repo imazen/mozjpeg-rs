@@ -99,7 +99,7 @@ Reproduce with: `cargo run --release --example cid22_bench`
 use mozjpeg_rs::{Encoder, Subsampling};
 
 // Default: trellis quantization + Huffman optimization
-let jpeg = Encoder::new()
+let jpeg = Encoder::default()
     .quality(85)
     .encode_rgb(&pixels, width, height)?;
 
@@ -114,7 +114,7 @@ let jpeg = Encoder::fastest()
     .encode_rgb(&pixels, width, height)?;
 
 // Custom configuration
-let jpeg = Encoder::new()
+let jpeg = Encoder::default()
     .quality(75)
     .progressive(true)
     .subsampling(Subsampling::S420)
@@ -122,19 +122,19 @@ let jpeg = Encoder::new()
     .encode_rgb(&pixels, width, height)?;
 
 // Faster color conversion (trades exact C parity for ~40% faster RGB→YCbCr)
-let jpeg = Encoder::new()
+let jpeg = Encoder::default()
     .quality(85)
     .fast_color(true)  // Uses zenyuv, ±1 rounding difference
     .encode_rgb(&pixels, width, height)?;
 
 // Encode 4-channel input directly (alpha ignored, no intermediate buffer)
-let jpeg = Encoder::new()
+let jpeg = Encoder::default()
     .quality(85)
     .encode_rgba(&rgba_pixels, width, height)?;
 
 // For BGRA input, swizzle to RGBA first with the `garb` crate:
 //   garb::bytes::bgra_to_rgba_inplace(&mut bgra_buf).unwrap();
-//   let jpeg = Encoder::new().encode_rgba(&bgra_buf, w, h)?;
+//   let jpeg = Encoder::default().encode_rgba(&bgra_buf, w, h)?;
 ```
 
 ### Type-Safe Encoding with imgref (default feature)
@@ -149,7 +149,7 @@ use rgb::RGB8;
 // Type-safe: dimensions baked in, can't mix up width/height
 let pixels: Vec<RGB8> = vec![RGB8::new(128, 64, 32); 640 * 480];
 let img = ImgVec::new(pixels, 640, 480);
-let jpeg = Encoder::new().quality(85).encode_imgref(img.as_ref())?;
+let jpeg = Encoder::default().quality(85).encode_imgref(img.as_ref())?;
 
 // Subimages work automatically (stride handled internally)
 let crop = img.sub_image(100, 100, 200, 200);
@@ -209,7 +209,7 @@ All combinations of settings are supported and tested:
 | └─ Smoothing | ✅ | ✅ | Noise reduction filter (for dithered images) |
 
 **Presets:**
-- `Encoder::new()` - Trellis (AC+DC) + Huffman optimization + Deringing
+- `Encoder::default()` - Trellis (AC+DC) + Huffman optimization + Deringing
 - `Encoder::max_compression()` - Above + Progressive + optimize_scans
 - `Encoder::fastest()` - No optimizations (libjpeg-turbo compatible)
 
@@ -230,7 +230,7 @@ All combinations of settings are supported and tested:
 ```rust
 use mozjpeg_rs::{Encoder, QuantTableIdx};
 
-let jpeg = Encoder::new()
+let jpeg = Encoder::default()
     .qtable(QuantTableIdx::Robidoux)  // or .quant_tables()
     .encode_rgb(&pixels, width, height)?;
 ```
