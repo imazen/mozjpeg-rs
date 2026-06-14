@@ -94,6 +94,10 @@ pub struct ScanTrialEncoder<'a> {
 
     /// Stored scan data for each trial-encoded scan
     scan_buffers: Vec<Vec<u8>>,
+
+    /// Optional cooperative-cancellation token, checked between scans.
+    /// `None` (the default) never cancels. Set via [`with_stop`](Self::with_stop).
+    stop: Option<&'a dyn enough::Stop>,
 }
 
 impl<'a> ScanTrialEncoder<'a> {
@@ -136,7 +140,18 @@ impl<'a> ScanTrialEncoder<'a> {
             chroma_width,
             chroma_height,
             scan_buffers: Vec::new(),
+            stop: None,
         }
+    }
+
+    /// Attach a cooperative-cancellation token, checked between scan trials.
+    ///
+    /// Defaults to no cancellation. The scan search trial-encodes the whole
+    /// image once per candidate scan, so this lets a server abort a slow
+    /// `optimize_scans` search between candidates.
+    pub fn with_stop(mut self, stop: &'a dyn enough::Stop) -> Self {
+        self.stop = Some(stop);
+        self
     }
 
     /// Encode all candidate scans sequentially and return their sizes.
@@ -146,6 +161,11 @@ impl<'a> ScanTrialEncoder<'a> {
         let mut sizes = Vec::with_capacity(scans.len());
 
         for scan in scans {
+            // Cooperative cancellation between scan trials (each trial encodes
+            // the whole image). No-op when no token was attached.
+            if let Some(stop) = self.stop {
+                stop.check()?;
+            }
             let size = self.encode_scan(scan)?;
             sizes.push(size);
         }

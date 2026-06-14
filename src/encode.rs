@@ -1484,9 +1484,10 @@ impl Encoder {
         };
 
         let mut output = Vec::new();
-        // Check cancellation before and after encoding.
+        // Check cancellation before, during (per-MCU-row / per-scan-trial), and
+        // after encoding by threading the token through the encode pipeline.
         stop.check()?;
-        self.encode_rgb_to_writer(&rgb_data, width, height, &mut output)?;
+        self.encode_rgb_to_writer_impl(&rgb_data, width, height, &mut output, stop)?;
         stop.check()?;
 
         Ok(output)
@@ -1625,7 +1626,7 @@ impl Encoder {
 
         stop.check()?;
         let mut output = Vec::new();
-        self.encode_rgba_to_writer(rgba_data, width, height, &mut output)?;
+        self.encode_rgba_to_writer_impl(rgba_data, width, height, &mut output, stop)?;
         stop.check()?;
         Ok(output)
     }
@@ -2351,6 +2352,7 @@ impl Encoder {
             mcu_chroma_w,
             mcu_chroma_h,
             output,
+            &enough::Unstoppable,
         )
     }
 
@@ -2361,6 +2363,20 @@ impl Encoder {
         width: u32,
         height: u32,
         output: W,
+    ) -> Result<()> {
+        self.encode_rgb_to_writer_impl(rgb_data, width, height, output, &enough::Unstoppable)
+    }
+
+    /// Stop-aware body of [`encode_rgb_to_writer`](Self::encode_rgb_to_writer).
+    /// The public method passes `Unstoppable`; `encode_rgb_with_stop` passes
+    /// the caller's token, which is checked in the per-MCU and scan-trial loops.
+    fn encode_rgb_to_writer_impl<W: Write>(
+        &self,
+        rgb_data: &[u8],
+        width: u32,
+        height: u32,
+        output: W,
+        stop: &dyn enough::Stop,
     ) -> Result<()> {
         let width = width as usize;
         let height = height as usize;
@@ -2392,7 +2408,7 @@ impl Encoder {
             );
         }
 
-        self.encode_ycbcr_planes_to_writer(&y_plane, &cb_plane, &cr_plane, width, height, output)
+        self.encode_ycbcr_planes_to_writer(&y_plane, &cb_plane, &cr_plane, width, height, output, stop)
     }
 
     /// Encode RGBA image data to a writer.
@@ -2405,6 +2421,18 @@ impl Encoder {
         width: u32,
         height: u32,
         output: W,
+    ) -> Result<()> {
+        self.encode_rgba_to_writer_impl(rgba_data, width, height, output, &enough::Unstoppable)
+    }
+
+    /// Stop-aware body of [`encode_rgba_to_writer`](Self::encode_rgba_to_writer).
+    fn encode_rgba_to_writer_impl<W: Write>(
+        &self,
+        rgba_data: &[u8],
+        width: u32,
+        height: u32,
+        output: W,
+        stop: &dyn enough::Stop,
     ) -> Result<()> {
         let width = width as usize;
         let height = height as usize;
@@ -2426,10 +2454,11 @@ impl Encoder {
             num_pixels,
         );
 
-        self.encode_ycbcr_planes_to_writer(&y_plane, &cb_plane, &cr_plane, width, height, output)
+        self.encode_ycbcr_planes_to_writer(&y_plane, &cb_plane, &cr_plane, width, height, output, stop)
     }
 
     /// Internal helper: downsample, MCU-align, and encode Y/Cb/Cr planes.
+    #[allow(clippy::too_many_arguments)]
     fn encode_ycbcr_planes_to_writer<W: Write>(
         &self,
         y_plane: &[u8],
@@ -2438,6 +2467,7 @@ impl Encoder {
         width: usize,
         height: usize,
         output: W,
+        stop: &dyn enough::Stop,
     ) -> Result<()> {
         let (luma_h, luma_v) = self.subsampling.luma_factors();
         let (chroma_width, chroma_height) =
@@ -2512,6 +2542,7 @@ impl Encoder {
             mcu_chroma_w,
             mcu_chroma_h,
             output,
+            stop,
         )
     }
 
@@ -2534,6 +2565,7 @@ impl Encoder {
         mcu_chroma_w: usize,
         mcu_chroma_h: usize,
         output: W,
+        stop: &dyn enough::Stop,
     ) -> Result<()> {
         let (luma_h, luma_v) = self.subsampling.luma_factors();
 
@@ -2799,6 +2831,7 @@ impl Encoder {
                     &dc_chroma_derived,
                     &ac_luma_derived,
                     &ac_chroma_derived,
+                    stop,
                 )?
             } else {
                 // Use C mozjpeg's 9-scan JCP_MAX_COMPRESSION script.
@@ -3342,6 +3375,7 @@ impl Encoder {
                 &mut entropy,
                 luma_h,
                 luma_v,
+                stop,
             )?;
 
             // Flush bits and get output back
@@ -3375,6 +3409,7 @@ impl Encoder {
         entropy: &mut EntropyEncoder<W>,
         h_samp: u8,
         v_samp: u8,
+        stop: &dyn enough::Stop,
     ) -> Result<()> {
         let mcu_rows = y_height / (DCTSIZE * v_samp as usize);
         let mcu_cols = y_width / (DCTSIZE * h_samp as usize);
@@ -3389,6 +3424,10 @@ impl Encoder {
         let mut restart_num = 0u8;
 
         for mcu_row in 0..mcu_rows {
+            // Cooperative cancellation: check once per MCU row. Cheap relative
+            // to the per-MCU DCT/quantize/entropy work, and a no-op for
+            // `Unstoppable` so output is byte-identical.
+            stop.check()?;
             for mcu_col in 0..mcu_cols {
                 // Check if we need to emit a restart marker BEFORE this MCU
                 // (except for the first MCU)
@@ -3713,11 +3752,15 @@ impl Encoder {
         dc_chroma: &DerivedTable,
         ac_luma: &DerivedTable,
         ac_chroma: &DerivedTable,
+        stop: &dyn enough::Stop,
     ) -> Result<Vec<crate::types::ScanInfo>> {
         let config = ScanSearchConfig::default();
         let candidate_scans = generate_search_scans(num_components, &config);
 
-        // Use ScanTrialEncoder for sequential trial encoding with proper state tracking
+        // Use ScanTrialEncoder for sequential trial encoding with proper state
+        // tracking. The trial encoder checks `stop` between scans (the scan
+        // search trial-encodes the whole image once per candidate scan — the
+        // most expensive optimize-scans phase); a no-op for `Unstoppable`.
         let mut trial_encoder = ScanTrialEncoder::new(
             y_blocks,
             cb_blocks,
@@ -3734,7 +3777,8 @@ impl Encoder {
             actual_height,
             chroma_width,
             chroma_height,
-        );
+        )
+        .with_stop(stop);
 
         // Trial-encode all scans sequentially to get accurate sizes
         let scan_sizes = trial_encoder.encode_all_scans(&candidate_scans)?;
@@ -4720,6 +4764,76 @@ mod tests {
         let result = encoder.encode_rgb_with_stop(&pixels, 64, 64, &Unstoppable);
 
         assert!(matches!(result, Err(Error::DimensionLimitExceeded { .. })));
+    }
+
+    /// A `Stop` that returns `Ok` for its first `limit` checks, then
+    /// `Cancelled`. Used to prove the *loop* checks fire, not just the entry
+    /// checks.
+    struct CancelAfter {
+        seen: std::sync::atomic::AtomicUsize,
+        limit: usize,
+    }
+    impl enough::Stop for CancelAfter {
+        fn check(&self) -> core::result::Result<(), enough::StopReason> {
+            let n = self.seen.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            if n >= self.limit {
+                Err(enough::StopReason::Cancelled)
+            } else {
+                Ok(())
+            }
+        }
+    }
+
+    #[test]
+    fn test_encode_rgb_with_stop_unstoppable_is_byte_identical() {
+        use enough::Unstoppable;
+        // Non-uniform content so real coefficients/MCUs are exercised.
+        let (w, h) = (64u32, 48u32);
+        let mut pixels = vec![0u8; (w * h) as usize * 3];
+        for y in 0..h {
+            for x in 0..w {
+                let i = ((y * w + x) as usize) * 3;
+                pixels[i] = (x.wrapping_mul(4)) as u8;
+                pixels[i + 1] = (y.wrapping_mul(5)) as u8;
+                pixels[i + 2] = ((x + y).wrapping_mul(3)) as u8;
+            }
+        }
+        // Cover both the per-MCU baseline path and the optimize-scans path.
+        for preset in [Preset::BaselineFastest, Preset::ProgressiveSmallest] {
+            let enc = Encoder::new(preset).quality(85);
+            let plain = enc.encode_rgb(&pixels, w, h).unwrap();
+            let stopped = enc.encode_rgb_with_stop(&pixels, w, h, &Unstoppable).unwrap();
+            assert_eq!(
+                plain, stopped,
+                "Unstoppable must be byte-identical to encode_rgb ({preset:?})"
+            );
+        }
+    }
+
+    #[test]
+    fn test_encode_rgb_with_stop_cancels_inside_mcu_loop() {
+        // Same small check budget for both: a tiny single-MCU-row image
+        // finishes (only entry + 1 row checked), while a large multi-MCU-row
+        // image is cancelled — proving the cancellation comes from the
+        // per-MCU-row loop check, not just the fixed entry checks.
+        let enc = Encoder::new(Preset::BaselineFastest).quality(85);
+
+        let small = vec![128u8; 16 * 16 * 3];
+        let small_stop = CancelAfter { seen: 0.into(), limit: 10 };
+        assert!(
+            enc.encode_rgb_with_stop(&small, 16, 16, &small_stop).is_ok(),
+            "tiny image should finish within the check budget"
+        );
+
+        let large = vec![128u8; 256 * 256 * 3];
+        let loop_stop = CancelAfter { seen: 0.into(), limit: 10 };
+        assert!(
+            matches!(
+                enc.encode_rgb_with_stop(&large, 256, 256, &loop_stop),
+                Err(Error::Cancelled)
+            ),
+            "large image must be cancelled by the per-MCU-row loop check"
+        );
     }
 
     #[test]
