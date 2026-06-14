@@ -138,6 +138,25 @@ pub struct ResourceEstimate {
 /// Use this to restrict encoding operations by dimensions, memory usage,
 /// or metadata size. All limits default to 0 (disabled).
 ///
+/// # Server safety
+///
+/// **Every limit is OFF by default** (`Limits::default()` is all-zero), and an
+/// `Encoder` with no [`limits`](crate::Encoder::limits) call applies none. A
+/// service that feeds attacker-controlled dimensions or metadata into the
+/// encoder should set them explicitly — otherwise a request advertising huge
+/// dimensions can drive a large allocation. A typical web preset:
+///
+/// ```
+/// use mozjpeg_rs::{Encoder, Preset, Limits};
+///
+/// let limits = Limits::default()
+///     .max_width(20_000)
+///     .max_height(20_000)
+///     .max_pixel_count(120_000_000)        // 120 MP (admits 108 MP photos)
+///     .max_alloc_bytes(512 * 1024 * 1024); // 512 MB
+/// let encoder = Encoder::new(Preset::BaselineFastest).limits(limits);
+/// ```
+///
 /// # Example
 ///
 /// ```

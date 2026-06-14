@@ -1,4 +1,4 @@
-//! # mozjpeg-oxide
+//! # mozjpeg-rs
 //!
 //! Pure Rust JPEG encoder based on Mozilla's [mozjpeg](https://github.com/mozilla/mozjpeg).
 //!
