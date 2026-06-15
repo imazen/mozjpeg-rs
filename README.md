@@ -173,6 +173,40 @@ let crop_data = &full_image[crop_offset..];
 let jpeg = encoder.encode_rgb_strided(crop_data, crop_w, crop_h, full_stride)?;
 ```
 
+### Cancellation and timeout
+
+A long encode on untrusted input can be bounded two ways. The simplest is
+`*_cancellable`, which takes a `std::sync::atomic::AtomicBool` flag and an
+optional wall-clock timeout — no extra dependency:
+
+```rust
+use std::sync::atomic::AtomicBool;
+use std::time::Duration;
+
+let cancel = AtomicBool::new(false);
+// a watchdog/handler thread flips this on client disconnect:
+//   cancel.store(true, std::sync::atomic::Ordering::Relaxed);
+let jpeg = encoder.encode_rgb_cancellable(
+    &rgb, width, height,
+    Some(&cancel),                  // tripping the flag  -> Err(Error::Cancelled)
+    Some(Duration::from_secs(10)),  // exceeding the budget -> Err(Error::TimedOut)
+)?;
+```
+
+`*_cancellable` is provided for `encode_rgb_*` and `encode_gray_*`. For **RGBA**,
+or to share one cancellation token across several zen codecs, use the `*_with_stop`
+form — it takes any [`enough::Stop`](https://docs.rs/enough), and the simplest
+constructible token is `almost_enough::Stopper` (`cargo add almost-enough`),
+whose clones share one flag:
+
+```rust
+let stopper = almost_enough::Stopper::new();
+let watch = stopper.clone();   // hand a clone to a watchdog/deadline thread
+// std::thread::spawn(move || { /* on disconnect */ watch.cancel(); });
+let jpeg = encoder.encode_rgba_with_stop(&rgba, width, height, &stopper)?;
+// cancellation surfaces as Error::Cancelled (a deadline token yields Error::TimedOut).
+```
+
 ## Features
 
 - **Trellis quantization** - Rate-distortion optimized coefficient selection (AC + DC)
