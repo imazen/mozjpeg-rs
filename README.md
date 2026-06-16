@@ -98,9 +98,15 @@ Reproduce with: `cargo run --release --example cid22_bench`
 ```rust
 use mozjpeg_rs::{Encoder, Subsampling};
 
+// Signatures:
+//   fn quality(self, quality: u8) -> Encoder         // 1–100, higher = better quality (clamped)
+//   fn encode_rgb(&self, rgb: &[u8], width: u32, height: u32) -> Result<Vec<u8>>
+// `rgb` is tightly-packed 3-bytes-per-pixel, row-major; `rgb.len()` must equal width*height*3.
+
 // Default: trellis quantization + Huffman optimization
+let (width, height): (u32, u32) = (640, 480);
 let jpeg = Encoder::default()
-    .quality(85)
+    .quality(85) // u8, 1–100, higher is better
     .encode_rgb(&pixels, width, height)?;
 
 // Maximum compression: progressive + trellis + deringing
@@ -171,6 +177,97 @@ let jpeg = encoder.encode_rgb_strided(&buffer, width, height, stride)?;
 // Crop without copy - point into larger buffer
 let crop_data = &full_image[crop_offset..];
 let jpeg = encoder.encode_rgb_strided(crop_data, crop_w, crop_h, full_stride)?;
+```
+
+### Cancellation (servers)
+
+For server use, every encode entry point has a `*_with_stop` variant that takes a
+cooperative cancellation token as the **last** argument. The encoder checks it before,
+during (per scan / per MCU row), and after encoding, so a long encode can be aborted
+when a client disconnects or a deadline elapses:
+
+```rust
+fn encode_rgb_with_stop(
+    &self,
+    rgb: &[u8],
+    width: u32,
+    height: u32,
+    stop: &dyn enough::Stop,
+) -> Result<Vec<u8>>;
+```
+
+The `Stop` trait comes from the [`enough`](https://crates.io/crates/enough) crate and is
+re-exported as `mozjpeg_rs::Stop`. On cancellation the call returns
+`Err(Error::Cancelled)`; a deadline-based stop that has elapsed returns
+`Err(Error::TimedOut)`.
+
+**No-op (cancellation not needed).** `Unstoppable` is re-exported from this crate, so no
+extra dependency is required:
+
+```rust
+use mozjpeg_rs::{Encoder, Unstoppable};
+
+let jpeg = Encoder::default()
+    .quality(85)
+    .encode_rgb_with_stop(&pixels, width, height, &Unstoppable)?;
+```
+
+**Real cancel (timeout / client disconnect).** `enough` itself ships only the no-op
+`Unstoppable`; for a triggerable token add the companion crate
+[`almost-enough`](https://crates.io/crates/almost-enough), whose `Stopper` is a cheap
+`Arc`-backed, `Clone`/`Send`/`Sync` flag that implements `Stop`:
+
+```toml
+[dependencies]
+mozjpeg-rs = "0.9"
+almost-enough = "0.4.4"
+```
+
+```rust
+use mozjpeg_rs::{Encoder, Error};
+use almost_enough::Stopper;
+
+let stopper = Stopper::new();
+
+// Hand a clone to a watchdog thread / request-cancellation handler:
+let watch = stopper.clone();
+// e.g. on client disconnect or after a deadline:  watch.cancel();
+
+let result = Encoder::default()
+    .quality(85)
+    .encode_rgb_with_stop(&pixels, width, height, &stopper);
+
+match result {
+    Ok(jpeg) => { /* send it */ }
+    Err(Error::Cancelled) | Err(Error::TimedOut) => { /* client gone / deadline hit */ }
+    Err(e) => return Err(e),
+}
+```
+
+Grayscale and other inputs have matching `*_with_stop` entry points (e.g.
+`encode_gray_with_stop`). Any type implementing `enough::Stop` works, so you can wire in
+your own deadline/atomic-flag token instead of pulling in `almost-enough`.
+
+### Resource limits
+
+Untrusted dimensions can be bounded before any pixel buffer is allocated. `Limits` is
+**all-off by default** (every cap zero = unlimited); set only the caps you need and apply
+them with `.limits(...)`. Oversized inputs are rejected up front with an error rather than
+allocating:
+
+```rust
+use mozjpeg_rs::{Encoder, Limits};
+
+let limits = Limits::default()
+    .max_width(20_000)
+    .max_height(20_000)
+    .max_pixel_count(50_000_000)        // reject before allocating
+    .max_alloc_bytes(512 * 1024 * 1024);
+
+let jpeg = Encoder::default()
+    .quality(85)
+    .limits(limits)
+    .encode_rgb(&pixels, width, height)?;
 ```
 
 ## Features
