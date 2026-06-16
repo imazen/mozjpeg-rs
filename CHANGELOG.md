@@ -21,6 +21,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Removed `tests/*.rs` and `benches/**` from the published crate `include` list — downstream consumers don't need test/bench source; local `cargo test`/`cargo bench` are unaffected (TBD)
 
 ### Fixed
+- docs(readme): state `encode_rgb` `u32` width/height + `quality` 0–100 range, document
+  the `encode_rgb_with_stop` cancellation API — found by insulated-developer test. The
+  untyped `encode_rgb` example let an external developer guess `usize` for the dimensions
+  (compile error vs the actual `u32`); the README also surfaced no way to pass a
+  cancellation token despite the `enough` dependency. Added explicit parameter signatures,
+  a "Cancellation (servers)" subsection covering `Unstoppable` (no-op) and
+  `almost-enough`'s `Stopper` (real cancel → `Error::Cancelled`/`Error::TimedOut`), and a
+  "Resource limits" subsection documenting the existing `Limits` API (TBD)
 - CI clippy break from `wide` 1.5.0 deprecating the `CmpEq` trait: dropped the
   now-unused trait imports in `entropy.rs`/`fast_entropy.rs` (`simd_eq` is an
   inherent method) and raised the `wide` minimum to 1.5.0 to match (TBD)
