@@ -158,6 +158,31 @@ impl zencodec::encode::EncoderConfig for MozjpegEncoderConfig {
         Some(false)
     }
 
+    /// Uncalibrated structural estimate of encode peak memory / time.
+    ///
+    /// mozjpeg encodes JPEG serially (single-threaded from our perspective).
+    /// Peak ≈ input + libjpeg working buffers (a few MB plus a fraction of the
+    /// input); output is a small fraction of the input (JPEG ~0.1× typical).
+    /// These coefficients are structural placeholders, not measured.
+    fn estimate_encode_resources(
+        &self,
+        image: &zencodec::estimate::ImageCharacteristics,
+        compute: &zencodec::estimate::ComputeEnvironment,
+    ) -> zencodec::estimate::ResourceEstimate {
+        use zencodec::estimate::{ResourceEstimate, ThreadingInformation};
+        let input = image.input_bytes();
+        // mozjpeg: serial; peak ~ input + libjpeg working buffers
+        // (~a few MB + a fraction of input) + small output (~0.1x input typical).
+        let working = (input / 2).saturating_add(4u64 << 20);
+        let typ = input.saturating_add(working);
+        let out = (input as f64 * 0.12) as u64;
+        ResourceEstimate::new(typ, (image.pixels() as f64 / 80_000.0) as f32)
+            .with_peak_range(input.saturating_add(4u64 << 20), typ.saturating_mul(2))
+            .with_output_bytes(out)
+            .with_threading(ThreadingInformation::SERIAL)
+            .at_cores(compute.cores())
+    }
+
     fn job(self) -> Self::Job {
         MozjpegEncodeJob {
             config: self,
