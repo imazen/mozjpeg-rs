@@ -175,10 +175,8 @@ impl zencodec::encode::EncoderConfig for MozjpegEncoderConfig {
         // (~a few MB + a fraction of input) + small output (~0.1x input typical).
         let working = (input / 2).saturating_add(4u64 << 20);
         let typ = input.saturating_add(working);
-        let out = (input as f64 * 0.12) as u64;
-        ResourceEstimate::new(typ, (image.pixels() as f64 / 80_000.0) as f32)
-            .with_peak_range(input.saturating_add(4u64 << 20), typ.saturating_mul(2))
-            .with_output_bytes(out)
+        ResourceEstimate::new(typ, (image.pixels() as f64 / 80_000.0) as u64)
+            .with_peak_max(typ.saturating_mul(2))
             .with_threading(ThreadingInformation::SERIAL)
             .at_cores(compute.cores())
     }

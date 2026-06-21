@@ -7,14 +7,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### QUEUED BREAKING CHANGES
-<!-- Breaking changes that will ship together in the next major (or minor for 0.x) release.
-     Add items here as you discover them. Do NOT ship these piecemeal — batch them. -->
-- Drop the `[patch.crates-io] zencodec = { git, rev = "0f71295" }` and lower the
-  `zencodec` dependency requirement from `0.1.24` back to a published version when
-  zencodec 0.1.24 publishes. The patch pins zencodec to the unreleased
-  `zencodec::estimate` resource-estimation API.
-
 ### Added
 - vCPU-aware encode resource estimation via zencodec's unified `estimate` API:
   `MozjpegEncoderConfig::estimate_encode_resources(&ImageCharacteristics, &ComputeEnvironment)`
@@ -28,6 +20,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   as a reviewable diff next to the code change that caused them (TBD)
 
 ### Changed
+- deps: migrate to published zencodec 0.1.24 estimate API; drop the temporary
+  `[patch.crates-io] zencodec = { git, rev = "0f71295" }` pin (the `estimate` API
+  is now on crates.io). The `estimate_encode_resources` mapping in `src/codec.rs`
+  follows the refined `ResourceEstimate` API: `ResourceEstimate::new(peak, wall_ms as u64)`
+  (`wall_ms` is now `u64`, was `f32`), `.with_peak_max(max)` (replaces the dropped
+  `.with_peak_range(min, max)`), and the `.with_output_bytes(..)` call is gone.
 - Removed `tests/*.rs` and `benches/**` from the published crate `include` list — downstream consumers don't need test/bench source; local `cargo test`/`cargo bench` are unaffected (TBD)
 
 ### Fixed

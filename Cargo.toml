@@ -140,8 +140,3 @@ manual_div_ceil = "allow"
 manual_range_contains = "allow"
 expect_fun_call = "allow"
 absurd_extreme_comparisons = "allow"
-
-[patch.crates-io]
-# TEMPORARY: zencodec::estimate (unified resource-estimation API) is unpublished.
-# Pin to the git rev (0.1.24) until zencodec 0.1.24 publishes, then drop this patch.
-zencodec = { git = "https://github.com/imazen/zencodec.git", rev = "0f71295" }
