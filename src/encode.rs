@@ -2408,7 +2408,9 @@ impl Encoder {
             );
         }
 
-        self.encode_ycbcr_planes_to_writer(&y_plane, &cb_plane, &cr_plane, width, height, output, stop)
+        self.encode_ycbcr_planes_to_writer(
+            &y_plane, &cb_plane, &cr_plane, width, height, output, stop,
+        )
     }
 
     /// Encode RGBA image data to a writer.
@@ -2454,7 +2456,9 @@ impl Encoder {
             num_pixels,
         );
 
-        self.encode_ycbcr_planes_to_writer(&y_plane, &cb_plane, &cr_plane, width, height, output, stop)
+        self.encode_ycbcr_planes_to_writer(
+            &y_plane, &cb_plane, &cr_plane, width, height, output, stop,
+        )
     }
 
     /// Internal helper: downsample, MCU-align, and encode Y/Cb/Cr planes.
@@ -4802,7 +4806,9 @@ mod tests {
         for preset in [Preset::BaselineFastest, Preset::ProgressiveSmallest] {
             let enc = Encoder::new(preset).quality(85);
             let plain = enc.encode_rgb(&pixels, w, h).unwrap();
-            let stopped = enc.encode_rgb_with_stop(&pixels, w, h, &Unstoppable).unwrap();
+            let stopped = enc
+                .encode_rgb_with_stop(&pixels, w, h, &Unstoppable)
+                .unwrap();
             assert_eq!(
                 plain, stopped,
                 "Unstoppable must be byte-identical to encode_rgb ({preset:?})"
@@ -4819,14 +4825,21 @@ mod tests {
         let enc = Encoder::new(Preset::BaselineFastest).quality(85);
 
         let small = vec![128u8; 16 * 16 * 3];
-        let small_stop = CancelAfter { seen: 0.into(), limit: 10 };
+        let small_stop = CancelAfter {
+            seen: 0.into(),
+            limit: 10,
+        };
         assert!(
-            enc.encode_rgb_with_stop(&small, 16, 16, &small_stop).is_ok(),
+            enc.encode_rgb_with_stop(&small, 16, 16, &small_stop)
+                .is_ok(),
             "tiny image should finish within the check budget"
         );
 
         let large = vec![128u8; 256 * 256 * 3];
-        let loop_stop = CancelAfter { seen: 0.into(), limit: 10 };
+        let loop_stop = CancelAfter {
+            seen: 0.into(),
+            limit: 10,
+        };
         assert!(
             matches!(
                 enc.encode_rgb_with_stop(&large, 256, 256, &loop_stop),
