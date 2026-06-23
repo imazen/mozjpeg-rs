@@ -73,7 +73,7 @@ rgb = { version = "0.8", optional = true }
 # Cooperative cancellation trait (zero-cost when using Unstoppable)
 enough = { version = "0.4.2", features = ["std"] }
 # Optional: zencodec trait implementations for zen codec ecosystem
-zencodec = { version = "0.1.24", optional = true }
+zencodec = { version = "0.1.25", optional = true }
 zenpixels = { version = "0.2.10", optional = true }
 # Optional: SIMD-optimized pixel format conversions (BGRA↔RGB swizzle)
 garb = { version = "0.2.5", optional = true, default-features = false }

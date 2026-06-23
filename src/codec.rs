@@ -158,6 +158,36 @@ impl zencodec::encode::EncoderConfig for MozjpegEncoderConfig {
         Some(false)
     }
 
+    /// Honor a [`Fidelity`](zencodec::encode::Fidelity) target as natively as
+    /// mozjpeg allows. JPEG has no lossless codestream, and mozjpeg-rs exposes a
+    /// single quality dial (no native metric loop), so every target maps onto
+    /// that dial:
+    ///
+    /// - `Lossless` → best-effort top quality (100); `resolved_target_fidelity`
+    ///   reports the lossy quality, never `Lossless`.
+    /// - `CodecSpecificQuality(q)` → the mozjpeg quality dial directly.
+    /// - `ApproxSsim2(s)` → the score fed onto the quality dial (no native
+    ///   SSIM2), reported as `codec_quality`.
+    /// - `ApproxButteraugli(d)` → coarse-mapped onto the quality dial.
+    ///
+    /// `resolved_target_fidelity` is the trait default — `is_lossless()` is
+    /// always `Some(false)`, so it reports `generic_quality()` on the codec
+    /// scale, which is exactly what these arms set.
+    fn with_fidelity(self, fidelity: zencodec::encode::Fidelity) -> Self {
+        use zencodec::encode::{Fidelity, LossyTarget};
+        match fidelity {
+            Fidelity::Lossless => self.with_generic_quality(100.0),
+            Fidelity::Lossy(LossyTarget::CodecSpecificQuality(q)) => self.with_generic_quality(q),
+            Fidelity::Lossy(LossyTarget::ApproxSsim2(s)) => self.with_generic_quality(s),
+            Fidelity::Lossy(LossyTarget::ApproxButteraugli(d)) => {
+                let q = (100.0 - 12.0 * d).clamp(0.0, 100.0);
+                self.with_generic_quality(q)
+            }
+            // `Fidelity` / `LossyTarget` are `#[non_exhaustive]`.
+            _ => self.with_generic_quality(85.0),
+        }
+    }
+
     /// Uncalibrated structural estimate of encode peak memory / time.
     ///
     /// mozjpeg encodes JPEG serially (single-threaded from our perspective).
@@ -538,6 +568,39 @@ mod tests {
 
         let config = MozjpegEncoderConfig::new().with_generic_effort(-5);
         assert_eq!(config.effort, 0);
+    }
+
+    #[test]
+    fn fidelity_targets_roundtrip() {
+        use zencodec::encode::Fidelity;
+
+        // JPEG is never lossless: a lossless request resolves to top quality and
+        // is reported as lossy (not Lossless).
+        let ll = MozjpegEncoderConfig::new().with_fidelity(Fidelity::Lossless);
+        assert_eq!(
+            ll.resolved_target_fidelity(),
+            Some(Fidelity::codec_quality(100.0))
+        );
+        assert_eq!(ll.is_lossless(), Some(false));
+
+        // Codec quality dial round-trips as itself.
+        let cq = MozjpegEncoderConfig::new().with_fidelity(Fidelity::codec_quality(70.0));
+        assert_eq!(
+            cq.resolved_target_fidelity(),
+            Some(Fidelity::codec_quality(70.0))
+        );
+
+        // SSIM2 + butteraugli map onto the quality dial, reported as codec_quality.
+        let s2 = MozjpegEncoderConfig::new().with_fidelity(Fidelity::ssim2(90.0));
+        assert_eq!(
+            s2.resolved_target_fidelity(),
+            Some(Fidelity::codec_quality(90.0))
+        );
+        let bt = MozjpegEncoderConfig::new().with_fidelity(Fidelity::butteraugli(2.0));
+        assert_eq!(
+            bt.resolved_target_fidelity(),
+            Some(Fidelity::codec_quality(76.0))
+        );
     }
 
     #[test]
