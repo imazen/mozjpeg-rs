@@ -166,22 +166,99 @@ impl zencodec::encode::EncoderConfig for MozjpegEncoderConfig {
     /// - `Lossless` → best-effort top quality (100); `resolved_target_fidelity`
     ///   reports the lossy quality, never `Lossless`.
     /// - `CodecSpecificQuality(q)` → the mozjpeg quality dial directly.
-    /// - `ApproxSsim2(s)` → the score fed onto the quality dial (no native
-    ///   SSIM2), reported as `codec_quality`.
-    /// - `ApproxButteraugli(d)` → coarse-mapped onto the quality dial.
+    /// - `ApproxSsim2(s)` / `ApproxButteraugli(d)` → the JPEG quality that
+    ///   *measured* that score, via a piecewise-linear inverse table. Reported
+    ///   as `codec_quality`.
+    ///
+    /// The metric tables are fit from the **zenpeg** dense omni fleet sweep
+    /// (711k cells, median per q, 2026-06-23; butteraugli max-norm — the
+    /// `ApproxButteraugli` standard) and reused here: mozjpeg and zenjpeg share
+    /// the standard IJG quality→quantization scaling, so the same Q lands at a
+    /// near-identical operating point. mozjpeg's default ImageMagick base tables
+    /// + trellis shift the achieved score by a few Q (trellis improves quality
+    /// at a given Q, so the table picks a slightly conservative Q — the safe
+    /// direction). Still far closer than the old linear `100 − 12·d` guess
+    /// (`d = 1.21` → quality 86 linearly, but it measures quality 95). See
+    /// `zenmetrics/benchmarks/codec_metric_to_q_2026-06-23.md`.
     ///
     /// `resolved_target_fidelity` is the trait default — `is_lossless()` is
     /// always `Some(false)`, so it reports `generic_quality()` on the codec
     /// scale, which is exactly what these arms set.
     fn with_fidelity(self, fidelity: zencodec::encode::Fidelity) -> Self {
         use zencodec::encode::{Fidelity, LossyTarget};
+
+        // zenjpeg-derived metric → JPEG-quality inverse tables, sorted ascending
+        // by the metric (monotonized via isotonic regression on the forward
+        // q→median curve). `BUTTER_MAX_TO_Q`: butteraugli max-norm (lower better,
+        // quality descends); `SSIM2_TO_Q`: SSIM2 (higher better, quality ascends).
+        const BUTTER_MAX_TO_Q: &[(f32, f32)] = &[
+            (1.21, 95.0),
+            (1.73, 90.0),
+            (2.12, 85.0),
+            (2.67, 80.0),
+            (2.87, 75.0),
+            (3.31, 70.0),
+            (3.62, 65.0),
+            (4.12, 60.0),
+            (4.16, 55.0),
+            (4.33, 50.0),
+            (4.61, 45.0),
+            (4.88, 40.0),
+            (5.28, 35.0),
+            (6.25, 30.0),
+            (6.46, 25.0),
+            (7.27, 20.0),
+            (8.53, 15.0),
+            (9.16, 5.0),
+        ];
+        const SSIM2_TO_Q: &[(f32, f32)] = &[
+            (34.6, 10.0),
+            (35.9, 15.0),
+            (45.8, 20.0),
+            (52.3, 25.0),
+            (57.0, 30.0),
+            (61.1, 35.0),
+            (63.9, 40.0),
+            (65.4, 45.0),
+            (67.3, 50.0),
+            (69.4, 55.0),
+            (71.4, 60.0),
+            (72.9, 65.0),
+            (75.0, 70.0),
+            (78.0, 75.0),
+            (80.5, 80.0),
+            (83.2, 85.0),
+            (86.4, 90.0),
+            (89.9, 95.0),
+        ];
+
+        // Piecewise-linear lookup with clamping at the table bounds; `table` is
+        // sorted ascending by metric.
+        fn interp_quality(table: &[(f32, f32)], x: f32) -> f32 {
+            if x <= table[0].0 {
+                return table[0].1;
+            }
+            let last = table[table.len() - 1];
+            if x >= last.0 {
+                return last.1;
+            }
+            for w in table.windows(2) {
+                if x <= w[1].0 {
+                    let t = (x - w[0].0) / (w[1].0 - w[0].0);
+                    return w[0].1 + t * (w[1].1 - w[0].1);
+                }
+            }
+            last.1
+        }
+
         match fidelity {
             Fidelity::Lossless => self.with_generic_quality(100.0),
             Fidelity::Lossy(LossyTarget::CodecSpecificQuality(q)) => self.with_generic_quality(q),
-            Fidelity::Lossy(LossyTarget::ApproxSsim2(s)) => self.with_generic_quality(s),
+            Fidelity::Lossy(LossyTarget::ApproxSsim2(s)) => {
+                self.with_generic_quality(interp_quality(SSIM2_TO_Q, s).clamp(1.0, 100.0))
+            }
             Fidelity::Lossy(LossyTarget::ApproxButteraugli(d)) => {
-                let q = (100.0 - 12.0 * d).clamp(0.0, 100.0);
-                self.with_generic_quality(q)
+                self.with_generic_quality(interp_quality(BUTTER_MAX_TO_Q, d).clamp(1.0, 100.0))
             }
             // `Fidelity` / `LossyTarget` are `#[non_exhaustive]`.
             _ => self.with_generic_quality(85.0),
@@ -590,16 +667,40 @@ mod tests {
             Some(Fidelity::codec_quality(70.0))
         );
 
-        // SSIM2 + butteraugli map onto the quality dial, reported as codec_quality.
-        let s2 = MozjpegEncoderConfig::new().with_fidelity(Fidelity::ssim2(90.0));
+        // SSIM2 + butteraugli map through the measured (zenjpeg-derived) inverse
+        // tables, reported as codec_quality. Check the clamped extremes (robust,
+        // no interpolation) and the mapping direction.
+        use zencodec::encode::LossyTarget;
+        let q_of = |c: &MozjpegEncoderConfig| match c.resolved_target_fidelity() {
+            Some(Fidelity::Lossy(LossyTarget::CodecSpecificQuality(q))) => q,
+            other => panic!("expected codec_quality, got {other:?}"),
+        };
+        // Excellent target → top of the dial; poor target → bottom.
         assert_eq!(
-            s2.resolved_target_fidelity(),
-            Some(Fidelity::codec_quality(90.0))
+            q_of(&MozjpegEncoderConfig::new().with_fidelity(Fidelity::ssim2(95.0))),
+            95.0
         );
-        let bt = MozjpegEncoderConfig::new().with_fidelity(Fidelity::butteraugli(2.0));
         assert_eq!(
-            bt.resolved_target_fidelity(),
-            Some(Fidelity::codec_quality(76.0))
+            q_of(&MozjpegEncoderConfig::new().with_fidelity(Fidelity::ssim2(30.0))),
+            10.0
+        );
+        assert_eq!(
+            q_of(&MozjpegEncoderConfig::new().with_fidelity(Fidelity::butteraugli(1.0))),
+            95.0
+        );
+        assert_eq!(
+            q_of(&MozjpegEncoderConfig::new().with_fidelity(Fidelity::butteraugli(10.0))),
+            5.0
+        );
+        // Monotone interior: higher SSIM2 → higher quality; larger butteraugli
+        // distance (worse) → lower quality.
+        assert!(
+            q_of(&MozjpegEncoderConfig::new().with_fidelity(Fidelity::ssim2(60.0)))
+                < q_of(&MozjpegEncoderConfig::new().with_fidelity(Fidelity::ssim2(85.0)))
+        );
+        assert!(
+            q_of(&MozjpegEncoderConfig::new().with_fidelity(Fidelity::butteraugli(5.0)))
+                < q_of(&MozjpegEncoderConfig::new().with_fidelity(Fidelity::butteraugli(3.0)))
         );
     }
 
