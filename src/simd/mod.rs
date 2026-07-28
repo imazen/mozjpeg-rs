@@ -171,8 +171,30 @@ impl SimdOps {
             )
         };
 
+        // aarch64: the NEON DCT is DISABLED because it reproduces
+        // mozilla/mozjpeg#453 — the i16 forward-DCT overflow that inverts 8x8
+        // blocks. `src/simd/aarch64/neon.rs` carries the whole transform in
+        // s16 lanes, and the column-pass final butterfly reaches 8 * 5056 =
+        // 40448, past i16::MAX (32767). Wrapping flips the sign of the block.
+        //
+        // The CLAUDE.md note "Production paths use i32 intermediates — immune"
+        // is true on x86_64 and was NOT true here. It went unnoticed because
+        // `cargo test` did not COMPILE on aarch64 (x86-only examples lacked an
+        // arch gate), so tests/encode_tests.rs's two issue-444 regression tests
+        // had never run on ARM. Both fail with this path enabled and pass
+        // without it — verified by toggling exactly this branch.
+        //
+        // Cost: the autovectorized scalar DCT is ~1.67x slower than the NEON
+        // one (20.50 ns vs 12.28 ns per 8x8 block, benches/neon_tiers.rs).
+        // That is the right trade against silently inverted blocks on any
+        // image with a sharp vertical edge at Q<=57 with deringing on — text,
+        // UI captures, line art.
+        //
+        // To re-enable: widen the column-pass butterfly in
+        // aarch64/neon.rs to s32 (mirroring the x86 production path), then
+        // flip this back and confirm both issue444 tests still pass.
         #[cfg(target_arch = "aarch64")]
-        let (dct_fn, dct_variant, neon_token) = if let Some(token) = NeonToken::summon() {
+        let (dct_fn, dct_variant, neon_token) = if let Some(token) = None::<NeonToken> {
             (
                 scalar::forward_dct_8x8 as ForwardDctFn,
                 DctVariant::NeonArchmage,

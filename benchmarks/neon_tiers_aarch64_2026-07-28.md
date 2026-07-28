@@ -8,11 +8,44 @@ that the ARM half is real and dispatching, rather than a placeholder — a disti
 mattered elsewhere in this sweep, where an entire crate's `_neon` arms turned out to be scalar
 bodies wrapped in `#[arcane]`.
 
-## Result: both paths are real and dispatching
+## CRITICAL: the NEON DCT is CORRECT-BROKEN and has been disabled
 
-| kernel | dispatched | scalar reference | |
+`aarch64::neon::forward_dct_8x8_neon` reproduces **mozilla/mozjpeg#453** — the i16 forward-DCT
+overflow that inverts entire 8×8 blocks.
+
+CLAUDE.md documents the bug and states *"mozjpeg-rs status: Production paths use i32
+intermediates — immune."* That is true on x86_64 and was **not** true here: the NEON kernel
+carries the whole transform in s16 lanes (104 `s16` ops vs 72 `s32`), and the column-pass final
+butterfly reaches 8 × 5056 = 40448, past `i16::MAX` (32767). Wrapping flips the sign of the
+block.
+
+Causality proven by toggling exactly that dispatch branch:
+
+| NEON DCT | `test_issue444_deringing_overflow_pattern` | `test_issue444_across_quality_range` |
+|---|---|---|
+| enabled | **FAIL** — "Left half should be dark (got mean 206.0). Sign flip bug?" | **FAIL** — "Q2: left half (231.2) should be darker than right half (24.2)" |
+| disabled | pass | pass |
+
+**Why nobody saw it:** `cargo test` did not COMPILE on aarch64. Five x86-only AVX2 debug
+examples used `core::arch::x86_64` and `is_x86_feature_detected!` with no arch gate, so
+`--all-targets` failed to build and the two issue-444 regression tests — which exist precisely
+to catch this — had never run on ARM.
+
+**Action taken:** the aarch64 branch of `SimdOps::detect()` no longer selects the NEON DCT, and
+the five examples are gated so the suite builds. 329 tests now run on ARM and pass.
+
+**Cost:** the autovectorized scalar DCT is ~1.67× slower (20.50 vs 12.28 ns per 8×8 block).
+That is the right trade against silently inverted blocks on any image with a sharp vertical
+edge at Q≤57 with deringing on — text, UI captures, line art.
+
+**To re-enable:** widen the column-pass butterfly in `aarch64/neon.rs` to s32, mirroring the
+x86 production path, then flip the branch back and confirm both issue-444 tests still pass.
+
+## Both paths are real and dispatching
+
+| kernel | NEON | scalar reference | |
 |---|---|---|---|
-| forward_dct_8x8 | 12.28 ns | 20.50 ns | **1.67×** |
+| forward_dct_8x8 | 12.28 ns | 20.50 ns | 1.67× (NEON now disabled — see above) |
 
 `SimdOps::detect()` reports `dct_variant_name() == "neon_archmage"`, and
 `aarch64::neon::forward_dct_8x8_neon` is genuine intrinsic code (`vld1q_s16`, `vtrnq_s16`, a
