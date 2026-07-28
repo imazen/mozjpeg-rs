@@ -140,3 +140,7 @@ manual_div_ceil = "allow"
 manual_range_contains = "allow"
 expect_fun_call = "allow"
 absurd_extreme_comparisons = "allow"
+
+[[bench]]
+name = "neon_tiers"
+harness = false
