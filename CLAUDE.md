@@ -88,24 +88,39 @@ Cost of the disable: the autovectorized scalar DCT is ~1.67× slower (20.50 vs 1
 8×8 block, `benches/neon_tiers.rs`). To re-enable, widen the column-pass butterfly to s32
 mirroring the x86 production path, then confirm both issue-444 tests still pass.
 
-### OPEN: `parity_benchmark` fails on aarch64 — cause not yet established
+### `parity_benchmark` fails on aarch64 — 6 cells, ONE image, Rust SMALLER than C
 
-`tests/parity_benchmark.rs` asserts Rust's average encoded size is within 1.0% of C mozjpeg
-across 24 (config × quality) cells. It **fails on aarch64**, in a run that already included the
-NEON-DCT disable above.
+`tests/parity_benchmark.rs` gates per-image deviation at 3.0% against C mozjpeg. On aarch64 it
+reports 6 failures — **all on the same image (861443)**, and in every one Rust produces a
+SMALLER file:
 
-This is newly *visible*, not newly broken — it could not run before the build fix. What is not
-yet established is whether it is an ARM-specific encoder divergence or a threshold calibrated
-on x86.
+| config | Q | Rust | C | deviation |
+|---|---|---|---|---|
+| Progressive + Trellis | 55 | 5429 | 5637 | 3.69% |
+| Full Progressive | 55 | 5378 | 5587 | 3.74% |
+| Max Compression | 55 | 5049 | 5330 | 5.27% |
+| Max Compression | 65 | 6043 | 6451 | 6.32% |
+| Max Compression | 75 | 7538 | 8009 | 5.88% |
+| Max Compression | 85 | 11103 | 11601 | 4.29% |
 
-It is very unlikely to be caused by the DCT disable: that swaps a provably-wrong kernel for the
-correct one, which should move Rust's output *toward* C's, not away. But that has NOT been
-confirmed with a controlled A/B — the test encodes the whole Kodak corpus 24 ways through C
-FFI and takes >10 minutes per run, so a baseline with NEON re-enabled was not completed.
+**This is not corruption.** Rust compresses that image 3.7–6.3% better than C on the trellis
+and progressive paths, which is the direction this crate claims by design (README: "Trellis
+modes produce 0.05–0.80% smaller files than C mozjpeg"). One image is simply a large outlier
+against a symmetric 3% per-image gate.
 
-**Next step:** run `cargo test --release --test parity_benchmark -- --nocapture` on aarch64 and
-read the per-cell table; it names each failing config and quality with both averages. Then
-re-run with the NEON DCT branch restored to separate the two hypotheses.
+Newly visible, not newly broken: the suite could not build on ARM before today. Whether the
+same 6 cells fail on x86 is UNVERIFIED — the run takes 27 minutes (1622 s) and no x86 baseline
+was taken. Two readings remain open and are cheap to separate:
+
+1. The gate is symmetric but the crate's advantage is one-directional, so a
+   better-than-C outlier trips it on any target. Check by running the same test on x86.
+2. The correct (scalar) DCT now in use on ARM makes different trellis decisions than the
+   previously-selected buggy NEON DCT. Check by restoring the NEON branch — though note that
+   comparing against a kernel that inverts blocks is only diagnostic, never a reason to
+   re-enable it.
+
+Reading 1 is more likely: the deviations are confined to trellis/progressive configs, which is
+exactly where the crate intends to beat C.
 
 ## Current Status
 
