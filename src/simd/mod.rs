@@ -194,7 +194,7 @@ impl SimdOps {
         // aarch64/neon.rs to s32 (mirroring the x86 production path), then
         // flip this back and confirm both issue444 tests still pass.
         #[cfg(target_arch = "aarch64")]
-        let (dct_fn, dct_variant, neon_token) = if let Some(token) = None::<NeonToken> {
+        let (dct_fn, dct_variant, neon_token) = if let Some(token) = NeonToken::summon() {
             (
                 scalar::forward_dct_8x8 as ForwardDctFn,
                 DctVariant::NeonArchmage,

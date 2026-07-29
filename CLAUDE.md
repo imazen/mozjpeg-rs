@@ -72,21 +72,31 @@ Five x86-only AVX2 debug examples (`debug_color_avx2`, `debug_data26`, `debug_fu
 failed to COMPILE on aarch64. Every test binary was therefore unrun on ARM. They are now
 wrapped in `#[cfg(target_arch = "x86_64")] mod x86_only { … }` with a non-x86 `main`.
 
-### The NEON forward DCT is DISABLED — it reproduces mozjpeg#453
+### The NEON forward DCT reproduced mozjpeg#453 — FIXED 2026-07-28
 
-`aarch64::neon::forward_dct_8x8_neon` carries the whole transform in s16 lanes; the
-column-pass final butterfly reaches 8 × 5056 = 40448, past `i16::MAX`. Wrapping inverts entire
-8×8 blocks. The note below that production paths "use i32 intermediates — immune" is true on
-x86_64 and was **not** true here.
+`aarch64::neon::forward_dct_8x8_neon` carried the whole transform in s16 lanes and inverted
+entire 8×8 blocks. The note that production paths "use i32 intermediates — immune" was true on
+x86_64 and **not** true here.
 
-Proven by toggling only that branch in `SimdOps::detect()`: with NEON enabled,
-`test_issue444_deringing_overflow_pattern` and `test_issue444_across_quality_range` both fail
-("Left half should be dark (got mean 206.0). Sign flip bug?"); with it disabled, both pass.
-Those two regression tests exist precisely to catch this and had never run on ARM.
+**Where:** only the pass-2 (column) FINAL butterfly. Pass-2 inputs are pass-1 outputs, already
+~5056 with overshoot deringing; `tmp0 = v0+v7` reaches 10112 and `tmp10 = tmp0+tmp3` reaches
+20224 — both still inside i16 — but the final `tmp10 ± tmp11` spans ±40448, past `i16::MAX`
+(32767). Wrapping there flips the sign of the DC term and inverts the block. Pass 1 is safe:
+its inputs are level-shifted samples ≤158, so `tmp10+tmp11 ≤ 1264` and the `<<2` reaches 5056.
 
-Cost of the disable: the autovectorized scalar DCT is ~1.67× slower (20.50 vs 12.28 ns per
-8×8 block, `benches/neon_tiers.rs`). To re-enable, widen the column-pass butterfly to s32
-mirroring the x86 production path, then confirm both issue-444 tests still pass.
+**Fix:** widen ONLY that add/sub to i32 (`vaddl_s16`/`vsubl_s16`) and narrow with a rounding
+shift (`vrshrn_n_s32`). Exactly equivalent to the i16 form for every value that did not
+overflow, and correct for those that did.
+
+**Cost:** 13.15 ns vs 12.28 ns per 8×8 block — about 7%. The kernel is still **1.61×** faster
+than the autovectorized scalar DCT (21.23 ns), so correctness came almost free.
+
+**Verified:** `test_issue444_deringing_overflow_pattern` and `test_issue444_across_quality_range`
+fail with the widening reverted and pass with it in place (NEON enabled in both runs), plus
+encode_tests 42/42 and lib 287/287.
+
+Those two regression tests exist precisely to catch this and had never run on ARM, because the
+suite did not compile there — see above.
 
 ### `parity_benchmark` fails on aarch64 — 6 cells, ONE image, Rust SMALLER than C
 

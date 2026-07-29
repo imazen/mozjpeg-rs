@@ -241,11 +241,36 @@ fn dct_pass(
     let tmp12 = vsubq_s16(tmp1, tmp2);
 
     if pass1 {
+        // Pass 1 stays in i16: inputs are level-shifted samples (<=158 with
+        // overshoot deringing), so tmp10+tmp11 <= 8*158 = 1264 and the <<2
+        // reaches 5056 — well inside i16.
         *v0 = vshlq_n_s16::<PASS1_BITS>(vaddq_s16(tmp10, tmp11));
         *v4 = vshlq_n_s16::<PASS1_BITS>(vsubq_s16(tmp10, tmp11));
     } else {
-        *v0 = vrshrq_n_s16::<PASS1_BITS>(vaddq_s16(tmp10, tmp11));
-        *v4 = vrshrq_n_s16::<PASS1_BITS>(vsubq_s16(tmp10, tmp11));
+        // Pass 2 MUST widen here — this is mozilla/mozjpeg#453.
+        //
+        // Pass-2 inputs are pass-1 outputs, already up to ~5056. tmp0 = v0+v7
+        // reaches 10112 and tmp10 = tmp0+tmp3 reaches 20224, both still inside
+        // i16 — but the FINAL butterfly tmp10 +/- tmp11 spans +/-40448, past
+        // i16::MAX (32767). Wrapping there flips the sign of the DC term and
+        // inverts the whole 8x8 block.
+        //
+        // Widening only this one add/sub to i32 and narrowing with a rounding
+        // shift (vrshrn_n_s32) is exactly equivalent to the i16 form for every
+        // value that did NOT overflow, and correct for those that did.
+        // Regression-tested by tests/encode_tests.rs issue444 cases.
+        let sum_l = vaddl_s16(vget_low_s16(tmp10), vget_low_s16(tmp11));
+        let sum_h = vaddl_s16(vget_high_s16(tmp10), vget_high_s16(tmp11));
+        let dif_l = vsubl_s16(vget_low_s16(tmp10), vget_low_s16(tmp11));
+        let dif_h = vsubl_s16(vget_high_s16(tmp10), vget_high_s16(tmp11));
+        *v0 = vcombine_s16(
+            vrshrn_n_s32::<PASS1_BITS>(sum_l),
+            vrshrn_n_s32::<PASS1_BITS>(sum_h),
+        );
+        *v4 = vcombine_s16(
+            vrshrn_n_s32::<PASS1_BITS>(dif_l),
+            vrshrn_n_s32::<PASS1_BITS>(dif_h),
+        );
     }
 
     let tmp12_add_tmp13 = vaddq_s16(tmp12, tmp13);

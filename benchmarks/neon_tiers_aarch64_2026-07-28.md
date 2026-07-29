@@ -8,38 +8,39 @@ that the ARM half is real and dispatching, rather than a placeholder — a disti
 mattered elsewhere in this sweep, where an entire crate's `_neon` arms turned out to be scalar
 bodies wrapped in `#[arcane]`.
 
-## CRITICAL: the NEON DCT is CORRECT-BROKEN and has been disabled
+## The NEON DCT reproduced mozjpeg#453 — found, fixed, kept
 
-`aarch64::neon::forward_dct_8x8_neon` reproduces **mozilla/mozjpeg#453** — the i16 forward-DCT
-overflow that inverts entire 8×8 blocks.
+`aarch64::neon::forward_dct_8x8_neon` inverted entire 8×8 blocks. CLAUDE.md documents the bug
+and says *"Production paths use i32 intermediates — immune"* — true on x86_64, not here: the
+NEON kernel carried the whole transform in s16 lanes.
 
-CLAUDE.md documents the bug and states *"mozjpeg-rs status: Production paths use i32
-intermediates — immune."* That is true on x86_64 and was **not** true here: the NEON kernel
-carries the whole transform in s16 lanes (104 `s16` ops vs 72 `s32`), and the column-pass final
-butterfly reaches 8 × 5056 = 40448, past `i16::MAX` (32767). Wrapping flips the sign of the
-block.
+**Localised to the pass-2 (column) final butterfly.** Pass-2 inputs are pass-1 outputs, already
+~5056 with overshoot deringing, so `tmp10` reaches 20224 (still fine in i16) but the final
+`tmp10 ± tmp11` spans ±40448, past `i16::MAX`. Pass 1 is safe — its inputs are level-shifted
+samples ≤158.
 
-Causality proven by toggling exactly that dispatch branch:
+**Fix:** widen only that add/sub to i32 and narrow with `vrshrn_n_s32`.
 
-| NEON DCT | `test_issue444_deringing_overflow_pattern` | `test_issue444_across_quality_range` |
+| | ns per 8×8 block | correct |
 |---|---|---|
-| enabled | **FAIL** — "Left half should be dark (got mean 206.0). Sign flip bug?" | **FAIL** — "Q2: left half (231.2) should be darker than right half (24.2)" |
-| disabled | pass | pass |
+| scalar (autovectorized) | 21.23 | yes |
+| NEON, original | 12.28 | **NO — inverts blocks** |
+| NEON, widened pass-2 | **13.15** | **yes** |
+
+Correctness cost ~7%; the kernel is still **1.61×** over scalar. The first response was to
+disable it outright — the right reflex, since silently inverted blocks beat any speedup — but
+the actual fix was one butterfly, so the disable was reverted.
 
 **Why nobody saw it:** `cargo test` did not COMPILE on aarch64. Five x86-only AVX2 debug
 examples used `core::arch::x86_64` and `is_x86_feature_detected!` with no arch gate, so
 `--all-targets` failed to build and the two issue-444 regression tests — which exist precisely
-to catch this — had never run on ARM.
+to catch this — had never run on ARM. Same shape as the ungated AVX2 externs that blocked
+zenav1-svt's C-parity gates in this same sweep.
 
-**Action taken:** the aarch64 branch of `SimdOps::detect()` no longer selects the NEON DCT, and
-the five examples are gated so the suite builds. 329 tests now run on ARM and pass.
+Liveness-checked: reverting the widening (NEON still enabled) fails both issue-444 tests;
+restoring it passes them, plus encode_tests 42/42 and lib 287/287.
 
-**Cost:** the autovectorized scalar DCT is ~1.67× slower (20.50 vs 12.28 ns per 8×8 block).
-That is the right trade against silently inverted blocks on any image with a sharp vertical
-edge at Q≤57 with deringing on — text, UI captures, line art.
-
-**To re-enable:** widen the column-pass butterfly in `aarch64/neon.rs` to s32, mirroring the
-x86 production path, then flip the branch back and confirm both issue-444 tests still pass.
+## Both paths are real and dispatching
 
 ## Both paths are real and dispatching
 
