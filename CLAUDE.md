@@ -62,6 +62,51 @@ Rust port of Mozilla's mozjpeg JPEG encoder, following the jpegli-rs methodology
 **API**: Idiomatic Rust (not C-compatible)
 **Validation**: FFI dual-execution against C mozjpeg
 
+## aarch64 status (2026-07-28)
+
+### The test suite did not build on ARM until 2026-07-28
+
+Five x86-only AVX2 debug examples (`debug_color_avx2`, `debug_data26`, `debug_full_dct`,
+`trace_transpose`, `synth_dct_overflow`) used `core::arch::x86_64` and
+`is_x86_feature_detected!` with no arch gate, so `cargo test` / `cargo build --all-targets`
+failed to COMPILE on aarch64. Every test binary was therefore unrun on ARM. They are now
+wrapped in `#[cfg(target_arch = "x86_64")] mod x86_only { … }` with a non-x86 `main`.
+
+### The NEON forward DCT is DISABLED — it reproduces mozjpeg#453
+
+`aarch64::neon::forward_dct_8x8_neon` carries the whole transform in s16 lanes; the
+column-pass final butterfly reaches 8 × 5056 = 40448, past `i16::MAX`. Wrapping inverts entire
+8×8 blocks. The note below that production paths "use i32 intermediates — immune" is true on
+x86_64 and was **not** true here.
+
+Proven by toggling only that branch in `SimdOps::detect()`: with NEON enabled,
+`test_issue444_deringing_overflow_pattern` and `test_issue444_across_quality_range` both fail
+("Left half should be dark (got mean 206.0). Sign flip bug?"); with it disabled, both pass.
+Those two regression tests exist precisely to catch this and had never run on ARM.
+
+Cost of the disable: the autovectorized scalar DCT is ~1.67× slower (20.50 vs 12.28 ns per
+8×8 block, `benches/neon_tiers.rs`). To re-enable, widen the column-pass butterfly to s32
+mirroring the x86 production path, then confirm both issue-444 tests still pass.
+
+### OPEN: `parity_benchmark` fails on aarch64 — cause not yet established
+
+`tests/parity_benchmark.rs` asserts Rust's average encoded size is within 1.0% of C mozjpeg
+across 24 (config × quality) cells. It **fails on aarch64**, in a run that already included the
+NEON-DCT disable above.
+
+This is newly *visible*, not newly broken — it could not run before the build fix. What is not
+yet established is whether it is an ARM-specific encoder divergence or a threshold calibrated
+on x86.
+
+It is very unlikely to be caused by the DCT disable: that swaps a provably-wrong kernel for the
+correct one, which should move Rust's output *toward* C's, not away. But that has NOT been
+confirmed with a controlled A/B — the test encodes the whole Kodak corpus 24 ways through C
+FFI and takes >10 minutes per run, so a baseline with NEON re-enabled was not completed.
+
+**Next step:** run `cargo test --release --test parity_benchmark -- --nocapture` on aarch64 and
+read the per-cell table; it names each failing config and quality with both averages. Then
+re-run with the NEON DCT branch restored to separate the two hypotheses.
+
 ## Current Status
 
 **Tests passing**: 164 unit + 8 codec comparison + 5 FFI validation
