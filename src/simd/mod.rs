@@ -171,28 +171,36 @@ impl SimdOps {
             )
         };
 
-        // aarch64: the NEON DCT is DISABLED because it reproduces
-        // mozilla/mozjpeg#453 — the i16 forward-DCT overflow that inverts 8x8
-        // blocks. `src/simd/aarch64/neon.rs` carries the whole transform in
-        // s16 lanes, and the column-pass final butterfly reaches 8 * 5056 =
-        // 40448, past i16::MAX (32767). Wrapping flips the sign of the block.
+        // aarch64: the NEON DCT is ENABLED and is the production path.
         //
-        // The CLAUDE.md note "Production paths use i32 intermediates — immune"
-        // is true on x86_64 and was NOT true here. It went unnoticed because
-        // `cargo test` did not COMPILE on aarch64 (x86-only examples lacked an
-        // arch gate), so tests/encode_tests.rs's two issue-444 regression tests
-        // had never run on ARM. Both fail with this path enabled and pass
-        // without it — verified by toggling exactly this branch.
+        // Note the shape below — `dct_fn` is set to the scalar function on
+        // BOTH arms. That is not a fallback to scalar: it mirrors the x86
+        // Avx2Archmage case above. The function POINTER is only used by the
+        // Autoversion variant; actual dispatch goes through `dct_variant` in
+        // `do_forward_dct`, which calls `aarch64::neon::forward_dct_8x8_neon`
+        // with the cached token. Reading `dct_fn` alone will tell you the
+        // wrong thing about which kernel runs.
         //
-        // Cost: the autovectorized scalar DCT is ~1.67x slower than the NEON
-        // one (20.50 ns vs 12.28 ns per 8x8 block, benches/neon_tiers.rs).
-        // That is the right trade against silently inverted blocks on any
-        // image with a sharp vertical edge at Q<=57 with deringing on — text,
-        // UI captures, line art.
+        // History: this branch WAS disabled because the kernel reproduced
+        // mozilla/mozjpeg#453 — it carried the whole transform in s16 lanes
+        // and the pass-2 (column) FINAL butterfly spans +/-40448, past
+        // i16::MAX (32767), so wrapping flipped the sign of the DC term and
+        // inverted entire 8x8 blocks. Disabling it cost ~1.6x on every ARM
+        // encode. Fixed in 0fbfb96 by widening ONLY that add/sub to i32
+        // (`vaddl_s16`/`vsubl_s16`, narrowed back with `vrshrn_n_s32`) —
+        // exactly equivalent for every value that did not overflow, correct
+        // for those that did. The bug was one butterfly, not the kernel.
         //
-        // To re-enable: widen the column-pass butterfly in
-        // aarch64/neon.rs to s32 (mirroring the x86 production path), then
-        // flip this back and confirm both issue444 tests still pass.
+        // Measured on this path (M4 Pro, benches/neon_tiers.rs, 2026-07-31):
+        // 13.85 ns NEON vs 22.52 ns autovectorized scalar per 8x8 block =
+        // 1.63x. Widening cost about 7% against the incorrect s16 version.
+        //
+        // Gate: `test_issue444_deringing_overflow_pattern` and
+        // `test_issue444_across_quality_range` (tests/encode_tests.rs) fail
+        // with the widening reverted and pass with it, NEON enabled in both
+        // runs. Those two had never run on ARM before 2026-07-28 because the
+        // suite did not COMPILE there (x86-only examples lacked an arch gate),
+        // which is why the overflow went unnoticed in the first place.
         #[cfg(target_arch = "aarch64")]
         let (dct_fn, dct_variant, neon_token) = if let Some(token) = NeonToken::summon() {
             (
