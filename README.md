@@ -460,4 +460,4 @@ Before using in production:
 - Run your own validation against expected outputs
 - Consider the encoder's test suite coverage for your specific requirements
 
-The FFI comparison tests in `tests/ffi_comparison.rs` and `tests/ffi_validation.rs` provide confidence in correctness by comparing outputs against C mozjpeg.
+The FFI comparison tests in `crates/sys-local/tests/ffi_comparison.rs` and `tests/ffi_validation.rs` provide confidence in correctness by comparing outputs against C mozjpeg.

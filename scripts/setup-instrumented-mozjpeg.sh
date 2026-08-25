@@ -5,7 +5,7 @@
 # special test export functions for granular FFI comparison testing.
 #
 # After running this script, you can run:
-#   cargo test --test ffi_comparison --features _instrument-c-mozjpeg-internals
+#   cargo test -p sys-local --test ffi_comparison
 
 set -e
 
@@ -53,7 +53,7 @@ echo ""
 echo "=== Setup Complete ==="
 echo ""
 echo "You can now run the FFI comparison tests:"
-echo "  cargo test --test ffi_comparison --features _instrument-c-mozjpeg-internals"
+echo "  cargo test -p sys-local --test ffi_comparison"
 echo ""
 echo "Or run the sys-local crate tests:"
 echo "  cargo test -p sys-local"

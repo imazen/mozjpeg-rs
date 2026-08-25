@@ -38,9 +38,12 @@ simd-intrinsics = []
 simd = ["simd-intrinsics"]
 # Enable PNG loading in corpus module (enabled by default in dev)
 png = ["dep:png"]
-# Enables granular FFI tests against instrumented C mozjpeg internals (DCT, quant, etc.)
-# Requires imazen/mozjpeg fork with test exports at ../mozjpeg - use scripts/setup-instrumented-mozjpeg.sh
-# NOTE: This feature only works with local development (sys-local not on crates.io)
+# Vestigial no-op, kept so existing command lines and CI scripts keep working.
+# The granular FFI tests against instrumented C mozjpeg internals (DCT, quant, etc.)
+# now live in the `sys-local` crate and are unconditional there:
+#   cargo test -p sys-local
+# They require the imazen/mozjpeg fork with test exports at ../mozjpeg —
+# use scripts/setup-instrumented-mozjpeg.sh to set it up.
 _instrument-c-mozjpeg-internals = []
 # Enables mozjpeg-sys configuration: configure a C mozjpeg encoder from our Encoder
 mozjpeg-sys-config = ["dep:mozjpeg-sys", "dep:libc"]
@@ -118,14 +121,10 @@ harness = false
 name = "entropy"
 harness = false
 
-# Examples that require instrumented C mozjpeg (sys-local crate)
-[[example]]
-name = "trace_pipeline"
-required-features = ["_instrument-c-mozjpeg-internals"]
-
-[[example]]
-name = "quant_ffi_compare"
-required-features = ["_instrument-c-mozjpeg-internals"]
+# Examples that require the instrumented C mozjpeg now live in crates/sys-local/examples
+# (trace_pipeline, quant_ffi_compare), alongside the ffi_comparison test. They need the
+# `sys-local` crate, which is publish = false and so cannot be a dependency of this crate.
+# Run them with: cargo run -p sys-local --example trace_pipeline
 
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ["cfg(feature, values(\"_instrument-c-mozjpeg-internals\", \"ffi-test\", \"avx512\", \"zencodec\"))"] }

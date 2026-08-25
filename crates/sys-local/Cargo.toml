@@ -11,3 +11,11 @@ libc = "0.2"
 
 [build-dependencies]
 cmake = "0.1"
+
+# The FFI comparison test and the trace/quant examples live in this crate rather
+# than in the root crate: they need `sys-local`, and the root crate must not
+# depend on it (publish = false would break `cargo package` for mozjpeg-rs).
+[dev-dependencies]
+mozjpeg-rs = { path = "../..", features = ["png"] }
+jpeg-decoder = "0.3.2"
+png = "0.18.1"

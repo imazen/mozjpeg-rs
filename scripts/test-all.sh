@@ -150,10 +150,8 @@ fi
 info ""
 info "=== FFI Comparison Tests ==="
 if [[ -d "$PROJECT_ROOT/../mozjpeg" ]]; then
-    run_test "ffi_comparison" cargo test --test ffi_comparison
     run_test "sys-local" cargo test -p sys-local
 else
-    skip_test "ffi_comparison" "local mozjpeg source not found at ../mozjpeg"
     skip_test "sys-local" "local mozjpeg source not found"
 fi
 

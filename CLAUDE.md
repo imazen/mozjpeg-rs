@@ -463,7 +463,31 @@ more deviation from the original than simple replication.
 - Use `sys-local` (in `crates/`) for granular internal function testing
   - Builds from local `../mozjpeg` C source with test exports
   - C code has been instrumented with `mozjpeg_test_*` functions
-  - Tests in `tests/ffi_comparison.rs` compare Rust vs C implementations
+  - Tests in `crates/sys-local/tests/ffi_comparison.rs` compare Rust vs C implementations
+  - They live in `sys-local`, not the root crate: the root crate must not depend on
+    `sys-local` (`publish = false`), or `cargo package` for mozjpeg-rs fails
+
+#### BLOCKED: `mozjpeg_test_dc_trellis_optimize` is missing from the C fork (2026-08-25)
+
+`crates/sys-local/src/lib.rs:240` declares `mozjpeg_test_dc_trellis_optimize`, but
+`../mozjpeg/mozjpeg_test_exports.{c,h}` at imazen/mozjpeg `eacbf05` defines only **8**
+test exports and this is not one of them. Verified directly:
+
+```
+nm -g target/debug/build/sys-local-*/out/build/libjpeg.a | grep mozjpeg_test_
+# -> fdct_islow, quality_scaling, rgb_to_ycbcr, quantize_coef, nbits,
+#    downsample_h2v2, preprocess_deringing, trellis_quantize_block   (8, no dc_trellis)
+```
+
+Consequence: **everything type-checks** (`cargo clippy --workspace --all-targets
+--all-features` is clean), but two targets fail at **link** time with
+`Undefined symbols: _mozjpeg_test_dc_trellis_optimize`:
+- `crates/sys-local/tests/ffi_comparison.rs` (`test_dc_trellis_matches_c`)
+- `crates/sys-local/examples/trace_pipeline.rs`
+
+The fix belongs in the **C fork, not here**: add `mozjpeg_test_dc_trellis_optimize`
+to `mozjpeg_test_exports.c/.h` wrapping mozjpeg's DC trellis entry point.
+Do NOT "fix" this by deleting the declaration or the test — see the Golden Rule below.
 
 ### Golden Rule: Never Delete Instrumentation
 **NEVER delete tests, FFI comparisons, or instrumentation code.** These are essential for:
@@ -626,13 +650,17 @@ mozjpeg-rs/                  # Repository root IS the main crate
 │   ├── encode.rs               # Layer 6: Encoder pipeline
 │   └── test_encoder.rs         # Unified test API for Rust vs C comparison
 ├── tests/
-│   ├── ffi_validation.rs       # crates.io mozjpeg-sys tests
-│   └── ffi_comparison.rs       # Local FFI granular comparison
+│   └── ffi_validation.rs       # crates.io mozjpeg-sys tests
 ├── examples/
 │   └── pareto_benchmark.rs     # Benchmark vs C mozjpeg
 ├── crates/
 │   └── sys-local/              # Local FFI bindings (builds from ../mozjpeg)
 │       ├── build.rs            # CMake integration
+│       ├── tests/
+│       │   └── ffi_comparison.rs   # Local FFI granular comparison
+│       ├── examples/
+│       │   ├── trace_pipeline.rs   # Stage-by-stage Rust vs C trace
+│       │   └── quant_ffi_compare.rs
 │       └── src/lib.rs          # FFI declarations + test exports
 ├── benchmark/                  # Reproducible benchmark infrastructure
 │   ├── Dockerfile
@@ -675,8 +703,7 @@ This ensures apples-to-apples comparison by using identical settings.
 cargo test                           # Run all tests
 cargo test huffman                   # Run specific module tests
 cargo test --test ffi_validation    # Run crates.io FFI tests
-cargo test --test ffi_comparison    # Run local FFI comparison tests
-cargo test -p sys-local             # Run sys-local tests
+cargo test -p sys-local             # Run sys-local tests (incl. ffi_comparison)
 ```
 
 ### Test Corpus
@@ -704,7 +731,7 @@ The corpus utilities in `mozjpeg_rs::corpus` handle path resolution:
 GitHub Actions workflow runs on push/PR:
 - Tests on Linux, macOS, Windows
 - Unit tests, codec comparison tests, FFI validation tests
-- Excludes `ffi_comparison` tests (require local mozjpeg C source)
+- Excludes `sys-local` (and its `ffi_comparison` test), which requires local mozjpeg C source
 
 ## Dependencies
 
@@ -798,5 +825,5 @@ cargo test --features mozjpeg-sys-config c_mozjpeg
 cargo test --test decoder_roundtrip
 
 # Instrumented C mozjpeg tests (local development only)
-cargo test --test ffi_comparison --features _instrument-c-mozjpeg-internals
+cargo test -p sys-local --test ffi_comparison
 ```
