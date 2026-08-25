@@ -149,7 +149,7 @@ fn main() {
     println!("=== Stage 4: Forward DCT ===");
 
     let mut rust_dct = [0i16; 64];
-    dct::forward_dct_8x8(&block_samples, &mut rust_dct);
+    dct::forward_dct_8x8_i32_multiversion(&block_samples, &mut rust_dct);
 
     let mut c_dct = block_samples.clone();
     unsafe {
@@ -266,7 +266,7 @@ fn main() {
 
         // DCT
         let mut dct_out = [0i16; 64];
-        dct::forward_dct_8x8(&block, &mut dct_out);
+        dct::forward_dct_8x8_i32_multiversion(&block, &mut dct_out);
 
         // Store raw DCT
         let dct_i32: [i32; 64] = std::array::from_fn(|i| dct_out[i] as i32);

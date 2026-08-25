@@ -3,7 +3,7 @@
 
 use mozjpeg_rs::QuantTableIdx;
 use mozjpeg_rs::consts::DCTSIZE2;
-use mozjpeg_rs::dct::forward_dct_8x8;
+use mozjpeg_rs::dct::forward_dct_8x8_i32_multiversion;
 use mozjpeg_rs::quant::{create_quant_table, get_luminance_quant_table, quantize_block};
 use std::fs;
 
@@ -157,7 +157,7 @@ fn main() {
     println!("=== DCT Output Comparison ===");
 
     let mut rust_dct = [0i16; DCTSIZE2];
-    forward_dct_8x8(&block, &mut rust_dct);
+    forward_dct_8x8_i32_multiversion(&block, &mut rust_dct);
 
     let c_dct = c_dct_only(&block);
 
@@ -192,7 +192,7 @@ fn main() {
 fn rust_dct_and_quantize(block: &[i16; DCTSIZE2], qtable: &[u16; DCTSIZE2]) -> [i16; DCTSIZE2] {
     // Forward DCT (output scaled by 8)
     let mut dct_block = [0i16; DCTSIZE2];
-    forward_dct_8x8(block, &mut dct_block);
+    forward_dct_8x8_i32_multiversion(block, &mut dct_block);
 
     // Convert to i32 and descale
     let mut dct_i32 = [0i32; DCTSIZE2];
