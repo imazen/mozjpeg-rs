@@ -231,22 +231,29 @@ for all image sizes including non-MCU-aligned dimensions with subsampling.
 ### Working Encoder
 The encoder produces valid JPEG files with mozjpeg-quality compression:
 ```rust
-use mozjpeg_rs::{Encoder, Subsampling, TrellisConfig};
+use mozjpeg_rs::{Encoder, Preset, Subsampling, TrellisConfig};
 
-// Default encoding (trellis + Huffman optimization enabled)
-let encoder = Encoder::new().quality(85);
+// `Encoder::new` takes a `Preset` (src/encode.rs `Encoder::new`). The
+// named constructors below are the same four presets under their long names:
+//   Preset::BaselineFastest      == Encoder::fastest()
+//   Preset::BaselineBalanced     == Encoder::baseline_optimized()
+//   Preset::ProgressiveBalanced  == Encoder::progressive_balanced()  (Preset::default())
+//   Preset::ProgressiveSmallest  == Encoder::max_compression()
+
+// Default preset (progressive + trellis + Huffman optimization)
+let encoder = Encoder::new(Preset::default()).quality(85);
 let jpeg_data = encoder.encode_rgb(&pixels, width, height)?;
 
-// Maximum compression (progressive + trellis + optimized Huffman)
-let encoder = Encoder::max_compression();
+// Maximum compression (progressive + optimize_scans + trellis + optimized Huffman)
+let encoder = Encoder::new(Preset::ProgressiveSmallest);
 let jpeg_data = encoder.encode_rgb(&pixels, width, height)?;
 
 // Fastest encoding (no optimizations)
-let encoder = Encoder::fastest().quality(85);
+let encoder = Encoder::new(Preset::BaselineFastest).quality(85);
 let jpeg_data = encoder.encode_rgb(&pixels, width, height)?;
 
-// Custom configuration
-let encoder = Encoder::new()
+// Custom configuration on top of a preset
+let encoder = Encoder::new(Preset::BaselineBalanced)
     .quality(75)
     .progressive(true)
     .subsampling(Subsampling::S420)
@@ -255,10 +262,15 @@ let encoder = Encoder::new()
 let jpeg_data = encoder.encode_rgb(&pixels, width, height)?;
 
 // Faster color conversion (opt into yuv crate)
-let encoder = Encoder::baseline_optimized()
+let encoder = Encoder::new(Preset::BaselineBalanced)
     .quality(85)
     .fast_color(true);  // ~40% faster, ±1 rounding vs C mozjpeg
 let jpeg_data = encoder.encode_rgb(&pixels, width, height)?;
+
+// Cooperative cancellation: pass any `enough::Stop`. The token is checked
+// once per MCU row in every block loop (DCT + trellis), once per progressive
+// scan, and between optimize_scans trial encodes.
+let jpeg_data = encoder.encode_rgb_with_stop(&pixels, width, height, &mozjpeg_rs::Unstoppable)?;
 ```
 
 ### Implemented Features

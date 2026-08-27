@@ -27,3 +27,4 @@ perf_*.data
 
 # main-with-lockfile agent coordination
 .workongoing
+.jj/

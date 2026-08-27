@@ -19,6 +19,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (`ZEN_API_DOC=check` verifies in CI, `=off` skips); API changes now show up
   as a reviewable diff next to the code change that caused them (TBD)
 
+### Fixed
+- Cooperative cancellation (`encode_rgb_with_stop` / `encode_rgba_with_stop` /
+  `encode_gray_with_stop`) now fires inside every long encode loop, not only the
+  `BaselineFastest` streaming path. The `Stop` token is checked once per MCU row
+  in `collect_blocks` (the forward-DCT + trellis loop used by `BaselineBalanced`,
+  `ProgressiveBalanced` and `ProgressiveSmallest`), once per progressive scan,
+  once per MCU row in the baseline entropy-emission loop, and in all three
+  grayscale paths (which previously never checked mid-encode). `Unstoppable`
+  output is byte-identical (#5)
+
 ### Changed
 - deps: migrate to published zencodec 0.1.24 estimate API; drop the temporary
   `[patch.crates-io] zencodec = { git, rev = "0f71295" }` pin (the `estimate` API

@@ -1551,9 +1551,10 @@ impl Encoder {
         };
 
         let mut output = Vec::new();
-        // Check cancellation before and after encoding.
+        // Check cancellation before, during (per-MCU-row / per-scan), and
+        // after encoding by threading the token through the encode pipeline.
         stop.check()?;
-        self.encode_gray_to_writer(&gray_data, width, height, &mut output)?;
+        self.encode_gray_to_writer_impl(&gray_data, width, height, &mut output, stop)?;
         stop.check()?;
 
         Ok(output)
@@ -1679,6 +1680,21 @@ impl Encoder {
         height: u32,
         output: W,
     ) -> Result<()> {
+        self.encode_gray_to_writer_impl(gray_data, width, height, output, &enough::Unstoppable)
+    }
+
+    /// Stop-aware body of [`encode_gray_to_writer`](Self::encode_gray_to_writer).
+    /// The public method passes `Unstoppable`; `encode_gray_with_stop` passes
+    /// the caller's token, which is checked once per MCU row in the block
+    /// loops and once per scan in progressive mode.
+    fn encode_gray_to_writer_impl<W: Write>(
+        &self,
+        gray_data: &[u8],
+        width: u32,
+        height: u32,
+        output: W,
+        stop: &dyn enough::Stop,
+    ) -> Result<()> {
         let width = width as usize;
         let height = height as usize;
 
@@ -1785,6 +1801,9 @@ impl Encoder {
 
             // Collect all blocks
             for mcu_row in 0..mcu_rows {
+                // Cooperative cancellation: once per MCU row (DCT + trellis
+                // per block is the expensive part). No-op for `Unstoppable`.
+                stop.check()?;
                 for mcu_col in 0..mcu_cols {
                     let block_idx = mcu_row * mcu_cols + mcu_col;
                     self.process_block_to_storage_with_raw(
@@ -1860,6 +1879,9 @@ impl Encoder {
             let mut bit_writer = BitWriter::new(output);
 
             for scan in &scans {
+                // Cooperative cancellation: once per scan (each scan walks
+                // every block). No-op for `Unstoppable`.
+                stop.check()?;
                 let is_dc_scan = scan.ss == 0 && scan.se == 0;
 
                 if is_dc_scan {
@@ -1955,6 +1977,8 @@ impl Encoder {
 
             // Collect all blocks using the same process as RGB encoding
             for mcu_row in 0..mcu_rows {
+                // Cooperative cancellation: once per MCU row.
+                stop.check()?;
                 for mcu_col in 0..mcu_cols {
                     let block_idx = mcu_row * mcu_cols + mcu_col;
                     self.process_block_to_storage_with_raw(
@@ -2033,6 +2057,8 @@ impl Encoder {
             let mut restart_num = 0u8;
 
             for mcu_row in 0..mcu_rows {
+                // Cooperative cancellation: once per MCU row.
+                stop.check()?;
                 for mcu_col in 0..mcu_cols {
                     // Emit restart marker if needed
                     if restart_interval > 0
@@ -2727,6 +2753,7 @@ impl Encoder {
                 cr_raw_dct.as_deref_mut(),
                 luma_h,
                 luma_v,
+                stop,
             )?;
 
             // Run DC trellis optimization if enabled
@@ -2901,6 +2928,9 @@ impl Encoder {
 
                 // Encode each scan with per-scan AC tables
                 for scan in &scans {
+                    // Cooperative cancellation: once per scan (each scan
+                    // walks every block twice). No-op for `Unstoppable`.
+                    stop.check()?;
                     bit_writer.flush()?;
                     let mut inner = bit_writer.into_inner();
 
@@ -3010,6 +3040,8 @@ impl Encoder {
                 let mut bit_writer = BitWriter::new(output);
 
                 for scan in &scans {
+                    // Cooperative cancellation: once per scan.
+                    stop.check()?;
                     bit_writer.flush()?;
                     let mut inner = bit_writer.into_inner();
                     write_sos_marker(&mut inner, scan, &components)?;
@@ -3109,6 +3141,7 @@ impl Encoder {
                 cr_raw_dct.as_deref_mut(),
                 luma_h,
                 luma_v,
+                stop,
             )?;
 
             // Run DC trellis optimization if enabled
@@ -3250,6 +3283,8 @@ impl Encoder {
                 let mut restart_num = 0u8;
 
                 for _mcu_row in 0..mcu_rows {
+                    // Cooperative cancellation: once per MCU row.
+                    stop.check()?;
                     for _mcu_col in 0..mcu_cols {
                         // Emit restart marker if needed (before this MCU, not first)
                         if restart_interval > 0
@@ -3307,6 +3342,8 @@ impl Encoder {
                 let mut restart_num = 0u8;
 
                 for _mcu_row in 0..mcu_rows {
+                    // Cooperative cancellation: once per MCU row.
+                    stop.check()?;
                     for _mcu_col in 0..mcu_cols {
                         // Emit restart marker if needed (before this MCU, not first)
                         if restart_interval > 0
@@ -3593,6 +3630,7 @@ impl Encoder {
         mut cr_raw_dct: Option<&mut [[i32; DCTSIZE2]]>,
         h_samp: u8,
         v_samp: u8,
+        stop: &dyn enough::Stop,
     ) -> Result<()> {
         let mcu_rows = y_height / (DCTSIZE * v_samp as usize);
         let mcu_cols = y_width / (DCTSIZE * h_samp as usize);
@@ -3602,6 +3640,12 @@ impl Encoder {
         let mut dct_block = [0i16; DCTSIZE2];
 
         for mcu_row in 0..mcu_rows {
+            // Cooperative cancellation: check once per MCU row. This loop is
+            // where the forward DCT and trellis quantization run for every
+            // block, so it is the longest phase of every preset except
+            // BaselineFastest (which streams through `encode_mcus`). A no-op
+            // for `Unstoppable`, so output is byte-identical.
+            stop.check()?;
             for mcu_col in 0..mcu_cols {
                 // Collect Y blocks (may be multiple per MCU for subsampling)
                 for v in 0..v_samp as usize {
@@ -4788,11 +4832,25 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_encode_rgb_with_stop_unstoppable_is_byte_identical() {
-        use enough::Unstoppable;
-        // Non-uniform content so real coefficients/MCUs are exercised.
-        let (w, h) = (64u32, 48u32);
+    /// Counts every `check()` call and never cancels. Used to derive a
+    /// preset-independent check budget for the loop-cancellation tests.
+    struct CountChecks(std::sync::atomic::AtomicUsize);
+    impl enough::Stop for CountChecks {
+        fn check(&self) -> core::result::Result<(), enough::StopReason> {
+            self.0.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            Ok(())
+        }
+    }
+
+    const ALL_PRESETS: [Preset; 4] = [
+        Preset::BaselineFastest,
+        Preset::BaselineBalanced,
+        Preset::ProgressiveBalanced,
+        Preset::ProgressiveSmallest,
+    ];
+
+    /// Non-uniform RGB test image so real coefficients/MCUs are exercised.
+    fn gradient_rgb(w: u32, h: u32) -> Vec<u8> {
         let mut pixels = vec![0u8; (w * h) as usize * 3];
         for y in 0..h {
             for x in 0..w {
@@ -4802,18 +4860,157 @@ mod tests {
                 pixels[i + 2] = ((x + y).wrapping_mul(3)) as u8;
             }
         }
-        // Cover both the per-MCU baseline path and the optimize-scans path.
-        for preset in [Preset::BaselineFastest, Preset::ProgressiveSmallest] {
+        pixels
+    }
+
+    fn gradient_gray(w: u32, h: u32) -> Vec<u8> {
+        let mut pixels = vec![0u8; (w * h) as usize];
+        for y in 0..h {
+            for x in 0..w {
+                pixels[(y * w + x) as usize] = ((x * 3 + y * 7) & 0xFF) as u8;
+            }
+        }
+        pixels
+    }
+
+    #[test]
+    fn test_encode_with_stop_unstoppable_is_byte_identical_all_presets() {
+        use enough::Unstoppable;
+        let (w, h) = (64u32, 48u32);
+        let rgb = gradient_rgb(w, h);
+        let gray = gradient_gray(w, h);
+        // Every preset takes a different loop path (streaming baseline,
+        // 2-pass baseline, progressive, progressive + optimize_scans); each
+        // of those loops now carries a stop check that must be a no-op.
+        for preset in ALL_PRESETS {
             let enc = Encoder::new(preset).quality(85);
-            let plain = enc.encode_rgb(&pixels, w, h).unwrap();
-            let stopped = enc
-                .encode_rgb_with_stop(&pixels, w, h, &Unstoppable)
-                .unwrap();
+            let plain = enc.encode_rgb(&rgb, w, h).unwrap();
+            let stopped = enc.encode_rgb_with_stop(&rgb, w, h, &Unstoppable).unwrap();
             assert_eq!(
                 plain, stopped,
                 "Unstoppable must be byte-identical to encode_rgb ({preset:?})"
             );
+
+            let plain = enc.encode_gray(&gray, w, h).unwrap();
+            let stopped = enc
+                .encode_gray_with_stop(&gray, w, h, &Unstoppable)
+                .unwrap();
+            assert_eq!(
+                plain, stopped,
+                "Unstoppable must be byte-identical to encode_gray ({preset:?})"
+            );
         }
+    }
+
+    /// For every preset: measure how many checks a single-MCU-row image
+    /// makes, then prove that (a) that exact budget lets the tiny image
+    /// finish, and (b) the same budget cancels an image with many more MCU
+    /// rows. The only way (b) can hold is if a check sits inside a loop
+    /// whose trip count grows with image height — i.e. the block loop.
+    #[test]
+    fn test_encode_rgb_with_stop_cancels_inside_block_loop_all_presets() {
+        let small = gradient_rgb(16, 16);
+        let large = gradient_rgb(256, 512); // 32 MCU rows at 4:2:0
+        for preset in ALL_PRESETS {
+            let enc = Encoder::new(preset).quality(85);
+
+            let counter = CountChecks(0.into());
+            enc.encode_rgb_with_stop(&small, 16, 16, &counter).unwrap();
+            let budget = counter.0.load(std::sync::atomic::Ordering::Relaxed);
+
+            let small_stop = CancelAfter {
+                seen: 0.into(),
+                limit: budget,
+            };
+            assert!(
+                enc.encode_rgb_with_stop(&small, 16, 16, &small_stop)
+                    .is_ok(),
+                "{preset:?}: tiny image must finish within its own check budget ({budget})"
+            );
+
+            let loop_stop = CancelAfter {
+                seen: 0.into(),
+                limit: budget,
+            };
+            assert!(
+                matches!(
+                    enc.encode_rgb_with_stop(&large, 256, 512, &loop_stop),
+                    Err(Error::Cancelled)
+                ),
+                "{preset:?}: taller image must be cancelled by a per-MCU-row loop check (budget {budget})"
+            );
+        }
+    }
+
+    /// Same proof for the grayscale pipeline, which has its own three loop
+    /// paths (single-pass, 2-pass Huffman, progressive) and previously never
+    /// checked the token between the entry and exit checks.
+    #[test]
+    fn test_encode_gray_with_stop_cancels_inside_block_loop_all_presets() {
+        let small = gradient_gray(16, 16);
+        let large = gradient_gray(256, 512); // 64 MCU rows (8x8 MCUs)
+        for preset in ALL_PRESETS {
+            let enc = Encoder::new(preset).quality(85);
+
+            let counter = CountChecks(0.into());
+            enc.encode_gray_with_stop(&small, 16, 16, &counter).unwrap();
+            let budget = counter.0.load(std::sync::atomic::Ordering::Relaxed);
+
+            let small_stop = CancelAfter {
+                seen: 0.into(),
+                limit: budget,
+            };
+            assert!(
+                enc.encode_gray_with_stop(&small, 16, 16, &small_stop)
+                    .is_ok(),
+                "{preset:?}: tiny gray image must finish within its own check budget ({budget})"
+            );
+
+            let loop_stop = CancelAfter {
+                seen: 0.into(),
+                limit: budget,
+            };
+            assert!(
+                matches!(
+                    enc.encode_gray_with_stop(&large, 256, 512, &loop_stop),
+                    Err(Error::Cancelled)
+                ),
+                "{preset:?}: taller gray image must be cancelled by a per-MCU-row loop check (budget {budget})"
+            );
+        }
+    }
+
+    /// Progressive mode must check once per scan in addition to once per MCU
+    /// row: a 16x16 image has one (RGB, 4:2:0) or two (gray) MCU rows, so
+    /// the total check count must exceed entry + rows + exit by at least
+    /// the number of scans in the fixed progressive script.
+    #[test]
+    fn test_encode_with_stop_checks_each_progressive_scan() {
+        let enc = Encoder::new(Preset::ProgressiveBalanced).quality(85);
+
+        let rgb = gradient_rgb(16, 16);
+        let counter = CountChecks(0.into());
+        enc.encode_rgb_with_stop(&rgb, 16, 16, &counter).unwrap();
+        let rgb_checks = counter.0.load(std::sync::atomic::Ordering::Relaxed);
+        let rgb_scans = generate_mozjpeg_max_compression_scans(3).len();
+        // 2 entry checks + 1 MCU row (collect_blocks) + 1 exit check.
+        assert!(
+            rgb_checks >= 4 + rgb_scans,
+            "RGB progressive: expected >= {} checks (4 fixed + {rgb_scans} scans), got {rgb_checks}",
+            4 + rgb_scans
+        );
+
+        let gray = gradient_gray(16, 16);
+        let counter = CountChecks(0.into());
+        enc.encode_gray_with_stop(&gray, 16, 16, &counter).unwrap();
+        let gray_checks = counter.0.load(std::sync::atomic::Ordering::Relaxed);
+        let gray_scans = generate_mozjpeg_max_compression_scans(1).len();
+        // 2 entry checks + 2 MCU rows (8x8 MCUs) + 1 exit check.
+        assert!(
+            gray_checks >= 5 + gray_scans,
+            "gray progressive: expected >= {} checks (5 fixed + {gray_scans} scans), got {gray_checks}",
+            5 + gray_scans
+        );
     }
 
     #[test]
