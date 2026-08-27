@@ -479,27 +479,27 @@ more deviation from the original than simple replication.
   - They live in `sys-local`, not the root crate: the root crate must not depend on
     `sys-local` (`publish = false`), or `cargo package` for mozjpeg-rs fails
 
-#### BLOCKED: `mozjpeg_test_dc_trellis_optimize` is missing from the C fork (2026-08-25)
+#### `mozjpeg_test_dc_trellis_optimize` is provided by THIS repo, not the C fork (2026-08-27)
 
-`crates/sys-local/src/lib.rs:240` declares `mozjpeg_test_dc_trellis_optimize`, but
+`crates/sys-local/src/lib.rs` declares `mozjpeg_test_dc_trellis_optimize`, but
 `../mozjpeg/mozjpeg_test_exports.{c,h}` at imazen/mozjpeg `eacbf05` defines only **8**
-test exports and this is not one of them. Verified directly:
+test exports and this is not one of them (the Rust declaration + test landed in 8c7f411
+without a C counterpart; the FFI CI job ran `cargo test -p sys-local` while the test
+still lived in the root crate, so the link failure only surfaced after the 2026-08-25 move).
 
-```
-nm -g target/debug/build/sys-local-*/out/build/libjpeg.a | grep mozjpeg_test_
-# -> fdct_islow, quality_scaling, rgb_to_ycbcr, quantize_coef, nbits,
-#    downsample_h2v2, preprocess_deringing, trellis_quantize_block   (8, no dc_trellis)
-```
+Resolution: the symbol is compiled from `crates/sys-local/csrc/mozjpeg_test_dc_trellis.c`
+by `crates/sys-local/build.rs` (via the `cc` crate) and linked alongside `libjpeg.a`.
+It is a cinfo-free port of the `trellis_quant_dc` branch of `quantize_trellis()` in
+jcdctmgr.c (candidate generation, DPCM dynamic programming, backtrack), in the same
+style as the fork's `mozjpeg_test_trellis_quantize_block`. `test_dc_trellis_matches_c`
+passes (0 diffs, 10 seeds × 16 blocks). If the export is ever added to the C fork,
+delete the csrc file and the `cc` step so the symbol is not defined twice.
 
-Consequence: **everything type-checks** (`cargo clippy --workspace --all-targets
---all-features` is clean), but two targets fail at **link** time with
-`Undefined symbols: _mozjpeg_test_dc_trellis_optimize`:
-- `crates/sys-local/tests/ffi_comparison.rs` (`test_dc_trellis_matches_c`)
-- `crates/sys-local/examples/trace_pipeline.rs`
-
-The fix belongs in the **C fork, not here**: add `mozjpeg_test_dc_trellis_optimize`
-to `mozjpeg_test_exports.c/.h` wrapping mozjpeg's DC trellis entry point.
-Do NOT "fix" this by deleting the declaration or the test — see the Golden Rule below.
+Also note for the AC trellis FFI tests: the fork's `mozjpeg_test_trellis_quantize_block`
+is a full-search port with NO speed-level candidate/lookback limiting, so the tests run
+the Rust side with `TrellisSpeedMode::Thorough`. The default `Adaptive` mode caps
+candidates on dense blocks and legitimately differs from the shim at Huffman category
+boundaries (e.g. 18 vs 15) — that is the speed optimization working, not a parity bug.
 
 ### Golden Rule: Never Delete Instrumentation
 **NEVER delete tests, FFI comparisons, or instrumentation code.** These are essential for:

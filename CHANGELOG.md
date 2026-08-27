@@ -20,6 +20,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   as a reviewable diff next to the code change that caused them (TBD)
 
 ### Fixed
+- `cargo test -p sys-local` (the "Test FFI Comparison (Local mozjpeg)" CI job)
+  links again: the `mozjpeg_test_dc_trellis_optimize` FFI symbol was declared
+  on the Rust side (8c7f411) but never defined in the mozjpeg C fork. It is now
+  compiled from `crates/sys-local/csrc/mozjpeg_test_dc_trellis.c`, a cinfo-free
+  port of the DC branch of `quantize_trellis()` in jcdctmgr.c, so the DC trellis
+  comparison test actually runs
 - Cooperative cancellation (`encode_rgb_with_stop` / `encode_rgba_with_stop` /
   `encode_gray_with_stop`) now fires inside every long encode loop, not only the
   `BaselineFastest` streaming path. The `Stop` token is checked once per MCU row

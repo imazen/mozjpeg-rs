@@ -60,4 +60,18 @@ fn main() {
     // Tell cargo where headers are (for generated headers like jconfig.h)
     println!("cargo:include={}/build", dst.display());
     println!("cargo:include={}", mozjpeg_src.display());
+
+    // Test exports that live in this crate rather than in the mozjpeg C tree.
+    // `mozjpeg_test_dc_trellis_optimize` is declared in src/lib.rs but the
+    // mozjpeg fork's mozjpeg_test_exports.c never defined it, so without this
+    // shim the ffi_comparison test and trace_pipeline example fail to link.
+    // The shim is header-free (stdint types only), so it does not depend on
+    // the CMake-generated jconfig.h.
+    let csrc = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap()).join("csrc");
+    let dc_trellis = csrc.join("mozjpeg_test_dc_trellis.c");
+    println!("cargo:rerun-if-changed={}", dc_trellis.display());
+    cc::Build::new()
+        .file(&dc_trellis)
+        .warnings(true)
+        .compile("mozjpeg_test_dc_trellis");
 }

@@ -228,6 +228,12 @@ unsafe extern "C" {
     );
 
     /// DC trellis optimization on a sequence of blocks
+    ///
+    /// Unlike the other test exports, this symbol is NOT provided by the
+    /// mozjpeg C tree's `mozjpeg_test_exports.c`; it is compiled from
+    /// `crates/sys-local/csrc/mozjpeg_test_dc_trellis.c` by this crate's
+    /// build.rs.
+    ///
     /// raw_dc: Raw DC coefficients (num_blocks values, each scaled by 8)
     /// ac_norms: AC energy per block (num_blocks values, each = sum(ac^2)/63)
     /// quantized_dc: Output optimized DC coefficients (num_blocks values)
@@ -258,11 +264,14 @@ pub const JPEG_LIB_VERSION: c_int = 62;
 /// # Safety
 /// `cinfo` must point to a valid, uninitialized `jpeg_compress_struct`.
 pub unsafe fn jpeg_create_compress(cinfo: *mut jpeg_compress_struct) {
-    jpeg_CreateCompress(
-        cinfo,
-        JPEG_LIB_VERSION,
-        std::mem::size_of::<jpeg_compress_struct>() as size_t,
-    );
+    // SAFETY: caller guarantees `cinfo` is valid (see doc comment).
+    unsafe {
+        jpeg_CreateCompress(
+            cinfo,
+            JPEG_LIB_VERSION,
+            std::mem::size_of::<jpeg_compress_struct>() as size_t,
+        );
+    }
 }
 
 #[cfg(test)]
