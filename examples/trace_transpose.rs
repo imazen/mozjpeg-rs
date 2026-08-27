@@ -132,7 +132,6 @@ mod x86_only {
         println!("out2 should be: [04 14 24 34 44 54 64 74 | 05 15 25 35 45 55 65 75]");
         println!("out3 should be: [06 16 26 36 46 56 66 76 | 07 17 27 37 47 57 67 77]");
     }
-
 }
 
 #[cfg(target_arch = "x86_64")]

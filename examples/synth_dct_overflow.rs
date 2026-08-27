@@ -300,7 +300,6 @@ mod x86_only {
         let mut writer = encoder.write_header().unwrap();
         writer.write_image_data(rgb).unwrap();
     }
-
 }
 
 #[cfg(target_arch = "x86_64")]

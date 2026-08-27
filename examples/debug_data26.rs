@@ -259,7 +259,6 @@ mod x86_only {
             self
         }
     }
-
 }
 
 #[cfg(target_arch = "x86_64")]

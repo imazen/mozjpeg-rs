@@ -228,8 +228,9 @@ mod x86_only {
         const FIX_0_50000: i32 = 32768;
         const ONE_HALF: i32 = 1 << 15;
 
-        let cb_scalar =
-            ((-FIX_0_16874 * r0 - FIX_0_33126 * g0 + FIX_0_50000 * b0 + ONE_HALF) >> SCALEBITS) + 128;
+        let cb_scalar = ((-FIX_0_16874 * r0 - FIX_0_33126 * g0 + FIX_0_50000 * b0 + ONE_HALF)
+            >> SCALEBITS)
+            + 128;
         println!("Scalar Cb for pixel 1: {}", cb_scalar);
 
         // Now let's check the AVX2 path more carefully
@@ -296,7 +297,6 @@ mod x86_only {
             trace_deinterleave();
         }
     }
-
 }
 
 #[cfg(target_arch = "x86_64")]

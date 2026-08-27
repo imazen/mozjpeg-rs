@@ -537,7 +537,6 @@ mod x86_only {
             coeffs[col + 1 * DCTSIZE] = descale(tmp7 + z1 + z4, CONST_BITS + PASS1_BITS) as i16;
         }
     }
-
 }
 
 #[cfg(target_arch = "x86_64")]
