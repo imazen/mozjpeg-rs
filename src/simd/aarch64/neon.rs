@@ -197,10 +197,12 @@ pub fn forward_dct_8x8_neon(
         &mut col7, consts_lo, consts_hi, consts2, false,
     );
 
-    // Store results - use chunks to get mutable array references
+    // Store results - `as_chunks_mut` yields `&mut [i16; 8]` directly
+    // (DCTSIZE2 = 64 is a multiple of 8, so the remainder is empty).
     let cols = [col0, col1, col2, col3, col4, col5, col6, col7];
-    for (i, chunk) in coeffs.chunks_exact_mut(8).enumerate() {
-        vst1q_s16(chunk.try_into().unwrap(), cols[i]);
+    let (chunks, _) = coeffs.as_chunks_mut::<8>();
+    for (chunk, col) in chunks.iter_mut().zip(cols) {
+        vst1q_s16(chunk, col);
     }
 }
 

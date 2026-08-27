@@ -26,7 +26,9 @@ fn load_rgb_image(path: &Path) -> (Vec<u8>, u32, u32) {
     let rgb: Vec<u8> = match info.color_type {
         ColorType::Rgb => buf[..width as usize * height as usize * 3].to_vec(),
         ColorType::Rgba => buf
-            .chunks_exact(4)
+            .as_chunks::<4>()
+            .0
+            .iter()
             .flat_map(|rgba| [rgba[0], rgba[1], rgba[2]])
             .collect(),
         ColorType::Grayscale => buf.iter().flat_map(|&g| [g, g, g]).collect(),

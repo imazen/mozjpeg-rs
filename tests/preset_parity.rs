@@ -203,7 +203,9 @@ fn decode_jpeg(data: &[u8]) -> Vec<u8> {
 fn compute_ssim2(original: &[u8], decoded: &[u8], width: u32, height: u32) -> f64 {
     // Convert u8 RGB to f32 RGB for ssimulacra2
     let orig_f32: Vec<[f32; 3]> = original
-        .chunks_exact(3)
+        .as_chunks::<3>()
+        .0
+        .iter()
         .map(|c| {
             [
                 c[0] as f32 / 255.0,
@@ -214,7 +216,9 @@ fn compute_ssim2(original: &[u8], decoded: &[u8], width: u32, height: u32) -> f6
         .collect();
 
     let dec_f32: Vec<[f32; 3]> = decoded
-        .chunks_exact(3)
+        .as_chunks::<3>()
+        .0
+        .iter()
         .map(|c| {
             [
                 c[0] as f32 / 255.0,

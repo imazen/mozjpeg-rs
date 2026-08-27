@@ -1,24 +1,14 @@
-//! What the aarch64 SIMD paths are actually worth, per kernel.
+//! What the aarch64 SIMD DCT path is actually worth.
 //!
 //! The crate advertises "safe SIMD (archmage) on x86_64 (AVX2) and aarch64
-//! (NEON)". On aarch64 that covers the DCT — but `SimdOps::detect()` falls
-//! through to `scalar::convert_rgb_to_ycbcr` for colour conversion on every
-//! non-x86 target, so colour runs scalar on ARM. This measures both.
+//! (NEON)". This measures the dispatched forward DCT against the scalar
+//! reference. Colour conversion is deliberately not benched here — see the
+//! note at the bottom of `bench`.
 //!
 //! Run: `cargo bench --bench neon_tiers`
 
 use criterion::{Criterion, criterion_group, criterion_main};
 use mozjpeg_rs::simd::SimdOps;
-
-fn pixels(n: usize) -> Vec<u8> {
-    let mut s = 0x9e37_79b9u32;
-    (0..n * 3)
-        .map(|_| {
-            s = s.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
-            (s >> 24) as u8
-        })
-        .collect()
-}
 
 fn bench(c: &mut Criterion) {
     let ops = SimdOps::detect();

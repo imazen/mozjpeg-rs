@@ -20,7 +20,9 @@ fn compute_butteraugli_score(original: &[u8], decoded: &[u8], width: u32, height
     let w = width as usize;
     let h = height as usize;
     let to_pixels = |rgb: &[u8]| -> Vec<RGB8> {
-        rgb.chunks_exact(3)
+        rgb.as_chunks::<3>()
+            .0
+            .iter()
             .map(|c| RGB8::new(c[0], c[1], c[2]))
             .collect()
     };

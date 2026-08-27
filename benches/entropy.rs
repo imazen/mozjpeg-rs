@@ -65,7 +65,9 @@ fn load_real_image(path: &Path) -> (Vec<u8>, usize, usize) {
             buf.iter().step_by(step).copied().collect()
         }
         ColorType::Rgb => {
-            buf.chunks_exact(3)
+            buf.as_chunks::<3>()
+                .0
+                .iter()
                 .map(|rgb| {
                     // Y = 0.299*R + 0.587*G + 0.114*B (scaled integer math)
                     let y = (19595 * rgb[0] as u32
@@ -78,7 +80,9 @@ fn load_real_image(path: &Path) -> (Vec<u8>, usize, usize) {
                 .collect()
         }
         ColorType::Rgba => buf
-            .chunks_exact(4)
+            .as_chunks::<4>()
+            .0
+            .iter()
             .map(|rgba| {
                 let y = (19595 * rgba[0] as u32
                     + 38470 * rgba[1] as u32

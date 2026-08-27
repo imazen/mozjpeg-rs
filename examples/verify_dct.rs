@@ -15,7 +15,9 @@ fn main() {
 
     println!("Input samples (first 8): {:?}", &samples[..8]);
 
-    // New implementation (dct.rs with archmage)
+    // New implementation (dct.rs with archmage). Only the x86_64 blocks below
+    // read it, so gate the binding the same way to keep non-x86 clippy clean.
+    #[cfg(target_arch = "x86_64")]
     let mut coeffs_new = [0i16; DCTSIZE2];
 
     #[cfg(target_arch = "x86_64")]
