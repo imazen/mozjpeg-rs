@@ -2,12 +2,12 @@
 
 #![allow(dead_code)]
 
-use mozjpeg_rs::TrellisConfig;
 use mozjpeg_rs::consts::{
     AC_LUMINANCE_BITS, AC_LUMINANCE_VALUES, DC_LUMINANCE_BITS, DC_LUMINANCE_VALUES,
     STD_LUMINANCE_QUANT_TBL,
 };
 use mozjpeg_rs::huffman::{DerivedTable, HuffTable};
+use mozjpeg_rs::{TrellisConfig, TrellisSpeedMode};
 use mozjpeg_rs::{color, dct, deringing, quant, trellis};
 use std::fs;
 
@@ -178,7 +178,8 @@ fn main() {
     // AC Trellis quantization
     println!("=== Stage 5: AC Trellis Quantization ===");
 
-    let config = TrellisConfig::default();
+    // Thorough: the C test exports have no speed-level search limiting.
+    let config = TrellisConfig::default().speed_mode(TrellisSpeedMode::Thorough);
     let dct_i32: [i32; 64] = std::array::from_fn(|i| rust_dct[i] as i32);
 
     let mut rust_trellis_q = [0i16; 64];

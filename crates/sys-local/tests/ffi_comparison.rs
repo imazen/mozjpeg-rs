@@ -541,10 +541,10 @@ fn test_deringing_matches_c() {
 /// must produce identical decisions to C mozjpeg.
 #[test]
 fn test_trellis_matches_c() {
-    use mozjpeg_rs::TrellisConfig;
     use mozjpeg_rs::consts::{AC_LUMINANCE_BITS, AC_LUMINANCE_VALUES, STD_LUMINANCE_QUANT_TBL};
     use mozjpeg_rs::huffman::{DerivedTable, HuffTable};
     use mozjpeg_rs::trellis::trellis_quantize_block;
+    use mozjpeg_rs::{TrellisConfig, TrellisSpeedMode};
 
     // Build the AC Huffman table to get code sizes
     let mut htbl = HuffTable::default();
@@ -564,8 +564,12 @@ fn test_trellis_matches_c() {
     // Use standard luminance quantization table at Q75
     let qtbl = STD_LUMINANCE_QUANT_TBL[0];
 
-    // Default trellis config
-    let config = TrellisConfig::default();
+    // The C test export (mozjpeg_test_trellis_quantize_block) is a full-search
+    // port of the core algorithm with no speed-level candidate/lookback
+    // limiting, so run the Rust side in Thorough mode to compare the same
+    // algorithm. The default Adaptive mode caps candidates on dense blocks
+    // and would differ at Huffman category boundaries (e.g. 18 vs 15).
+    let config = TrellisConfig::default().speed_mode(TrellisSpeedMode::Thorough);
 
     // Test with various input patterns
     let test_patterns: Vec<[i16; 64]> = vec![
@@ -701,10 +705,10 @@ fn test_trellis_matches_c() {
 /// Uses pseudo-random values that mimic actual DCT output patterns.
 #[test]
 fn test_trellis_matches_c_random() {
-    use mozjpeg_rs::TrellisConfig;
     use mozjpeg_rs::consts::{AC_LUMINANCE_BITS, AC_LUMINANCE_VALUES, STD_LUMINANCE_QUANT_TBL};
     use mozjpeg_rs::huffman::{DerivedTable, HuffTable};
     use mozjpeg_rs::trellis::trellis_quantize_block;
+    use mozjpeg_rs::{TrellisConfig, TrellisSpeedMode};
 
     // Build AC Huffman table
     let mut htbl = HuffTable::default();
@@ -722,7 +726,8 @@ fn test_trellis_matches_c_random() {
     }
 
     let qtbl = STD_LUMINANCE_QUANT_TBL[0];
-    let config = TrellisConfig::default();
+    // Thorough: the C test export has no speed-level search limiting.
+    let config = TrellisConfig::default().speed_mode(TrellisSpeedMode::Thorough);
 
     let mut total_diffs = 0;
     let mut total_coeffs = 0;
@@ -814,11 +819,11 @@ fn test_trellis_matches_c_random() {
 /// Test trellis at different quality levels (which affects quantization tables).
 #[test]
 fn test_trellis_matches_c_quality_levels() {
-    use mozjpeg_rs::TrellisConfig;
     use mozjpeg_rs::consts::{AC_LUMINANCE_BITS, AC_LUMINANCE_VALUES, STD_LUMINANCE_QUANT_TBL};
     use mozjpeg_rs::huffman::{DerivedTable, HuffTable};
     use mozjpeg_rs::quant::quality_to_scale_factor;
     use mozjpeg_rs::trellis::trellis_quantize_block;
+    use mozjpeg_rs::{TrellisConfig, TrellisSpeedMode};
 
     // Build AC Huffman table
     let mut htbl = HuffTable::default();
@@ -834,7 +839,8 @@ fn test_trellis_matches_c_quality_levels() {
         ac_huffsi[i] = size as i8;
     }
 
-    let config = TrellisConfig::default();
+    // Thorough: the C test export has no speed-level search limiting.
+    let config = TrellisConfig::default().speed_mode(TrellisSpeedMode::Thorough);
 
     // Test quality levels that are of interest (especially high qualities where the gap was observed)
     let quality_levels = [50, 75, 85, 90, 95, 97];
