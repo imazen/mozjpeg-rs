@@ -538,7 +538,8 @@ The trellis algorithm requires raw DCT coefficients (scaled by 8):
 ### Overshoot Deringing
 
 Reduces visible ringing artifacts near hard edges, especially on white backgrounds.
-Source: `jcdctmgr.c:416-550` (~130 lines). Enabled by default with `Encoder::new()`.
+Source: `jcdctmgr.c:416-550` (~130 lines). Enabled by default for every preset except
+`Preset::BaselineFastest` (`Encoder::fastest()` sets `overshoot_deringing: false`).
 
 **Core Insight:**
 - JPEG can encode values outside the displayable range (0-255)
@@ -578,12 +579,12 @@ Values: 50, 80, 120, 135, 140, 138, 100, 60
 
 **API:**
 ```rust
-// Enabled by default
-let encoder = Encoder::new();
+// Enabled by default (Preset::default() == Preset::ProgressiveBalanced)
+let encoder = Encoder::new(Preset::default());
 
 // Explicitly enable/disable
-let encoder = Encoder::new().overshoot_deringing(true);
-let encoder = Encoder::fastest().overshoot_deringing(false); // fastest disables it
+let encoder = Encoder::new(Preset::BaselineBalanced).overshoot_deringing(true);
+let encoder = Encoder::new(Preset::BaselineFastest).overshoot_deringing(true); // fastest disables it by default
 ```
 
 ### Deringing + 16-bit SIMD DCT Overflow (mozilla/mozjpeg#453)
