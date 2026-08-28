@@ -153,9 +153,21 @@ pub struct ResourceEstimate {
 ///     .max_width(20_000)
 ///     .max_height(20_000)
 ///     .max_pixel_count(120_000_000)        // 120 MP (admits 108 MP photos)
-///     .max_alloc_bytes(512 * 1024 * 1024); // 512 MB
+///     .max_alloc_bytes(512 * 1024 * 1024)  // 512 MB
+///     .max_icc_profile_bytes(1024 * 1024)  // 1 MB (sRGB is ~3 KB)
+///     .max_exif_bytes(64 * 1024)           // 64 KB (camera EXIF is 2-16 KB)
+///     .max_marker_bytes(64 * 1024);        // 64 KB of custom APP markers
 /// let encoder = Encoder::new(Preset::BaselineFastest).limits(limits);
 /// ```
+///
+/// # Metadata limits are policy, not format bounds
+///
+/// [`max_icc_profile_bytes`](Self::max_icc_profile_bytes),
+/// [`max_exif_bytes`](Self::max_exif_bytes) and
+/// [`max_marker_bytes`](Self::max_marker_bytes) sit *below* the JPEG format's
+/// own 65533-byte per-segment maximum, which the marker writer enforces
+/// unconditionally. Their value is refusing oversized metadata up front — before
+/// any DCT or trellis work — with a typed error, rather than after the encode.
 ///
 /// # Example
 ///
@@ -202,6 +214,37 @@ pub struct Limits {
     /// Large ICC profiles can significantly increase JPEG file size.
     /// Common profiles like sRGB are ~3KB, but some can exceed 1MB.
     pub max_icc_profile_bytes: usize,
+
+    /// Maximum EXIF payload size in bytes.
+    /// Set to 0 to disable (default).
+    ///
+    /// Applies to the raw TIFF payload passed to
+    /// [`Encoder::exif_data`](crate::Encoder::exif_data), not counting the
+    /// 6-byte `Exif\0\0` identifier or the 2-byte segment length the encoder
+    /// adds. Typical camera EXIF is 2–16 KB; a payload in the hundreds of KB
+    /// is either a large embedded thumbnail or attacker-supplied padding.
+    ///
+    /// This is a *policy* limit below the format bound. EXIF larger than the
+    /// JPEG per-segment maximum (65533 payload bytes) is rejected when the
+    /// marker is written whether or not this limit is set — setting it lets a
+    /// service refuse the request up front, before any encoding work, and with
+    /// a typed [`Error::ExifDataTooLarge`](crate::Error::ExifDataTooLarge)
+    /// instead of an I/O error.
+    pub max_exif_bytes: usize,
+
+    /// Maximum combined size of all custom APP markers, in bytes.
+    /// Set to 0 to disable (default).
+    ///
+    /// Applies to the sum of every payload added with
+    /// [`Encoder::add_marker`](crate::Encoder::add_marker). The sum is capped
+    /// rather than each marker individually, because any number of
+    /// individually-legal markers can still bloat the output — a single marker
+    /// over the cap trips it too.
+    ///
+    /// Does not cover EXIF or the ICC profile, which have their own limits
+    /// ([`max_exif_bytes`](Self::max_exif_bytes),
+    /// [`max_icc_profile_bytes`](Self::max_icc_profile_bytes)).
+    pub max_marker_bytes: usize,
 }
 
 impl Limits {
@@ -213,6 +256,8 @@ impl Limits {
             max_pixel_count: 0,
             max_alloc_bytes: 0,
             max_icc_profile_bytes: 0,
+            max_exif_bytes: 0,
+            max_marker_bytes: 0,
         }
     }
 
@@ -246,6 +291,22 @@ impl Limits {
         self
     }
 
+    /// Set maximum EXIF payload size.
+    ///
+    /// See [`max_exif_bytes`](Self::max_exif_bytes) for the exact bytes counted.
+    pub const fn max_exif_bytes(mut self, bytes: usize) -> Self {
+        self.max_exif_bytes = bytes;
+        self
+    }
+
+    /// Set the maximum combined size of all custom APP markers.
+    ///
+    /// See [`max_marker_bytes`](Self::max_marker_bytes) for the exact bytes counted.
+    pub const fn max_marker_bytes(mut self, bytes: usize) -> Self {
+        self.max_marker_bytes = bytes;
+        self
+    }
+
     /// Check if any limits are enabled.
     pub const fn has_limits(&self) -> bool {
         self.max_width > 0
@@ -253,6 +314,8 @@ impl Limits {
             || self.max_pixel_count > 0
             || self.max_alloc_bytes > 0
             || self.max_icc_profile_bytes > 0
+            || self.max_exif_bytes > 0
+            || self.max_marker_bytes > 0
     }
 }
 

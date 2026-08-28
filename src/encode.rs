@@ -834,6 +834,11 @@ impl Encoder {
     /// - Maximum pixel count (width × height)
     /// - Maximum estimated memory allocation
     /// - Maximum ICC profile size
+    /// - Maximum EXIF payload size
+    /// - Maximum combined size of the custom APP markers
+    ///
+    /// Every limit is off by default. All of them are checked at the start of
+    /// each `encode_*` call, before any color conversion, DCT or trellis work.
     ///
     /// # Example
     /// ```
@@ -909,6 +914,28 @@ impl Encoder {
                 size: icc.len(),
                 limit: limits.max_icc_profile_bytes,
             });
+        }
+
+        // Check EXIF payload size limit
+        if limits.max_exif_bytes > 0
+            && let Some(ref exif) = self.exif_data
+            && exif.len() > limits.max_exif_bytes
+        {
+            return Err(Error::ExifDataTooLarge {
+                size: exif.len(),
+                limit: limits.max_exif_bytes,
+            });
+        }
+
+        // Check combined custom APP marker size limit
+        if limits.max_marker_bytes > 0 {
+            let total: usize = self.custom_markers.iter().map(|(_, data)| data.len()).sum();
+            if total > limits.max_marker_bytes {
+                return Err(Error::MarkerDataTooLarge {
+                    size: total,
+                    limit: limits.max_marker_bytes,
+                });
+            }
         }
 
         Ok(())
@@ -4763,6 +4790,216 @@ mod tests {
         assert!(Limits::default().max_pixel_count(1000).has_limits());
         assert!(Limits::default().max_alloc_bytes(1000).has_limits());
         assert!(Limits::default().max_icc_profile_bytes(1000).has_limits());
+        assert!(Limits::default().max_exif_bytes(1000).has_limits());
+        assert!(Limits::default().max_marker_bytes(1000).has_limits());
+    }
+
+    // =========================================================================
+    // Metadata size limits (EXIF / custom APP markers) — issue #5 P2
+    //
+    // These are policy limits BELOW the JPEG 65533-byte per-segment format
+    // bound (enforced unconditionally in marker.rs). They are checked in
+    // `check_limits`, i.e. before any color conversion / DCT / trellis work.
+    // =========================================================================
+
+    /// 64x64 solid-gray RGB test image shared by the metadata-limit tests.
+    fn metadata_test_pixels() -> Vec<u8> {
+        vec![128u8; 64 * 64 * 3]
+    }
+
+    #[test]
+    fn test_exif_size_limit_boundary() {
+        // Cap at exactly 1000 bytes: 999 and 1000 pass, 1001 is rejected.
+        for (len, should_pass) in [(999usize, true), (1000, true), (1001, false)] {
+            let encoder = Encoder::new(Preset::BaselineFastest)
+                .limits(Limits::default().max_exif_bytes(1000))
+                .exif_data(vec![0u8; len]);
+
+            let result = encoder.encode_rgb(&metadata_test_pixels(), 64, 64);
+
+            if should_pass {
+                assert!(result.is_ok(), "EXIF of {len} bytes should pass a 1000 cap");
+            } else {
+                assert!(
+                    matches!(
+                        result,
+                        Err(Error::ExifDataTooLarge {
+                            size: 1001,
+                            limit: 1000
+                        })
+                    ),
+                    "EXIF of {len} bytes should be rejected by a 1000 cap, got {result:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_marker_size_limit_boundary() {
+        // Cap at exactly 1000 bytes across all custom APP markers.
+        for (len, should_pass) in [(999usize, true), (1000, true), (1001, false)] {
+            let encoder = Encoder::new(Preset::BaselineFastest)
+                .limits(Limits::default().max_marker_bytes(1000))
+                .add_marker(4, vec![0u8; len]);
+
+            let result = encoder.encode_rgb(&metadata_test_pixels(), 64, 64);
+
+            if should_pass {
+                assert!(
+                    result.is_ok(),
+                    "marker of {len} bytes should pass a 1000 cap"
+                );
+            } else {
+                assert!(
+                    matches!(
+                        result,
+                        Err(Error::MarkerDataTooLarge {
+                            size: 1001,
+                            limit: 1000
+                        })
+                    ),
+                    "marker of {len} bytes should be rejected by a 1000 cap, got {result:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_marker_size_limit_sums_across_markers() {
+        // Three individually-legal markers whose sum exceeds the cap.
+        let encoder = Encoder::new(Preset::BaselineFastest)
+            .limits(Limits::default().max_marker_bytes(1000))
+            .add_marker(4, vec![0u8; 400])
+            .add_marker(5, vec![0u8; 400])
+            .add_marker(6, vec![0u8; 400]);
+
+        let result = encoder.encode_rgb(&metadata_test_pixels(), 64, 64);
+        assert!(
+            matches!(
+                result,
+                Err(Error::MarkerDataTooLarge {
+                    size: 1200,
+                    limit: 1000
+                })
+            ),
+            "combined 1200 bytes should trip a 1000 cap, got {result:?}"
+        );
+    }
+
+    #[test]
+    fn test_metadata_limits_are_independent() {
+        // An EXIF cap must not constrain custom markers, and vice versa.
+        let exif_capped = Encoder::new(Preset::BaselineFastest)
+            .limits(Limits::default().max_exif_bytes(100))
+            .add_marker(4, vec![0u8; 5000]);
+        assert!(
+            exif_capped
+                .encode_rgb(&metadata_test_pixels(), 64, 64)
+                .is_ok()
+        );
+
+        let marker_capped = Encoder::new(Preset::BaselineFastest)
+            .limits(Limits::default().max_marker_bytes(100))
+            .exif_data(vec![0u8; 5000]);
+        assert!(
+            marker_capped
+                .encode_rgb(&metadata_test_pixels(), 64, 64)
+                .is_ok()
+        );
+    }
+
+    #[test]
+    fn test_metadata_limits_off_by_default_byte_identical() {
+        let pixels = metadata_test_pixels();
+        let exif = vec![7u8; 5000];
+        let marker = vec![9u8; 5000];
+
+        let build = |limits: Limits| {
+            Encoder::new(Preset::ProgressiveBalanced)
+                .quality(85)
+                .limits(limits)
+                .exif_data(exif.clone())
+                .add_marker(4, marker.clone())
+                .encode_rgb(&pixels, 64, 64)
+                .expect("encode should succeed")
+        };
+
+        // No limits at all — the pre-existing behaviour.
+        let baseline = build(Limits::none());
+        // All-zero `Limits::default()` must behave identically to `none()`.
+        assert_eq!(baseline, build(Limits::default()));
+        // Generous caps must not perturb a single output byte either.
+        assert_eq!(
+            baseline,
+            build(
+                Limits::default()
+                    .max_exif_bytes(1_000_000)
+                    .max_marker_bytes(1_000_000)
+            )
+        );
+        // And the metadata really is in the output (so the comparison is not vacuous).
+        assert!(
+            baseline.windows(16).any(|w| w == [7u8; 16]),
+            "EXIF payload should appear in the encoded JPEG"
+        );
+        assert!(
+            baseline.windows(16).any(|w| w == [9u8; 16]),
+            "custom marker payload should appear in the encoded JPEG"
+        );
+    }
+
+    #[test]
+    fn test_metadata_limits_reject_before_encoding() {
+        // Oversized metadata is rejected even when the pixel buffer is a size
+        // mismatch that a later stage would catch: proves the metadata check
+        // runs in `check_limits`, ahead of any pixel work.
+        let result = Encoder::new(Preset::ProgressiveSmallest)
+            .limits(Limits::default().max_exif_bytes(10))
+            .exif_data(vec![0u8; 100])
+            .encode_rgb(&[], 64, 64);
+        assert!(
+            matches!(result, Err(Error::ExifDataTooLarge { .. })),
+            "EXIF cap should fire before the buffer-size check, got {result:?}"
+        );
+
+        let result = Encoder::new(Preset::ProgressiveSmallest)
+            .limits(Limits::default().max_marker_bytes(10))
+            .add_marker(4, vec![0u8; 100])
+            .encode_rgb(&[], 64, 64);
+        assert!(
+            matches!(result, Err(Error::MarkerDataTooLarge { .. })),
+            "marker cap should fire before the buffer-size check, got {result:?}"
+        );
+    }
+
+    #[test]
+    fn test_metadata_limits_apply_to_grayscale_and_rgba() {
+        let gray = vec![128u8; 64 * 64];
+        let rgba = vec![128u8; 64 * 64 * 4];
+
+        let enc = |limits: Limits| {
+            Encoder::new(Preset::BaselineFastest)
+                .limits(limits)
+                .exif_data(vec![0u8; 100])
+                .add_marker(4, vec![0u8; 100])
+        };
+
+        assert!(matches!(
+            enc(Limits::default().max_exif_bytes(50)).encode_gray(&gray, 64, 64),
+            Err(Error::ExifDataTooLarge { .. })
+        ));
+        assert!(matches!(
+            enc(Limits::default().max_marker_bytes(50)).encode_gray(&gray, 64, 64),
+            Err(Error::MarkerDataTooLarge { .. })
+        ));
+        assert!(matches!(
+            enc(Limits::default().max_exif_bytes(50)).encode_rgba(&rgba, 64, 64),
+            Err(Error::ExifDataTooLarge { .. })
+        ));
+        assert!(matches!(
+            enc(Limits::default().max_marker_bytes(50)).encode_rgba(&rgba, 64, 64),
+            Err(Error::MarkerDataTooLarge { .. })
+        ));
     }
 
     // =========================================================================

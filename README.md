@@ -262,13 +262,23 @@ let limits = Limits::default()
     .max_width(20_000)
     .max_height(20_000)
     .max_pixel_count(50_000_000)        // reject before allocating
-    .max_alloc_bytes(512 * 1024 * 1024);
+    .max_alloc_bytes(512 * 1024 * 1024)
+    // Metadata caps — attacker-supplied EXIF/markers inflate output for free
+    .max_icc_profile_bytes(1024 * 1024)  // sRGB is ~3 KB
+    .max_exif_bytes(64 * 1024)           // camera EXIF is 2-16 KB
+    .max_marker_bytes(64 * 1024);        // all custom APP markers, combined
 
 let jpeg = Encoder::default()
     .quality(85)
     .limits(limits)
     .encode_rgb(&pixels, width, height)?;
 ```
+
+Every cap is checked at the start of each `encode_*` call, before any color conversion,
+DCT or trellis work, and reports a typed error (`Error::PixelCountExceeded`,
+`Error::ExifDataTooLarge`, `Error::MarkerDataTooLarge`, …). The three metadata caps are
+*policy* limits below the JPEG format's own 65533-byte per-segment maximum, which the
+marker writer enforces whether or not you set them.
 
 ## Features
 

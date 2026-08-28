@@ -93,6 +93,31 @@ pub enum Error {
         /// Maximum allowed size in bytes
         limit: usize,
     },
+    /// EXIF payload size exceeds the configured limit
+    ///
+    /// This is a *policy* limit set via
+    /// [`Limits::max_exif_bytes`](crate::Limits::max_exif_bytes), checked before
+    /// any encoding work starts. It is independent of the JPEG format's own
+    /// 65533-byte per-segment bound, which is enforced when the marker is
+    /// written regardless of any configured limit.
+    ExifDataTooLarge {
+        /// Actual EXIF payload size in bytes
+        size: usize,
+        /// Maximum allowed size in bytes
+        limit: usize,
+    },
+    /// Combined size of the custom APP markers exceeds the configured limit
+    ///
+    /// This is a *policy* limit set via
+    /// [`Limits::max_marker_bytes`](crate::Limits::max_marker_bytes), checked
+    /// before any encoding work starts, and applies to the sum of every payload
+    /// added with [`Encoder::add_marker`](crate::Encoder::add_marker).
+    MarkerDataTooLarge {
+        /// Combined size of all custom APP marker payloads in bytes
+        size: usize,
+        /// Maximum allowed size in bytes
+        limit: usize,
+    },
     /// Row stride is too small for the image width
     InvalidStride {
         /// Provided stride in bytes
@@ -186,6 +211,20 @@ impl fmt::Display for Error {
                 write!(
                     f,
                     "ICC profile size {} bytes exceeds limit {} bytes",
+                    size, limit
+                )
+            }
+            Error::ExifDataTooLarge { size, limit } => {
+                write!(
+                    f,
+                    "EXIF data size {} bytes exceeds limit {} bytes",
+                    size, limit
+                )
+            }
+            Error::MarkerDataTooLarge { size, limit } => {
+                write!(
+                    f,
+                    "Custom APP marker data size {} bytes exceeds limit {} bytes",
                     size, limit
                 )
             }
@@ -333,6 +372,34 @@ mod tests {
                     limit: 50_000_000,
                 },
                 "Estimated memory 100000000 bytes exceeds limit 50000000 bytes",
+            ),
+            (
+                Error::IccProfileTooLarge {
+                    size: 2_000_000,
+                    limit: 1_000_000,
+                },
+                "ICC profile size 2000000 bytes exceeds limit 1000000 bytes",
+            ),
+            (
+                Error::ExifDataTooLarge {
+                    size: 70_000,
+                    limit: 65_536,
+                },
+                "EXIF data size 70000 bytes exceeds limit 65536 bytes",
+            ),
+            (
+                Error::MarkerDataTooLarge {
+                    size: 300_000,
+                    limit: 65_536,
+                },
+                "Custom APP marker data size 300000 bytes exceeds limit 65536 bytes",
+            ),
+            (
+                Error::PixelCountExceeded {
+                    pixel_count: 30_000_000,
+                    limit: 16_000_000,
+                },
+                "Pixel count 30000000 exceeds limit 16000000",
             ),
             (
                 Error::InvalidStride {
