@@ -7,7 +7,67 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.0] - unreleased
+
+Breaking release. The break is the price of `Limits` being able to grow: adding
+the EXIF / marker caps below to an all-public-field struct was itself a semver
+break, so `Limits` is sealed in the same version and this is the last time
+adding a limit costs a major bump.
+
+### QUEUED BREAKING CHANGES
+<!-- Empty: everything queued here landed in 0.10.0. Add new items as they are
+     discovered; do NOT ship them piecemeal. -->
+
+### BREAKING
+
+Confirmed by `cargo semver-checks --baseline-version 0.9.2` — two major checks
+failed, both `*_marked_non_exhaustive`, on three items (0ef2cd2):
+
+- `struct_marked_non_exhaustive`: **`Limits`** (`src/types.rs`) is now
+  `#[non_exhaustive]`. Struct literals and `..Default::default()` no longer
+  construct it from outside the crate. Migration: use `Limits::default()` (or
+  the `const` `Limits::none()`) plus the `const` builder methods —
+  `Limits::default().max_width(8192).max_exif_bytes(65_536)`. Every field stays
+  `pub`, readable, and assignable on an owned value; only the literal form goes
+  away. Adding a cap is non-breaking from here on.
+- `struct_marked_non_exhaustive`: **`ConfigWarnings`** (`src/compat.rs`,
+  `mozjpeg-sys-config` feature) is now `#[non_exhaustive]`. It is an output
+  type; build one with `ConfigWarnings::default()` and assign fields.
+- `enum_marked_non_exhaustive`: **`ConfigError`** (`src/compat.rs`,
+  `mozjpeg-sys-config` feature) is now `#[non_exhaustive]`. `match` on it must
+  carry a `_` arm. New variants are non-breaking from here on.
+
+Not affected: `Error` (`src/error.rs`) was already `#[non_exhaustive]`, so the
+two new variants below are additive. The input-shaped config structs callers
+build with literals (`TrellisConfig`, `ScanInfo`, `ComponentInfo`, `QuantTable`,
+`HuffmanTable`, `PixelDensity`, `ScanSearchConfig`, `TestEncoderConfig`) and the
+result types (`ResourceEstimate`, `ScanSearchResult`) were deliberately left
+constructible.
+
 ### Added
+- Optional metadata size caps on `Limits`, closing the P2 item of the #5
+  production-readiness audit (f234f92):
+  - `Limits::max_exif_bytes` — caps the raw TIFF payload given to
+    `Encoder::exif_data`, excluding the 6-byte `Exif\0\0` identifier and the
+    2-byte segment length the encoder adds.
+  - `Limits::max_marker_bytes` — caps the **sum** of every payload added with
+    `Encoder::add_marker`. The sum, not each marker: any number of
+    individually-legal markers can still bloat the output, and a single
+    over-cap marker trips the sum anyway.
+  - Both default to `0` (disabled), matching every existing cap, and both are
+    checked in `Encoder::check_limits` — at the top of every `encode_*` entry
+    point, before color conversion, DCT or trellis work and before the
+    buffer-size check.
+  - New `Error::ExifDataTooLarge { size, limit }` and
+    `Error::MarkerDataTooLarge { size, limit }`.
+  - These are *policy* limits **below** the JPEG format's own 65533-byte
+    per-segment bound, which `src/marker.rs` enforces unconditionally either
+    way. What they buy is refusing the request up front with a typed error
+    rather than after the encode with an I/O error.
+  - Note: `StreamingEncoder` still has no `limits()` builder, so no limit of
+    any kind applies on that path.
+- README and `Limits` docs now show the metadata caps in the server preset and
+  state that all caps are checked before any pixel work (f234f92).
 - vCPU-aware encode resource estimation via zencodec's unified `estimate` API:
   `MozjpegEncoderConfig::estimate_encode_resources(&ImageCharacteristics, &ComputeEnvironment)`
   (gated behind the `zencodec` feature) overrides the `zencodec::EncoderConfig`
@@ -20,6 +80,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   as a reviewable diff next to the code change that caused them (TBD)
 
 ### Fixed
+- `Error`'s Display test covered 20 of 23 variants; the `IccProfileTooLarge`
+  and `PixelCountExceeded` arms were untested. All variants are covered now
+  (f234f92).
 - `cargo test -p sys-local` (the "Test FFI Comparison (Local mozjpeg)" CI job)
   links again: the `mozjpeg_test_dc_trellis_optimize` FFI symbol was declared
   on the Rust side (8c7f411) but never defined in the mozjpeg C fork. It is now
@@ -36,6 +99,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   output is byte-identical (#5)
 
 ### Changed
+- Version bumped 0.9.2 → 0.10.0 (the leading non-zero component, per the 0.x
+  semver rule) because the `#[non_exhaustive]` additions above are genuine,
+  unavoidable breaks. Release prep only — nothing published.
 - deps: migrate to published zencodec 0.1.24 estimate API; drop the temporary
   `[patch.crates-io] zencodec = { git, rev = "0f71295" }` pin (the `estimate` API
   is now on crates.io). The `estimate_encode_resources` mapping in `src/codec.rs`

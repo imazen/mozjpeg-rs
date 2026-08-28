@@ -6,27 +6,27 @@
 # impls omitted; re-export duplicates annotated `[also: path]`.
 # DO NOT EDIT BY HAND — commit regenerated changes with the code.
 #
-# files: mozjpeg-rs.txt 235 lines (supported surface) | mozjpeg-rs.features.txt 45 added (features: fast-yuv,imgref,mozjpeg-sys-config,png,simd,simd-intrinsics,zencodec) | mozjpeg-rs.internal.txt 353 lines (495 hidden + 0 excluded-feature)
+# files: mozjpeg-rs.txt 245 lines (supported surface) | mozjpeg-rs.features.txt 45 added (features: fast-yuv,imgref,mozjpeg-sys-config,png,simd,simd-intrinsics,zencodec) | mozjpeg-rs.internal.txt 330 lines (463 hidden + 0 excluded-feature)
 
 ## summary
 #
 #   pub modules                                 2
 #   pub types (struct/enum/trait/alias)        16
-#   pub consts/statics                         23
+#   pub consts/statics                         25
 #   free functions                              8
 #   inherent methods                           84
-#   struct fields                              48
-#   enum variants                              38
+#   struct fields                              54
+#   enum variants                              40
 #   re-exports                                  4
 #   trait roster entries (type × trait)        67
 #   auto-trait-complete types                  11
 #   auto-trait exceptions                       1
 #
 # per-module pub lines:
-#   (root)                          219
+#   (root)                          229
 #   imgref_ext                        4
 
-## items (216 lines)
+## items (226 lines)
 
 pub mod mozjpeg_rs
 pub use DCTSIZE2
@@ -61,6 +61,9 @@ pub Error::DimensionLimitExceeded::height: u32
 pub Error::DimensionLimitExceeded::max_height: u32
 pub Error::DimensionLimitExceeded::max_width: u32
 pub Error::DimensionLimitExceeded::width: u32
+pub Error::ExifDataTooLarge
+pub Error::ExifDataTooLarge::limit: usize
+pub Error::ExifDataTooLarge::size: usize
 pub Error::HuffmanCodeLengthOverflow
 pub Error::IccProfileTooLarge
 pub Error::IccProfileTooLarge::limit: usize
@@ -83,6 +86,9 @@ pub Error::InvalidStride
 pub Error::InvalidStride::minimum: usize
 pub Error::InvalidStride::stride: usize
 pub Error::IoError(alloc::string::String)
+pub Error::MarkerDataTooLarge
+pub Error::MarkerDataTooLarge::limit: usize
+pub Error::MarkerDataTooLarge::size: usize
 pub Error::PixelCountExceeded
 pub Error::PixelCountExceeded::limit: u64
 pub Error::PixelCountExceeded::pixel_count: u64
@@ -129,20 +135,20 @@ pub fn Encoder::custom_luma_qtable(self, [u16; 64]) -> Self
 pub fn Encoder::encode_gray(&self, &[u8], u32, u32) -> Result<alloc::vec::Vec<u8>>
 pub fn Encoder::encode_gray_cancellable(&self, &[u8], u32, u32, core::option::Option<&core::sync::atomic::AtomicBool>, core::option::Option<core::time::Duration>) -> Result<alloc::vec::Vec<u8>>
 pub fn Encoder::encode_gray_strided(&self, &[u8], u32, u32, usize) -> Result<alloc::vec::Vec<u8>>
-pub fn Encoder::encode_gray_to_writer<W: std::io::Write>(&self, &[u8], u32, u32, W) -> Result<()>
+pub fn Encoder::encode_gray_to_writer<W: core::io::write::Write>(&self, &[u8], u32, u32, W) -> Result<()>
 pub fn Encoder::encode_gray_with_stop(&self, &[u8], u32, u32, &dyn enough::Stop) -> Result<alloc::vec::Vec<u8>>
 pub fn Encoder::encode_rgb(&self, &[u8], u32, u32) -> Result<alloc::vec::Vec<u8>>
 pub fn Encoder::encode_rgb_cancellable(&self, &[u8], u32, u32, core::option::Option<&core::sync::atomic::AtomicBool>, core::option::Option<core::time::Duration>) -> Result<alloc::vec::Vec<u8>>
 pub fn Encoder::encode_rgb_strided(&self, &[u8], u32, u32, usize) -> Result<alloc::vec::Vec<u8>>
-pub fn Encoder::encode_rgb_to_writer<W: std::io::Write>(&self, &[u8], u32, u32, W) -> Result<()>
+pub fn Encoder::encode_rgb_to_writer<W: core::io::write::Write>(&self, &[u8], u32, u32, W) -> Result<()>
 pub fn Encoder::encode_rgb_with_stop(&self, &[u8], u32, u32, &dyn enough::Stop) -> Result<alloc::vec::Vec<u8>>
 pub fn Encoder::encode_rgba(&self, &[u8], u32, u32) -> Result<alloc::vec::Vec<u8>>
-pub fn Encoder::encode_rgba_to_writer<W: std::io::Write>(&self, &[u8], u32, u32, W) -> Result<()>
+pub fn Encoder::encode_rgba_to_writer<W: core::io::write::Write>(&self, &[u8], u32, u32, W) -> Result<()>
 pub fn Encoder::encode_rgba_with_stop(&self, &[u8], u32, u32, &dyn enough::Stop) -> Result<alloc::vec::Vec<u8>>
 pub fn Encoder::encode_ycbcr_planar(&self, &[u8], &[u8], &[u8], u32, u32) -> Result<alloc::vec::Vec<u8>>
 pub fn Encoder::encode_ycbcr_planar_strided(&self, &[u8], usize, &[u8], usize, &[u8], usize, u32, u32) -> Result<alloc::vec::Vec<u8>>
-pub fn Encoder::encode_ycbcr_planar_strided_to_writer<W: std::io::Write>(&self, &[u8], usize, &[u8], usize, &[u8], usize, u32, u32, W) -> Result<()>
-pub fn Encoder::encode_ycbcr_planar_to_writer<W: std::io::Write>(&self, &[u8], &[u8], &[u8], u32, u32, W) -> Result<()>
+pub fn Encoder::encode_ycbcr_planar_strided_to_writer<W: core::io::write::Write>(&self, &[u8], usize, &[u8], usize, &[u8], usize, u32, u32, W) -> Result<()>
+pub fn Encoder::encode_ycbcr_planar_to_writer<W: core::io::write::Write>(&self, &[u8], &[u8], &[u8], u32, u32, W) -> Result<()>
 pub fn Encoder::estimate_resources(&self, u32, u32) -> ResourceEstimate
 pub fn Encoder::estimate_resources_gray(&self, u32, u32) -> ResourceEstimate
 pub fn Encoder::exif_data(self, alloc::vec::Vec<u8>) -> Self
@@ -170,19 +176,23 @@ pub fn Encoder::subsampling(self, Subsampling) -> Self
 pub fn Encoder::trellis(self, TrellisConfig) -> Self
 pub fn Encoder::encode_imgref<P: imgref_ext::EncodeablePixel>(&self, imgref::ImgRef<'_, P>) -> Result<alloc::vec::Vec<u8>>
 pub fn Encoder::streaming() -> StreamingEncoder
-pub struct EncodingStream<W: std::io::Write>
+pub struct EncodingStream<W: core::io::write::Write>
 pub fn EncodingStream<W>::finish(self) -> Result<W>
 pub fn EncodingStream<W>::write_scanlines(&mut self, &[u8]) -> Result<()>
-pub struct Limits
+#[non_exhaustive] pub struct Limits
 pub Limits::max_alloc_bytes: usize
+pub Limits::max_exif_bytes: usize
 pub Limits::max_height: u32
 pub Limits::max_icc_profile_bytes: usize
+pub Limits::max_marker_bytes: usize
 pub Limits::max_pixel_count: u64
 pub Limits::max_width: u32
 pub const fn Limits::has_limits(&self) -> bool
 pub const fn Limits::max_alloc_bytes(self, usize) -> Self
+pub const fn Limits::max_exif_bytes(self, usize) -> Self
 pub const fn Limits::max_height(self, u32) -> Self
 pub const fn Limits::max_icc_profile_bytes(self, usize) -> Self
+pub const fn Limits::max_marker_bytes(self, usize) -> Self
 pub const fn Limits::max_pixel_count(self, u64) -> Self
 pub const fn Limits::max_width(self, u32) -> Self
 pub const fn Limits::none() -> Self
@@ -209,8 +219,8 @@ pub fn StreamingEncoder::pixel_density(self, PixelDensity) -> Self
 pub fn StreamingEncoder::quality(self, u8) -> Self
 pub fn StreamingEncoder::quant_tables(self, QuantTableIdx) -> Self
 pub fn StreamingEncoder::restart_interval(self, u16) -> Self
-pub fn StreamingEncoder::start_gray<W: std::io::Write>(self, u32, u32, W) -> Result<EncodingStream<W>>
-pub fn StreamingEncoder::start_rgb<W: std::io::Write>(self, u32, u32, W) -> Result<EncodingStream<W>>
+pub fn StreamingEncoder::start_gray<W: core::io::write::Write>(self, u32, u32, W) -> Result<EncodingStream<W>>
+pub fn StreamingEncoder::start_rgb<W: core::io::write::Write>(self, u32, u32, W) -> Result<EncodingStream<W>>
 pub fn StreamingEncoder::subsampling(self, Subsampling) -> Self
 pub struct TrellisConfig
 pub TrellisConfig::dc_enabled: bool
@@ -249,7 +259,7 @@ pub type Result<T> = core::result::Result<T, Error>
 
 DensityUnit: Clone, Copy, Debug, Default, Eq, PartialEq
 Encoder: Clone, Debug, Default, Encode
-Error: Clone, Debug, Display, Eq, Error, From<alloc::collections::TryReserveError>, From<enough::reason::StopReason>, From<std::io::error::Error>, PartialEq
+Error: Clone, Debug, Display, Eq, Error, From<alloc::collections::TryReserveError>, From<core::io::error::Error>, From<enough::reason::StopReason>, PartialEq
 Limits: Clone, Copy, Debug, Default, Eq, PartialEq
 PixelDensity: Clone, Copy, Debug, Default, Eq, PartialEq
 Preset: Clone, Copy, Debug, Default, Eq, PartialEq
