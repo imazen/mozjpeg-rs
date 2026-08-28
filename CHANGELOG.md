@@ -97,6 +97,17 @@ constructible.
   once per MCU row in the baseline entropy-emission loop, and in all three
   grayscale paths (which previously never checked mid-encode). `Unstoppable`
   output is byte-identical (#5)
+- docs(readme): state `encode_rgb` `u32` width/height + `quality` 0–100 range, document
+  the `encode_rgb_with_stop` cancellation API — found by insulated-developer test. The
+  untyped `encode_rgb` example let an external developer guess `usize` for the dimensions
+  (compile error vs the actual `u32`); the README also surfaced no way to pass a
+  cancellation token despite the `enough` dependency. Added explicit parameter signatures,
+  a "Cancellation (servers)" subsection covering `Unstoppable` (no-op) and
+  `almost-enough`'s `Stopper` (real cancel → `Error::Cancelled`/`Error::TimedOut`), and a
+  "Resource limits" subsection documenting the existing `Limits` API (TBD)
+- CI clippy break from `wide` 1.5.0 deprecating the `CmpEq` trait: dropped the
+  now-unused trait imports in `entropy.rs`/`fast_entropy.rs` (`simd_eq` is an
+  inherent method) and raised the `wide` minimum to 1.5.0 to match (TBD)
 
 ### Changed
 - Version bumped 0.9.2 → 0.10.0 (the leading non-zero component, per the 0.x
@@ -109,19 +120,6 @@ constructible.
   (`wall_ms` is now `u64`, was `f32`), `.with_peak_max(max)` (replaces the dropped
   `.with_peak_range(min, max)`), and the `.with_output_bytes(..)` call is gone.
 - Removed `tests/*.rs` and `benches/**` from the published crate `include` list — downstream consumers don't need test/bench source; local `cargo test`/`cargo bench` are unaffected (TBD)
-
-### Fixed
-- docs(readme): state `encode_rgb` `u32` width/height + `quality` 0–100 range, document
-  the `encode_rgb_with_stop` cancellation API — found by insulated-developer test. The
-  untyped `encode_rgb` example let an external developer guess `usize` for the dimensions
-  (compile error vs the actual `u32`); the README also surfaced no way to pass a
-  cancellation token despite the `enough` dependency. Added explicit parameter signatures,
-  a "Cancellation (servers)" subsection covering `Unstoppable` (no-op) and
-  `almost-enough`'s `Stopper` (real cancel → `Error::Cancelled`/`Error::TimedOut`), and a
-  "Resource limits" subsection documenting the existing `Limits` API (TBD)
-- CI clippy break from `wide` 1.5.0 deprecating the `CmpEq` trait: dropped the
-  now-unused trait imports in `entropy.rs`/`fast_entropy.rs` (`simd_eq` is an
-  inherent method) and raised the `wide` minimum to 1.5.0 to match (TBD)
 
 ## [0.9.2] - 2026-04-17
 
