@@ -681,9 +681,11 @@ impl Encoder {
     /// Override SIMD operations dispatch for testing alternative DCT implementations.
     ///
     /// The default dispatch selects the best available i32-based DCT. Use this to
-    /// test experimental paths like [`SimdOps::avx2_i16()`], which uses 16-bit packed
-    /// SIMD and is vulnerable to overflow with [`overshoot_deringing`](Self::overshoot_deringing)
-    /// enabled (see [mozilla/mozjpeg#453](https://github.com/mozilla/mozjpeg/pull/453)).
+    /// test experimental paths like `SimdOps::avx2_i16()` (x86_64 only, so this is
+    /// deliberately not an intra-doc link — it does not resolve on other targets),
+    /// which uses 16-bit packed SIMD and is vulnerable to overflow with
+    /// [`overshoot_deringing`](Self::overshoot_deringing) enabled
+    /// (see [mozilla/mozjpeg#453](https://github.com/mozilla/mozjpeg/pull/453)).
     ///
     /// Test patterns for this bug are in the codec-corpus at
     /// `imageflow/test_inputs/dct_overflow_patterns/`.
