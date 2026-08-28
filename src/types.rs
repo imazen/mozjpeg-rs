@@ -160,6 +160,28 @@ pub struct ResourceEstimate {
 /// let encoder = Encoder::new(Preset::BaselineFastest).limits(limits);
 /// ```
 ///
+/// # Construction
+///
+/// `Limits` is `#[non_exhaustive]`, so it is built from
+/// [`Limits::default()`](Default::default) (or the equivalent
+/// [`Limits::none()`](Self::none), which is `const`) plus the `const` builder
+/// methods — never from a struct literal or `..Default::default()`. Every
+/// field stays public and readable, and new caps can be added in future
+/// releases without breaking callers:
+///
+/// ```
+/// use mozjpeg_rs::Limits;
+///
+/// // Builder chain — the supported way to construct.
+/// const WEB: Limits = Limits::none().max_width(8192).max_exif_bytes(64 * 1024);
+/// assert_eq!(WEB.max_width, 8192);
+///
+/// // Fields remain readable and mutable on an owned value.
+/// let mut limits = Limits::default();
+/// limits.max_marker_bytes = 4096;
+/// assert!(limits.has_limits());
+/// ```
+///
 /// # Metadata limits are policy, not format bounds
 ///
 /// [`max_icc_profile_bytes`](Self::max_icc_profile_bytes),
@@ -185,6 +207,7 @@ pub struct ResourceEstimate {
 ///     .limits(limits);
 /// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[non_exhaustive]
 pub struct Limits {
     /// Maximum allowed image width in pixels.
     /// Set to 0 to disable (default).

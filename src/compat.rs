@@ -35,7 +35,12 @@ use crate::types::{Subsampling, TrellisConfig};
 ///
 /// Some settings cannot be applied to `jpeg_compress_struct` directly
 /// and must be handled separately after `jpeg_start_compress`.
+///
+/// Non-exhaustive: this is an output type, produced by the crate and read by
+/// callers. Build one for a test with `ConfigWarnings::default()` and assign
+/// the fields you need.
 #[derive(Debug, Clone, Default)]
+#[non_exhaustive]
 pub struct ConfigWarnings {
     /// EXIF data was specified but must be written as APP1 marker after start
     pub has_exif: bool,
@@ -53,7 +58,11 @@ impl ConfigWarnings {
 }
 
 /// Error configuring a C mozjpeg encoder.
+///
+/// Non-exhaustive: new variants may be added in a patch release as C mozjpeg
+/// gains settings this crate cannot map. Match with a `_` arm.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub enum ConfigError {
     /// The quant table index is not supported by C mozjpeg
     UnsupportedQuantTable(QuantTableIdx),
