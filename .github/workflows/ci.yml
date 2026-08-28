@@ -98,7 +98,11 @@ jobs:
         run: cargo test --test preset_parity
 
       - name: Run mozjpeg-sys-config tests
-        run: cargo test --features mozjpeg-sys-config compat_tests
+        # Filter is `compat::tests`, the module path. `compat_tests` (the old
+        # value) matched no test name, so this step passed without running
+        # anything. It covers compat::tests::test_c_mozjpeg_encode_rgb /
+        # _grayscale / _ycbcr_planar_444 / _ycbcr_planar_420 / test_rust_vs_c_parity.
+        run: cargo test --features mozjpeg-sys-config compat::tests
 
       - name: Run decoder round-trip validation
         run: cargo run --release --example decoder_roundtrip
