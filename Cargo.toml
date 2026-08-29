@@ -66,13 +66,13 @@ archmage = { version = "0.9.17", features = ["macros"] }
 # Safe unaligned SIMD memory operations (no token parameter needed)
 safe_unaligned_simd = "0.2.5"
 # Optional: mozjpeg-sys configuration (configure C encoder from our settings)
-mozjpeg-sys = { version = "2.2", optional = true }
+mozjpeg-sys = { version = "2.2.3", optional = true }
 libc = { version = "0.2.183", optional = true }
 # Optional: zenyuv for fast SIMD color conversion (AVX2/NEON/WASM + scalar)
 zenyuv = { version = "0.1.0", optional = true, default-features = false, features = ["std"] }
 # Optional: imgref integration for type-safe pixel formats
 imgref = { version = "1.12.0", optional = true }
-rgb = { version = "0.8", optional = true }
+rgb = { version = "0.8.53", optional = true }
 # Cooperative cancellation trait (zero-cost when using Unstoppable)
 enough = { version = "0.4.2", features = ["std"] }
 # Optional: zencodec trait implementations for zen codec ecosystem
@@ -84,7 +84,7 @@ garb = { version = "0.2.5", optional = true, default-features = false }
 [dev-dependencies]
 dssim = "3.4.0"
 yuv = "0.8.12"
-rgb = "0.8"
+rgb = "0.8.53"
 imgref = "1.12.0"
 ssimulacra2 = "0.5.1"
 png = "0.18.1"
@@ -94,7 +94,7 @@ jpeg-decoder = "0.3.2"
 zune-jpeg = "0.5.15"
 libc = "0.2.183"
 # Use existing mozjpeg-sys from crates.io for basic FFI validation
-mozjpeg-sys = "2.2"
+mozjpeg-sys = "2.2.3"
 # High-level mozjpeg wrapper for parity testing
 mozjpeg = "0.10.13"
 # Codec testing infrastructure (provides DSSIM, SSIMULACRA2, Butteraugli metrics, ICC support)
