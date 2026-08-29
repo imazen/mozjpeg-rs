@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Third-party requirements written as full `x.y.z`**: `mozjpeg-sys` `"2.2"` → `"2.2.3"` and `rgb` `"0.8"` → `"0.8.53"`, in both the optional-dependency and dev-dependency positions (69af27b). Every other direct third-party requirement was checked against the crates.io API and is already at its latest published version, so there was nothing to bump. `Cargo.lock` is byte-identical after the edit. Note `Cargo.lock` is gitignored here, so CI resolves fresh on every run and is always on latest-compatible by design — there is no lockfile refresh to commit.
+- Verified that refreshing the local lock does not move emitted JPEG bytes. The refresh takes `wide` 1.5.0 → 1.7.0 and `safe_arch` 1.1.0 → 1.2.0, and `wide` is the portable-SIMD crate behind `dct.rs` and `color.rs`. An out-of-tree harness encoded 8,064 deterministic cases (4 content kinds × 7 sizes including odd/partial-MCU dimensions × 8 qualities from 5 to 100 × 5 subsamplings × 4 presets × trellis on/off) against the same source with only those dependency versions swapped: identical per-case hashes and identical 26,718,055-byte blob (`fnv1a64 5bcc210b64486620`) both ways. C-encoder parity is likewise unmoved — `preset_parity` and `ffi_validation` green either way, and `mozjpeg-sys` itself did not move.
+
 - **`zencodec` / `zenpixels` requirements now span the published minor and the
   next one**: `zencodec >=0.1.25, <0.3.0` (was `"0.1.25"`), `zenpixels
   >=0.2.10, <0.4.0` (was `"0.2.10"`). For a `0.x` crate Cargo treats the minor
