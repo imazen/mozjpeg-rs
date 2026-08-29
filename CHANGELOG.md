@@ -64,8 +64,28 @@ constructible.
     per-segment bound, which `src/marker.rs` enforces unconditionally either
     way. What they buy is refusing the request up front with a typed error
     rather than after the encode with an I/O error.
-  - Note: `StreamingEncoder` still has no `limits()` builder, so no limit of
-    any kind applies on that path.
+- `StreamingEncoder::limits(Limits)` — the streaming path previously had no
+  limits builder at all, so **no** resource limit of any kind applied to it
+  (cbfc955). Same type, same zero-sentinel semantics and the same
+  typed errors as `Encoder::limits`, checked in `start_rgb` / `start_gray`
+  before the scanline buffer is allocated and before a single marker byte is
+  written. Purely additive — `cargo semver-checks --baseline-version 0.9.2`
+  reports the same 2 failures on the same 3 items as before this change.
+  - Every cap applies; none is structurally inapplicable to streaming.
+    `max_width` / `max_height` / `max_pixel_count` / `max_icc_profile_bytes` /
+    `max_exif_bytes` / `max_marker_bytes` behave identically to the batch path
+    and produce byte-identical error payloads.
+  - `max_alloc_bytes` applies too, but against a far smaller estimate:
+    `mcu_height * width * components + 3 * mcu_width * mcu_height * 2`, which is
+    the scanline buffer plus the three i16 MCU planes, and is independent of
+    image height by construction. Output bytes are not counted — streaming hands
+    those to the caller's `Write`. A limit sized against
+    `Encoder::estimate_resources` will essentially never bind here; that is what
+    the mode is for. The formula is documented on `StreamingEncoder::limits` and
+    pinned by a test.
+  - `Encoder::streaming()` is an associated function with no receiver, so it
+    cannot carry limits over from an `Encoder` — set them on the returned
+    `StreamingEncoder`.
 - README and `Limits` docs now show the metadata caps in the server preset and
   state that all caps are checked before any pixel work (f234f92).
 - vCPU-aware encode resource estimation via zencodec's unified `estimate` API:
