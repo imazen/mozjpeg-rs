@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **`zencodec` / `zenpixels` requirements now span the published minor and the
+  next one**: `zencodec >=0.1.25, <0.3.0` (was `"0.1.25"`), `zenpixels
+  >=0.2.10, <0.4.0` (was `"0.2.10"`). For a `0.x` crate Cargo treats the minor
+  as the major, so the plain requirement meant `^0.1.25` = `>=0.1.25, <0.2.0`
+  and a `zencodec 0.2.0` release would have been invisible until this manifest
+  was hand-edited. Floors are unchanged (this crate's own minimums), only the
+  ceilings move, and nothing newer is published — `cargo metadata` still
+  resolves one `zencodec 0.1.26` and one `zenpixels 0.2.16`. The standing
+  current-plus-next rule is documented in the zencodec repo's `CLAUDE.md`.
+
 ## [0.10.0] - unreleased
 
 Breaking release. The break is the price of `Limits` being able to grow: adding
