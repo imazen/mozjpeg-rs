@@ -6,7 +6,7 @@
 # impls omitted; re-export duplicates annotated `[also: path]`.
 # DO NOT EDIT BY HAND — commit regenerated changes with the code.
 #
-# files: mozjpeg-rs.txt 245 lines (supported surface) | mozjpeg-rs.features.txt 45 added (features: fast-yuv,imgref,mozjpeg-sys-config,png,simd,simd-intrinsics,zencodec) | mozjpeg-rs.internal.txt 330 lines (463 hidden + 0 excluded-feature)
+# files: mozjpeg-rs.txt 246 lines (supported surface) | mozjpeg-rs.features.txt 45 added (features: fast-yuv,imgref,mozjpeg-sys-config,png,simd,simd-intrinsics,zencodec) | mozjpeg-rs.internal.txt 330 lines (463 hidden + 0 excluded-feature)
 
 ## summary
 #
@@ -14,7 +14,7 @@
 #   pub types (struct/enum/trait/alias)        16
 #   pub consts/statics                         25
 #   free functions                              8
-#   inherent methods                           84
+#   inherent methods                           85
 #   struct fields                              54
 #   enum variants                              40
 #   re-exports                                  4
@@ -23,10 +23,10 @@
 #   auto-trait exceptions                       1
 #
 # per-module pub lines:
-#   (root)                          229
+#   (root)                          230
 #   imgref_ext                        4
 
-## items (226 lines)
+## items (227 lines)
 
 pub mod mozjpeg_rs
 pub use DCTSIZE2
@@ -215,6 +215,7 @@ pub fn StreamingEncoder::custom_luma_qtable(self, [u16; 64]) -> Self
 pub fn StreamingEncoder::exif_data(self, alloc::vec::Vec<u8>) -> Self
 pub fn StreamingEncoder::force_baseline(self, bool) -> Self
 pub fn StreamingEncoder::icc_profile(self, alloc::vec::Vec<u8>) -> Self
+pub fn StreamingEncoder::limits(self, Limits) -> Self
 pub fn StreamingEncoder::pixel_density(self, PixelDensity) -> Self
 pub fn StreamingEncoder::quality(self, u8) -> Self
 pub fn StreamingEncoder::quant_tables(self, QuantTableIdx) -> Self

@@ -12,7 +12,7 @@ use crate::marker::MarkerWriter;
 use crate::progressive::generate_baseline_scan;
 use crate::quant::quantize_block;
 use crate::simd::SimdOps;
-use crate::types::{ComponentInfo, PixelDensity, QuantTable, Subsampling};
+use crate::types::{ComponentInfo, Limits, PixelDensity, QuantTable, Subsampling};
 
 use super::{
     Encode, create_std_ac_chroma_table, create_std_ac_luma_table, create_std_dc_chroma_table,
@@ -74,6 +74,8 @@ pub struct StreamingEncoder {
     custom_markers: Vec<(u8, Vec<u8>)>,
     /// SIMD operations dispatch
     simd: SimdOps,
+    /// Resource limits (all-off by default)
+    limits: Limits,
 }
 
 impl Default for StreamingEncoder {
@@ -117,6 +119,7 @@ impl StreamingEncoder {
             icc_profile: None,
             custom_markers: Vec::new(),
             simd: SimdOps::detect(),
+            limits: Limits::none(),
         }
     }
 
@@ -206,6 +209,196 @@ impl StreamingEncoder {
         self
     }
 
+    /// Set resource limits for the stream.
+    ///
+    /// Same type and same semantics as
+    /// [`Encoder::limits`](crate::Encoder::limits): every cap is off by default
+    /// (zero = unlimited), and every enabled cap is checked in
+    /// [`start_rgb`](Self::start_rgb) / [`start_gray`](Self::start_gray) —
+    /// before the scanline buffer is allocated, before a single marker byte is
+    /// written, and long before any color conversion or DCT work. The same
+    /// typed errors come back as on the batch path, so a caller can handle
+    /// both identically.
+    ///
+    /// # What each cap means here
+    ///
+    /// | Cap | On the streaming path |
+    /// |---|---|
+    /// | [`max_width`](Limits::max_width) / [`max_height`](Limits::max_height) | Identical to the batch path — [`Error::DimensionLimitExceeded`] |
+    /// | [`max_pixel_count`](Limits::max_pixel_count) | Identical — [`Error::PixelCountExceeded`] |
+    /// | [`max_icc_profile_bytes`](Limits::max_icc_profile_bytes) | Identical — [`Error::IccProfileTooLarge`] |
+    /// | [`max_exif_bytes`](Limits::max_exif_bytes) | Identical — [`Error::ExifDataTooLarge`] |
+    /// | [`max_marker_bytes`](Limits::max_marker_bytes) | Identical (sum of all custom APP payloads) — [`Error::MarkerDataTooLarge`] |
+    /// | [`max_alloc_bytes`](Limits::max_alloc_bytes) | Applies, but against a **much smaller** estimate — see below |
+    ///
+    /// No cap is structurally inapplicable to streaming. `max_alloc_bytes` is
+    /// the only one whose *magnitude* differs, because streaming is the mode
+    /// that exists to avoid whole-image buffers: it holds one MCU row, not the
+    /// image. The estimate checked here is
+    ///
+    /// ```text
+    /// mcu_height * width * components   // the scanline buffer
+    ///   + 3 * mcu_width * mcu_height * 2 // three i16 MCU planes (RGB only)
+    /// ```
+    ///
+    /// where `mcu_width`/`mcu_height` are 8 or 16 depending on subsampling.
+    /// It does NOT include the output, which streaming hands to your `W: Write`
+    /// rather than accumulating. A limit sized for
+    /// [`Encoder::estimate_resources`](crate::Encoder::estimate_resources) will
+    /// therefore essentially never trip here — that is the point of the mode,
+    /// not an omission. Size it against the formula above if you want it to
+    /// bind.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use mozjpeg_rs::{Encoder, Limits};
+    ///
+    /// let limits = Limits::default()
+    ///     .max_width(20_000)
+    ///     .max_pixel_count(120_000_000)
+    ///     .max_exif_bytes(64 * 1024);
+    ///
+    /// let mut out = Vec::new();
+    /// let mut stream = Encoder::streaming()
+    ///     .quality(85)
+    ///     .limits(limits)
+    ///     .start_rgb(64, 64, &mut out)?;
+    /// stream.write_scanlines(&vec![128u8; 64 * 64 * 3])?;
+    /// stream.finish()?;
+    /// # Ok::<(), mozjpeg_rs::Error>(())
+    /// ```
+    ///
+    /// Note that [`Encoder::streaming()`](crate::Encoder::streaming) is an
+    /// associated function with no receiver, so it cannot carry limits over
+    /// from an `Encoder` — set them on the returned `StreamingEncoder`.
+    pub fn limits(mut self, limits: Limits) -> Self {
+        self.limits = limits;
+        self
+    }
+
+    /// Check all resource limits before any buffer is allocated or marker written.
+    ///
+    /// Mirrors [`Encoder::check_limits`](crate::Encoder) field for field; see
+    /// [`limits`](Self::limits) for how `max_alloc_bytes` is estimated on this
+    /// path.
+    fn check_limits(&self, width: u32, height: u32, num_components: u8) -> Result<()> {
+        let limits = &self.limits;
+
+        // Check dimension limits
+        if (limits.max_width > 0 && width > limits.max_width)
+            || (limits.max_height > 0 && height > limits.max_height)
+        {
+            return Err(Error::DimensionLimitExceeded {
+                width,
+                height,
+                max_width: limits.max_width,
+                max_height: limits.max_height,
+            });
+        }
+
+        // Check pixel count limit
+        if limits.max_pixel_count > 0 {
+            let pixel_count = width as u64 * height as u64;
+            if pixel_count > limits.max_pixel_count {
+                return Err(Error::PixelCountExceeded {
+                    pixel_count,
+                    limit: limits.max_pixel_count,
+                });
+            }
+        }
+
+        // Check allocation limit against the streaming working set, which is one
+        // MCU row plus the per-MCU i16 planes — not a whole-image buffer.
+        if limits.max_alloc_bytes > 0 {
+            let estimated = self.estimate_streaming_bytes(width, num_components);
+            if estimated > limits.max_alloc_bytes {
+                return Err(Error::AllocationLimitExceeded {
+                    estimated,
+                    limit: limits.max_alloc_bytes,
+                });
+            }
+        }
+
+        // Check ICC profile size limit
+        if limits.max_icc_profile_bytes > 0
+            && let Some(ref icc) = self.icc_profile
+            && icc.len() > limits.max_icc_profile_bytes
+        {
+            return Err(Error::IccProfileTooLarge {
+                size: icc.len(),
+                limit: limits.max_icc_profile_bytes,
+            });
+        }
+
+        // Check EXIF payload size limit
+        if limits.max_exif_bytes > 0
+            && let Some(ref exif) = self.exif_data
+            && exif.len() > limits.max_exif_bytes
+        {
+            return Err(Error::ExifDataTooLarge {
+                size: exif.len(),
+                limit: limits.max_exif_bytes,
+            });
+        }
+
+        // Check combined custom APP marker size limit
+        if limits.max_marker_bytes > 0 {
+            let total: usize = self.custom_markers.iter().map(|(_, data)| data.len()).sum();
+            if total > limits.max_marker_bytes {
+                return Err(Error::MarkerDataTooLarge {
+                    size: total,
+                    limit: limits.max_marker_bytes,
+                });
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Peak heap the streaming path holds, in bytes, for a given width.
+    ///
+    /// Independent of image height by construction — that is what makes this
+    /// mode streaming. See [`limits`](Self::limits) for the documented formula.
+    fn estimate_streaming_bytes(&self, width: u32, num_components: u8) -> usize {
+        let (mcu_width, mcu_height) = Self::mcu_dimensions(self.subsampling, num_components);
+
+        // The scanline buffer: one full MCU row of input pixels.
+        let scanline = (mcu_height as usize)
+            .saturating_mul(width as usize)
+            .saturating_mul(num_components as usize);
+
+        // Color MCU rows additionally build three i16 planes per MCU.
+        let planes = if num_components == 1 {
+            0
+        } else {
+            3usize
+                .saturating_mul(mcu_width as usize)
+                .saturating_mul(mcu_height as usize)
+                .saturating_mul(core::mem::size_of::<i16>())
+        };
+
+        scanline.saturating_add(planes)
+    }
+
+    /// MCU dimensions in pixels for a component count and subsampling mode.
+    ///
+    /// Single source of truth shared by [`Self::estimate_streaming_bytes`] and
+    /// [`EncodingStream::new`], so the limit estimate can never drift from the
+    /// buffer it is estimating.
+    fn mcu_dimensions(subsampling: Subsampling, num_components: u8) -> (u32, u32) {
+        if num_components == 1 {
+            (DCTSIZE as u32, DCTSIZE as u32)
+        } else {
+            match subsampling {
+                Subsampling::S444 | Subsampling::Gray => (DCTSIZE as u32, DCTSIZE as u32),
+                Subsampling::S422 => (DCTSIZE as u32 * 2, DCTSIZE as u32),
+                Subsampling::S420 => (DCTSIZE as u32 * 2, DCTSIZE as u32 * 2),
+                Subsampling::S440 => (DCTSIZE as u32, DCTSIZE as u32 * 2),
+            }
+        }
+    }
+
     /// Start streaming RGB encoding to a writer.
     ///
     /// # Arguments
@@ -215,6 +408,10 @@ impl StreamingEncoder {
     ///
     /// # Returns
     /// An [`EncodingStream`] that accepts scanlines.
+    ///
+    /// # Errors
+    /// Any limit set via [`limits`](Self::limits) is checked here, before the
+    /// scanline buffer is allocated and before any marker is written.
     pub fn start_rgb<W: Write>(
         self,
         width: u32,
@@ -233,6 +430,10 @@ impl StreamingEncoder {
     ///
     /// # Returns
     /// An [`EncodingStream`] that accepts scanlines.
+    ///
+    /// # Errors
+    /// Any limit set via [`limits`](Self::limits) is checked here, before the
+    /// scanline buffer is allocated and before any marker is written.
     pub fn start_gray<W: Write>(
         self,
         width: u32,
@@ -344,17 +545,14 @@ impl<W: Write> EncodingStream<W> {
             return Err(Error::InvalidDimensions { width, height });
         }
 
+        // Check all resource limits. Ordered exactly as on the batch path:
+        // after the zero-dimension check, before any allocation, marker write,
+        // or pixel work.
+        config.check_limits(width, height, num_components)?;
+
         // Determine MCU dimensions based on subsampling
-        let (mcu_width, mcu_height) = if num_components == 1 {
-            (DCTSIZE as u32, DCTSIZE as u32)
-        } else {
-            match config.subsampling {
-                Subsampling::S444 | Subsampling::Gray => (DCTSIZE as u32, DCTSIZE as u32),
-                Subsampling::S422 => (DCTSIZE as u32 * 2, DCTSIZE as u32),
-                Subsampling::S420 => (DCTSIZE as u32 * 2, DCTSIZE as u32 * 2),
-                Subsampling::S440 => (DCTSIZE as u32, DCTSIZE as u32 * 2),
-            }
-        };
+        let (mcu_width, mcu_height) =
+            StreamingEncoder::mcu_dimensions(config.subsampling, num_components);
 
         let mcus_per_row = (width + mcu_width - 1) / mcu_width;
 
@@ -1008,5 +1206,460 @@ impl<W: Write> EncodingStream<W> {
         self.writer.write_eoi()?;
 
         Ok(self.writer.into_inner())
+    }
+}
+
+// ============================================================================
+// Tests — streaming resource limits (issue #5 follow-up)
+// ============================================================================
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::encode::Encoder;
+    use crate::types::Preset;
+
+    /// 64x64 RGB solid gray, the shared fixture for these tests.
+    fn rgb_pixels() -> Vec<u8> {
+        vec![128u8; 64 * 64 * 3]
+    }
+
+    fn gray_pixels() -> Vec<u8> {
+        vec![128u8; 64 * 64]
+    }
+
+    /// Run a full streaming RGB encode at 64x64 and return the result.
+    fn stream_rgb(enc: StreamingEncoder) -> Result<Vec<u8>> {
+        let mut out = Vec::new();
+        {
+            let mut stream = enc.start_rgb(64, 64, &mut out)?;
+            stream.write_scanlines(&rgb_pixels())?;
+            stream.finish()?;
+        }
+        Ok(out)
+    }
+
+    /// Run a full streaming grayscale encode at 64x64 and return the result.
+    fn stream_gray(enc: StreamingEncoder) -> Result<Vec<u8>> {
+        let mut out = Vec::new();
+        {
+            let mut stream = enc.start_gray(64, 64, &mut out)?;
+            stream.write_scanlines(&gray_pixels())?;
+            stream.finish()?;
+        }
+        Ok(out)
+    }
+
+    fn base() -> StreamingEncoder {
+        StreamingEncoder::baseline_fastest().quality(85)
+    }
+
+    // ------------------------------------------------------------------
+    // Off by default: existing streaming callers see byte-identical output
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn test_streaming_limits_off_by_default() {
+        assert_eq!(base().limits, Limits::none());
+        assert!(!base().limits.has_limits());
+    }
+
+    #[test]
+    fn test_streaming_limits_off_by_default_byte_identical() {
+        let exif = vec![7u8; 5000];
+        let marker = vec![9u8; 5000];
+        let icc = vec![3u8; 5000];
+
+        let build = |limits: Option<Limits>| {
+            let enc = base()
+                .exif_data(exif.clone())
+                .icc_profile(icc.clone())
+                .add_marker(4, marker.clone());
+            let enc = match limits {
+                Some(l) => enc.limits(l),
+                // No `.limits()` call at all — the pre-change call shape.
+                None => enc,
+            };
+            stream_rgb(enc).expect("encode should succeed")
+        };
+
+        let untouched = build(None);
+        // An explicit all-zero Limits must behave exactly like never calling it.
+        assert_eq!(untouched, build(Some(Limits::default())));
+        assert_eq!(untouched, build(Some(Limits::none())));
+        // Generous caps must not perturb a single output byte either.
+        assert_eq!(
+            untouched,
+            build(Some(
+                Limits::default()
+                    .max_width(100_000)
+                    .max_height(100_000)
+                    .max_pixel_count(1_000_000_000)
+                    .max_alloc_bytes(1_000_000_000)
+                    .max_icc_profile_bytes(1_000_000)
+                    .max_exif_bytes(1_000_000)
+                    .max_marker_bytes(1_000_000)
+            ))
+        );
+        // Non-vacuous: the metadata really is in the stream being compared.
+        assert!(untouched.windows(16).any(|w| w == [7u8; 16]));
+        assert!(untouched.windows(16).any(|w| w == [9u8; 16]));
+    }
+
+    // ------------------------------------------------------------------
+    // Boundary: limit-1 / limit / limit+1 for every enforced cap
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn test_streaming_width_limit_boundary() {
+        // Cap width at 64: 63 and 64 pass, 65 is rejected.
+        for (w, should_pass) in [(63u32, true), (64, true), (65, false)] {
+            let mut out = Vec::new();
+            let result = base()
+                .limits(Limits::default().max_width(64))
+                .start_rgb(w, 8, &mut out);
+            match (result, should_pass) {
+                (Ok(_), true) => {}
+                (
+                    Err(Error::DimensionLimitExceeded {
+                        width, max_width, ..
+                    }),
+                    false,
+                ) => {
+                    assert_eq!((width, max_width), (65, 64));
+                }
+                (r, _) => panic!("width {w} against a 64 cap: unexpected {:?}", r.err()),
+            }
+        }
+    }
+
+    #[test]
+    fn test_streaming_height_limit_boundary() {
+        for (h, should_pass) in [(63u32, true), (64, true), (65, false)] {
+            let mut out = Vec::new();
+            let result = base()
+                .limits(Limits::default().max_height(64))
+                .start_rgb(8, h, &mut out);
+            match (result, should_pass) {
+                (Ok(_), true) => {}
+                (
+                    Err(Error::DimensionLimitExceeded {
+                        height, max_height, ..
+                    }),
+                    false,
+                ) => {
+                    assert_eq!((height, max_height), (65, 64));
+                }
+                (r, _) => panic!("height {h} against a 64 cap: unexpected {:?}", r.err()),
+            }
+        }
+    }
+
+    #[test]
+    fn test_streaming_pixel_count_limit_boundary() {
+        // 64x64 = 4096 pixels. Vary the cap around it.
+        for (cap, should_pass) in [(4095u64, false), (4096, true), (4097, true)] {
+            let result = stream_rgb(base().limits(Limits::default().max_pixel_count(cap)));
+            match (result, should_pass) {
+                (Ok(_), true) => {}
+                (Err(Error::PixelCountExceeded { pixel_count, limit }), false) => {
+                    assert_eq!((pixel_count, limit), (4096, 4095));
+                }
+                (r, _) => panic!("cap {cap} on 4096 pixels: unexpected {:?}", r.err()),
+            }
+        }
+    }
+
+    #[test]
+    fn test_streaming_alloc_estimate_matches_documented_formula() {
+        // The formula in StreamingEncoder::limits docs, pinned so the estimate
+        // cannot silently drift from the buffer it estimates.
+        //
+        // RGB 4:2:0 at width 64 -> MCU 16x16:
+        //   scanline = 16 * 64 * 3          = 3072
+        //   planes   = 3 * 16 * 16 * 2      = 1536
+        assert_eq!(base().estimate_streaming_bytes(64, 3), 3072 + 1536);
+        // Grayscale at width 64 -> MCU 8x8, no i16 planes:
+        //   scanline = 8 * 64 * 1           = 512
+        assert_eq!(base().estimate_streaming_bytes(64, 1), 512);
+        // 4:4:4 RGB at width 64 -> MCU 8x8:
+        //   scanline = 8 * 64 * 3           = 1536
+        //   planes   = 3 * 8 * 8 * 2        = 384
+        assert_eq!(
+            base()
+                .subsampling(Subsampling::S444)
+                .estimate_streaming_bytes(64, 3),
+            1536 + 384
+        );
+        // Height-independent by construction — that is what makes it streaming.
+        assert_eq!(
+            base().estimate_streaming_bytes(64, 3),
+            base().estimate_streaming_bytes(64, 3)
+        );
+    }
+
+    #[test]
+    fn test_streaming_alloc_limit_boundary() {
+        let estimate = base().estimate_streaming_bytes(64, 3);
+        assert_eq!(estimate, 4608);
+        for (cap, should_pass) in [
+            (estimate - 1, false),
+            (estimate, true),
+            (estimate + 1, true),
+        ] {
+            let result = stream_rgb(base().limits(Limits::default().max_alloc_bytes(cap)));
+            match (result, should_pass) {
+                (Ok(_), true) => {}
+                (Err(Error::AllocationLimitExceeded { estimated, limit }), false) => {
+                    assert_eq!((estimated, limit), (estimate, estimate - 1));
+                }
+                (r, _) => panic!("cap {cap} on a {estimate}-byte estimate: {:?}", r.err()),
+            }
+        }
+    }
+
+    #[test]
+    fn test_streaming_icc_limit_boundary() {
+        for (len, should_pass) in [(999usize, true), (1000, true), (1001, false)] {
+            let result = stream_rgb(
+                base()
+                    .limits(Limits::default().max_icc_profile_bytes(1000))
+                    .icc_profile(vec![0u8; len]),
+            );
+            match (result, should_pass) {
+                (Ok(_), true) => {}
+                (Err(Error::IccProfileTooLarge { size, limit }), false) => {
+                    assert_eq!((size, limit), (1001, 1000));
+                }
+                (r, _) => panic!("ICC of {len} bytes against a 1000 cap: {:?}", r.err()),
+            }
+        }
+    }
+
+    #[test]
+    fn test_streaming_exif_limit_boundary() {
+        for (len, should_pass) in [(999usize, true), (1000, true), (1001, false)] {
+            let result = stream_rgb(
+                base()
+                    .limits(Limits::default().max_exif_bytes(1000))
+                    .exif_data(vec![0u8; len]),
+            );
+            match (result, should_pass) {
+                (Ok(_), true) => {}
+                (Err(Error::ExifDataTooLarge { size, limit }), false) => {
+                    assert_eq!((size, limit), (1001, 1000));
+                }
+                (r, _) => panic!("EXIF of {len} bytes against a 1000 cap: {:?}", r.err()),
+            }
+        }
+    }
+
+    #[test]
+    fn test_streaming_marker_limit_boundary() {
+        for (len, should_pass) in [(999usize, true), (1000, true), (1001, false)] {
+            let result = stream_rgb(
+                base()
+                    .limits(Limits::default().max_marker_bytes(1000))
+                    .add_marker(4, vec![0u8; len]),
+            );
+            match (result, should_pass) {
+                (Ok(_), true) => {}
+                (Err(Error::MarkerDataTooLarge { size, limit }), false) => {
+                    assert_eq!((size, limit), (1001, 1000));
+                }
+                (r, _) => panic!("marker of {len} bytes against a 1000 cap: {:?}", r.err()),
+            }
+        }
+    }
+
+    #[test]
+    fn test_streaming_marker_limit_sums_across_markers() {
+        let result = stream_rgb(
+            base()
+                .limits(Limits::default().max_marker_bytes(1000))
+                .add_marker(4, vec![0u8; 400])
+                .add_marker(5, vec![0u8; 400])
+                .add_marker(6, vec![0u8; 400]),
+        );
+        assert!(
+            matches!(
+                result,
+                Err(Error::MarkerDataTooLarge {
+                    size: 1200,
+                    limit: 1000
+                })
+            ),
+            "combined 1200 bytes should trip a 1000 cap, got {:?}",
+            result.err()
+        );
+    }
+
+    // ------------------------------------------------------------------
+    // Enforcement happens before allocation / markers / pixel work
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn test_streaming_limits_reject_before_any_output() {
+        // start_rgb writes SOI + APP0 + DQT + SOF + DHT + SOS before returning.
+        // If the limit check ran late, the writer would already hold bytes.
+        for limits in [
+            Limits::default().max_width(8),
+            Limits::default().max_pixel_count(16),
+            Limits::default().max_alloc_bytes(16),
+            Limits::default().max_exif_bytes(1),
+            Limits::default().max_marker_bytes(1),
+            Limits::default().max_icc_profile_bytes(1),
+        ] {
+            let mut out = Vec::new();
+            let result = base()
+                .limits(limits)
+                .exif_data(vec![0u8; 100])
+                .icc_profile(vec![0u8; 100])
+                .add_marker(4, vec![0u8; 100])
+                .start_rgb(64, 64, &mut out);
+            assert!(result.is_err(), "{limits:?} should have been rejected");
+            drop(result);
+            assert!(
+                out.is_empty(),
+                "{limits:?} was rejected but {} bytes had already been written",
+                out.len()
+            );
+        }
+    }
+
+    #[test]
+    fn test_streaming_limits_apply_to_grayscale() {
+        assert!(matches!(
+            stream_gray(
+                base()
+                    .limits(Limits::default().max_exif_bytes(50))
+                    .exif_data(vec![0u8; 100])
+            ),
+            Err(Error::ExifDataTooLarge { .. })
+        ));
+        assert!(matches!(
+            stream_gray(
+                base()
+                    .limits(Limits::default().max_marker_bytes(50))
+                    .add_marker(4, vec![0u8; 100])
+            ),
+            Err(Error::MarkerDataTooLarge { .. })
+        ));
+        assert!(matches!(
+            stream_gray(base().limits(Limits::default().max_pixel_count(16))),
+            Err(Error::PixelCountExceeded { .. })
+        ));
+        // Grayscale allocates no i16 planes, so its estimate is the bare
+        // scanline buffer.
+        assert!(matches!(
+            stream_gray(base().limits(Limits::default().max_alloc_bytes(511))),
+            Err(Error::AllocationLimitExceeded {
+                estimated: 512,
+                limit: 511
+            })
+        ));
+    }
+
+    #[test]
+    fn test_streaming_limits_apply_via_encode_trait() {
+        // The `Encode` impl routes through start_rgb/start_gray, so limits
+        // must bind there too.
+        use crate::encode::Encode;
+        let enc = base()
+            .limits(Limits::default().max_exif_bytes(50))
+            .exif_data(vec![0u8; 100]);
+        assert!(matches!(
+            enc.encode_rgb(&rgb_pixels(), 64, 64),
+            Err(Error::ExifDataTooLarge { .. })
+        ));
+        assert!(matches!(
+            enc.encode_gray(&gray_pixels(), 64, 64),
+            Err(Error::MarkerDataTooLarge { .. } | Error::ExifDataTooLarge { .. })
+        ));
+    }
+
+    // ------------------------------------------------------------------
+    // Parity with the batch Encoder
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn test_streaming_and_encoder_reject_identically() {
+        // Same over-limit input, both paths, same error variant. Each case is
+        // (limits, exif, icc, marker).
+        let cases: [(Limits, usize, usize, usize); 5] = [
+            (Limits::default().max_width(32), 0, 0, 0),
+            (Limits::default().max_pixel_count(16), 0, 0, 0),
+            (Limits::default().max_exif_bytes(10), 100, 0, 0),
+            (Limits::default().max_icc_profile_bytes(10), 0, 100, 0),
+            (Limits::default().max_marker_bytes(10), 0, 0, 100),
+        ];
+
+        for (limits, exif, icc, marker) in cases {
+            let mut batch = Encoder::new(Preset::BaselineFastest).limits(limits);
+            let mut streaming = base().limits(limits);
+            if exif > 0 {
+                batch = batch.exif_data(vec![0u8; exif]);
+                streaming = streaming.exif_data(vec![0u8; exif]);
+            }
+            if icc > 0 {
+                batch = batch.icc_profile(vec![0u8; icc]);
+                streaming = streaming.icc_profile(vec![0u8; icc]);
+            }
+            if marker > 0 {
+                batch = batch.add_marker(4, vec![0u8; marker]);
+                streaming = streaming.add_marker(4, vec![0u8; marker]);
+            }
+
+            let batch_err = batch
+                .encode_rgb(&rgb_pixels(), 64, 64)
+                .expect_err("batch path should reject");
+            let streaming_err = stream_rgb(streaming).expect_err("streaming path should reject");
+
+            assert_eq!(
+                std::mem::discriminant(&batch_err),
+                std::mem::discriminant(&streaming_err),
+                "{limits:?}: batch gave {batch_err:?}, streaming gave {streaming_err:?}"
+            );
+            // For every cap except max_alloc_bytes the payloads match too,
+            // because both paths compare the same numbers.
+            assert_eq!(batch_err, streaming_err, "{limits:?}: payloads differ");
+        }
+    }
+
+    #[test]
+    fn test_streaming_and_encoder_alloc_limit_agree_on_variant_not_magnitude() {
+        // max_alloc_bytes is the one cap whose estimate legitimately differs:
+        // the batch path sizes a whole-image working set, streaming sizes one
+        // MCU row. A 1-byte cap trips both, and the variant matches.
+        let limits = Limits::default().max_alloc_bytes(1);
+
+        let batch_err = Encoder::new(Preset::BaselineFastest)
+            .limits(limits)
+            .encode_rgb(&rgb_pixels(), 64, 64)
+            .expect_err("batch path should reject");
+        let streaming_err = stream_rgb(base().limits(limits)).expect_err("streaming should reject");
+
+        let (
+            Error::AllocationLimitExceeded {
+                estimated: batch_est,
+                ..
+            },
+            Error::AllocationLimitExceeded {
+                estimated: stream_est,
+                ..
+            },
+        ) = (&batch_err, &streaming_err)
+        else {
+            panic!(
+                "expected AllocationLimitExceeded from both, got {batch_err:?} / {streaming_err:?}"
+            );
+        };
+
+        // The whole point of streaming: its working set is far smaller.
+        assert!(
+            *stream_est < *batch_est,
+            "streaming estimate {stream_est} should be below the batch estimate {batch_est}"
+        );
+        assert_eq!(*stream_est, 4608);
     }
 }

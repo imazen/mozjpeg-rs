@@ -280,6 +280,22 @@ DCT or trellis work, and reports a typed error (`Error::PixelCountExceeded`,
 *policy* limits below the JPEG format's own 65533-byte per-segment maximum, which the
 marker writer enforces whether or not you set them.
 
+The streaming encoder takes the same `Limits` via the same `.limits(...)` builder, checked
+in `start_rgb` / `start_gray` before the scanline buffer is allocated and before any marker
+is written:
+
+```rust
+let mut stream = Encoder::streaming()
+    .quality(85)
+    .limits(limits)
+    .start_rgb(width, height, output)?;
+```
+
+Every cap applies there too. `max_alloc_bytes` is the one whose magnitude differs: streaming
+holds one MCU row rather than the whole image, so it is checked against
+`mcu_height * width * components + 3 * mcu_width * mcu_height * 2` — see the
+`StreamingEncoder::limits` docs for the details.
+
 ## Features
 
 - **Trellis quantization** - Rate-distortion optimized coefficient selection (AC + DC)
