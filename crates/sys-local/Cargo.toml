@@ -7,10 +7,10 @@ links = "mozjpeg"
 publish = false  # Internal test infrastructure only
 
 [dependencies]
-libc = "0.2"
+libc = "0.2.189"
 
 [build-dependencies]
-cmake = "0.1"
+cmake = "0.1.58"
 cc = "1.4.4"
 
 # The FFI comparison test and the trace/quant examples live in this crate rather
