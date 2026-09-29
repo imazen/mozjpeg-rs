@@ -107,6 +107,62 @@ jobs:
       - name: Run decoder round-trip validation
         run: cargo run --release --example decoder_roundtrip
 
+  # Optional-feature API surfaces. The main matrix only exercises default
+  # features; the zencodec adapter, imgref integration, and SIMD-intrinsics
+  # paths would otherwise only be compiled locally.
+  test-features:
+    name: Features (${{ matrix.name }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: zencodec
+            args: --features zencodec
+          - name: no-default-features
+            args: --no-default-features
+          - name: simd
+            args: --features simd
+          - name: all-features
+            args: --all-features
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build
+        run: cargo build -p mozjpeg-rs ${{ matrix.args }}
+
+      - name: Test (lib)
+        run: cargo test -p mozjpeg-rs --lib ${{ matrix.args }}
+
+      - name: Test (public API integration)
+        # encode_tests exercises the public API only — it must compile
+        # under every feature combination.
+        run: cargo test -p mozjpeg-rs --test encode_tests ${{ matrix.args }}
+
+  # Public-API snapshot freshness (docs/public-api/, via zenutils-apidoc).
+  # Regenerate with `just api-doc` after intentional API changes.
+  api-doc:
+    name: API Doc Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Check API snapshot is current
+        run: cargo test --manifest-path apidoc/Cargo.toml
+        env:
+          ZEN_API_DOC: check
+
   # Tests requiring local mozjpeg source with test exports
   test-ffi-local:
     name: Test FFI Comparison (Local mozjpeg)
@@ -149,8 +205,10 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - name: Build documentation
-        # Exclude sys-local (requires local mozjpeg C source)
-        run: cargo doc -p mozjpeg-rs --no-deps
+        # Exclude sys-local (requires local mozjpeg C source). Build with the
+        # feature-gated surfaces docs.rs shows so their rustdoc is checked too
+        # (mozjpeg-sys-config stays out — its C build needs cmake/nasm).
+        run: cargo doc -p mozjpeg-rs --no-deps --features "zencodec simd-intrinsics png"
         env:
           RUSTDOCFLAGS: -D warnings
 

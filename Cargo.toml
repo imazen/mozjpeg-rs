@@ -19,6 +19,13 @@ include = [
     "/LICENSE*",
 ]
 
+[package.metadata.docs.rs]
+# Document the feature-gated API surfaces. `mozjpeg-sys-config` is excluded:
+# mozjpeg-sys builds vendored C (cmake/nasm), which docs.rs builders lack.
+# Its surface is `compat::{CMozjpeg, ConfigWarnings}` — documented in-source.
+features = ["zencodec", "simd-intrinsics", "png"]
+rustdoc-args = ["--generate-link-to-definition"]
+
 [workspace]
 members = ["crates/*"]
 # `apidoc/` is the CI-free public-API snapshot runner: excluded so plain
