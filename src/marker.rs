@@ -394,6 +394,46 @@ impl<W: Write> MarkerWriter<W> {
         Ok(())
     }
 
+    /// Write APP1 marker with XMP metadata.
+    ///
+    /// # Arguments
+    /// * `xmp_data` - Raw XMP packet (XML/RDF), without the
+    ///   `"http://ns.adobe.com/xap/1.0/\0"` identifier
+    ///
+    /// The marker is written as:
+    /// `0xFF 0xE1 [length] "http://ns.adobe.com/xap/1.0/\0" [xmp_data]`
+    ///
+    /// Extended XMP (multi-segment, >64KB) is not supported; the standard
+    /// packet must fit in a single APP1 segment.
+    pub fn write_app1_xmp(&mut self, xmp_data: &[u8]) -> std::io::Result<()> {
+        const XMP_NS: &[u8] = b"http://ns.adobe.com/xap/1.0/\0";
+
+        // APP1 marker
+        self.emit_marker(0xE1)?;
+
+        // Length = 2 (length field) + namespace + data length
+        let total_len = 2 + XMP_NS.len() + xmp_data.len();
+        if total_len > 65535 {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "XMP data too large",
+            ));
+        }
+        self.emit_2bytes(total_len as u16)?;
+
+        // XMP identifier
+        for &b in XMP_NS {
+            self.emit_byte(b)?;
+        }
+
+        // XMP packet
+        for &b in xmp_data {
+            self.emit_byte(b)?;
+        }
+
+        Ok(())
+    }
+
     /// Write generic APP marker with raw data.
     ///
     /// # Arguments

@@ -152,6 +152,168 @@ fn test_encode_with_exif() {
     assert_eq!(decoded.len(), (width * height * 3) as usize);
 }
 
+/// Walk the JPEG header (SOI through SOS) and collect the payload of every
+/// APPn segment, in order. Returns `(app_number, payload)` pairs; payload
+/// excludes the two length bytes.
+fn app_segments(jpeg: &[u8]) -> Vec<(u8, &[u8])> {
+    assert_eq!(&jpeg[0..2], &[0xFF, 0xD8], "missing SOI");
+    let mut out = Vec::new();
+    let mut pos = 2;
+    while pos + 4 <= jpeg.len() {
+        assert_eq!(jpeg[pos], 0xFF, "expected marker at {pos}");
+        let marker = jpeg[pos + 1];
+        if marker == 0xDA || marker == 0xD9 {
+            break; // SOS or EOI
+        }
+        let len = u16::from_be_bytes([jpeg[pos + 2], jpeg[pos + 3]]) as usize;
+        assert!(
+            len >= 2 && pos + 2 + len <= jpeg.len(),
+            "bad segment at {pos}"
+        );
+        if (0xE0..=0xEF).contains(&marker) {
+            out.push((marker - 0xE0, &jpeg[pos + 4..pos + 2 + len]));
+        }
+        pos += 2 + len;
+    }
+    out
+}
+
+const XMP_NS: &[u8] = b"http://ns.adobe.com/xap/1.0/\0";
+const XMP_PACKET: &[u8] = br#"<x:xmpmeta xmlns:x="adobe:ns:meta/"><rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"/></x:xmpmeta>"#;
+
+#[test]
+fn test_encode_with_xmp() {
+    let width = 16u32;
+    let height = 16u32;
+    let rgb_data = vec![128u8; (width * height * 3) as usize];
+
+    let jpeg_data = Encoder::baseline_optimized()
+        .quality(75)
+        .xmp_data(XMP_PACKET.to_vec())
+        .encode_rgb(&rgb_data, width, height)
+        .unwrap();
+
+    let xmp_segments: Vec<_> = app_segments(&jpeg_data)
+        .into_iter()
+        .filter(|(app, data)| *app == 1 && data.starts_with(XMP_NS))
+        .collect();
+    assert_eq!(xmp_segments.len(), 1, "expected exactly one XMP APP1");
+    assert_eq!(&xmp_segments[0].1[XMP_NS.len()..], XMP_PACKET);
+
+    let mut decoder = jpeg_decoder::Decoder::new(std::io::Cursor::new(&jpeg_data));
+    decoder.decode().expect("Failed to decode JPEG with XMP");
+}
+
+#[test]
+fn test_encode_xmp_grayscale() {
+    let width = 16u32;
+    let height = 16u32;
+    let gray_data = vec![128u8; (width * height) as usize];
+
+    let jpeg_data = Encoder::baseline_optimized()
+        .quality(75)
+        .xmp_data(XMP_PACKET.to_vec())
+        .encode_gray(&gray_data, width, height)
+        .unwrap();
+
+    let has_xmp = app_segments(&jpeg_data)
+        .iter()
+        .any(|(app, data)| *app == 1 && data.starts_with(XMP_NS));
+    assert!(has_xmp, "XMP APP1 not found in grayscale output");
+}
+
+#[test]
+fn test_xmp_emitted_after_exif() {
+    let width = 16u32;
+    let height = 16u32;
+    let rgb_data = vec![128u8; (width * height * 3) as usize];
+    let exif = vec![0x4D, 0x4D, 0x00, 0x2A, 0x00, 0x00, 0x00, 0x08];
+
+    let jpeg_data = Encoder::baseline_optimized()
+        .quality(75)
+        .exif_data(exif)
+        .xmp_data(XMP_PACKET.to_vec())
+        .encode_rgb(&rgb_data, width, height)
+        .unwrap();
+
+    let app1s: Vec<&[u8]> = app_segments(&jpeg_data)
+        .into_iter()
+        .filter(|(app, _)| *app == 1)
+        .map(|(_, data)| data)
+        .collect();
+    assert_eq!(app1s.len(), 2, "expected EXIF and XMP APP1 segments");
+    assert!(app1s[0].starts_with(b"Exif\0\0"), "EXIF must come first");
+    assert!(app1s[1].starts_with(XMP_NS), "XMP must follow EXIF");
+}
+
+#[test]
+fn test_xmp_empty_omitted() {
+    let rgb_data = vec![128u8; 16 * 16 * 3];
+    let jpeg_data = Encoder::baseline_optimized()
+        .quality(75)
+        .xmp_data(Vec::new())
+        .encode_rgb(&rgb_data, 16, 16)
+        .unwrap();
+
+    let has_xmp = app_segments(&jpeg_data)
+        .iter()
+        .any(|(app, data)| *app == 1 && data.starts_with(XMP_NS));
+    assert!(!has_xmp, "empty XMP must not emit an APP1 segment");
+}
+
+#[test]
+fn test_xmp_oversized_rejected() {
+    let rgb_data = vec![128u8; 16 * 16 * 3];
+    // 2 (length) + 29 (namespace) + data must fit in u16::MAX = 65535,
+    // so the largest valid packet is 65504 bytes.
+    let oversized = vec![0u8; 65505];
+    let result = Encoder::baseline_optimized()
+        .xmp_data(oversized)
+        .encode_rgb(&rgb_data, 16, 16);
+    assert!(result.is_err(), "oversized XMP packet must be rejected");
+
+    // The boundary value itself encodes fine.
+    let max_packet = vec![0u8; 65504];
+    let result = Encoder::baseline_optimized()
+        .xmp_data(max_packet)
+        .encode_rgb(&rgb_data, 16, 16);
+    assert!(result.is_ok(), "largest valid XMP packet should encode");
+}
+
+#[test]
+fn test_xmp_counts_against_marker_limit() {
+    use mozjpeg_rs::{Error, Limits};
+    let rgb_data = vec![128u8; 16 * 16 * 3];
+    let result = Encoder::baseline_optimized()
+        .xmp_data(XMP_PACKET.to_vec())
+        .limits(Limits::none().max_marker_bytes(10))
+        .encode_rgb(&rgb_data, 16, 16);
+    assert!(
+        matches!(result, Err(Error::MarkerDataTooLarge { .. })),
+        "XMP must count against max_marker_bytes, got {result:?}"
+    );
+}
+
+#[test]
+fn test_streaming_encoder_xmp() {
+    let width = 16u32;
+    let height = 16u32;
+    let rgb_data = vec![128u8; (width * height * 3) as usize];
+
+    let jpeg_data = StreamingEncoder::baseline_fastest()
+        .quality(85)
+        .xmp_data(XMP_PACKET.to_vec())
+        .encode_rgb(&rgb_data, width, height)
+        .unwrap();
+
+    let xmp_segments: Vec<_> = app_segments(&jpeg_data)
+        .into_iter()
+        .filter(|(app, data)| *app == 1 && data.starts_with(XMP_NS))
+        .collect();
+    assert_eq!(xmp_segments.len(), 1);
+    assert_eq!(&xmp_segments[0].1[XMP_NS.len()..], XMP_PACKET);
+}
+
 #[test]
 fn test_encode_with_restart_markers() {
     let width = 64u32;

@@ -44,6 +44,8 @@ use crate::types::{Subsampling, TrellisConfig};
 pub struct ConfigWarnings {
     /// EXIF data was specified but must be written as APP1 marker after start
     pub has_exif: bool,
+    /// XMP data was specified but must be written as APP1 marker after start
+    pub has_xmp: bool,
     /// ICC profile was specified but must be written after start
     pub has_icc_profile: bool,
     /// Custom markers were specified but must be written after start
@@ -53,7 +55,7 @@ pub struct ConfigWarnings {
 impl ConfigWarnings {
     /// Returns true if there are any warnings.
     pub fn has_warnings(&self) -> bool {
-        self.has_exif || self.has_icc_profile || self.has_custom_markers
+        self.has_exif || self.has_xmp || self.has_icc_profile || self.has_custom_markers
     }
 }
 
@@ -128,6 +130,7 @@ pub struct CMozjpeg {
     pub(crate) quant_table_idx: QuantTableIdx,
     pub(crate) has_custom_qtables: bool,
     pub(crate) exif_data: Option<Vec<u8>>,
+    pub(crate) xmp_data: Option<Vec<u8>>,
     pub(crate) icc_profile: Option<Vec<u8>>,
     pub(crate) custom_markers: Vec<(u8, Vec<u8>)>,
 }
@@ -246,6 +249,9 @@ impl CMozjpeg {
         if self.exif_data.is_some() {
             warnings.has_exif = true;
         }
+        if self.xmp_data.is_some() {
+            warnings.has_xmp = true;
+        }
         if self.icc_profile.is_some() {
             warnings.has_icc_profile = true;
         }
@@ -306,9 +312,30 @@ impl CMozjpeg {
 
             jpeg_start_compress(&mut cinfo, 1);
 
-            // Write EXIF data if present (APP1 = 0xE1)
+            // Write EXIF data if present (APP1 with "Exif\0\0" identifier)
             if let Some(exif) = &self.exif_data {
-                jpeg_write_marker(&mut cinfo, 0xE1, exif.as_ptr(), exif.len() as u32);
+                let mut exif_marker = Vec::with_capacity(6 + exif.len());
+                exif_marker.extend_from_slice(b"Exif\0\0");
+                exif_marker.extend_from_slice(exif);
+                jpeg_write_marker(
+                    &mut cinfo,
+                    0xE1,
+                    exif_marker.as_ptr(),
+                    exif_marker.len() as u32,
+                );
+            }
+
+            // Write XMP data if present (APP1 with xap namespace)
+            if let Some(xmp) = &self.xmp_data {
+                let mut xmp_marker = Vec::with_capacity(29 + xmp.len());
+                xmp_marker.extend_from_slice(b"http://ns.adobe.com/xap/1.0/\0");
+                xmp_marker.extend_from_slice(xmp);
+                jpeg_write_marker(
+                    &mut cinfo,
+                    0xE1,
+                    xmp_marker.as_ptr(),
+                    xmp_marker.len() as u32,
+                );
             }
 
             // Write ICC profile if present (APP2 markers with ICC_PROFILE prefix)
@@ -630,7 +657,26 @@ impl CMozjpeg {
 
             // Write markers
             if let Some(exif) = &self.exif_data {
-                jpeg_write_marker(&mut cinfo, 0xE1, exif.as_ptr(), exif.len() as u32);
+                let mut exif_marker = Vec::with_capacity(6 + exif.len());
+                exif_marker.extend_from_slice(b"Exif\0\0");
+                exif_marker.extend_from_slice(exif);
+                jpeg_write_marker(
+                    &mut cinfo,
+                    0xE1,
+                    exif_marker.as_ptr(),
+                    exif_marker.len() as u32,
+                );
+            }
+            if let Some(xmp) = &self.xmp_data {
+                let mut xmp_marker = Vec::with_capacity(29 + xmp.len());
+                xmp_marker.extend_from_slice(b"http://ns.adobe.com/xap/1.0/\0");
+                xmp_marker.extend_from_slice(xmp);
+                jpeg_write_marker(
+                    &mut cinfo,
+                    0xE1,
+                    xmp_marker.as_ptr(),
+                    xmp_marker.len() as u32,
+                );
             }
             if let Some(icc) = &self.icc_profile {
                 self.write_icc_profile(&mut cinfo, icc);
@@ -829,5 +875,47 @@ mod tests {
         assert!(jpeg.len() > 100);
         assert_eq!(&jpeg[0..2], &[0xFF, 0xD8]);
         assert_eq!(&jpeg[jpeg.len() - 2..], &[0xFF, 0xD9]);
+    }
+
+    #[test]
+    fn test_c_mozjpeg_xmp_marker() {
+        let xmp = b"<x:xmpmeta xmlns:x=\"adobe:ns:meta/\">packet</x:xmpmeta>";
+        let jpeg = Encoder::new(Preset::BaselineBalanced)
+            .quality(75)
+            .xmp_data(xmp.to_vec())
+            .to_c_mozjpeg()
+            .encode_rgb(&vec![128u8; 64 * 64 * 3], 64, 64)
+            .expect("encoding failed");
+
+        // The XMP APP1 payload is namespace + packet, emitted verbatim.
+        let mut expected = b"http://ns.adobe.com/xap/1.0/\0".to_vec();
+        expected.extend_from_slice(xmp);
+        assert!(
+            jpeg.windows(expected.len())
+                .any(|w| w == expected.as_slice()),
+            "XMP APP1 (namespace + packet) not found in C-encoded output"
+        );
+    }
+
+    #[test]
+    fn test_c_mozjpeg_exif_and_xmp_ordering() {
+        // Both markers are APP1: EXIF must be emitted before XMP, matching
+        // the Rust path and the EXIF spec recommendation.
+        let xmp = b"<x:xmpmeta/>";
+        let exif = vec![0x4D, 0x4D, 0x00, 0x2A, 0x00, 0x00, 0x00, 0x08];
+        let jpeg = Encoder::new(Preset::BaselineBalanced)
+            .quality(75)
+            .exif_data(exif)
+            .xmp_data(xmp.to_vec())
+            .to_c_mozjpeg()
+            .encode_rgb(&vec![128u8; 64 * 64 * 3], 64, 64)
+            .expect("encoding failed");
+
+        let find = |needle: &[u8]| {
+            jpeg.windows(needle.len())
+                .position(|w| w == needle)
+                .expect("marker payload not found")
+        };
+        assert!(find(b"Exif\0\0") < find(xmp));
     }
 }

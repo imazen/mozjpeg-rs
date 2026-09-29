@@ -237,8 +237,8 @@ impl zencodec::encode::EncoderConfig for MozjpegEncoderConfig {
 
 /// Per-operation mozjpeg encode job.
 ///
-/// Created by [`MozjpegEncoderConfig::job()`]. Consumed by creating a
-/// [`MozjpegEncoder`].
+/// Created by [`zencodec::encode::EncoderConfig::job()`] on
+/// [`MozjpegEncoderConfig`]. Consumed by creating a [`MozjpegEncoder`].
 pub struct MozjpegEncodeJob {
     config: MozjpegEncoderConfig,
     stop: Option<StopToken>,
@@ -359,12 +359,7 @@ impl MozjpegEncoder {
             if policy.resolve_xmp(true)
                 && let Some(ref xmp) = meta.xmp
             {
-                // XMP is stored in APP1 with "http://ns.adobe.com/xap/1.0/\0" prefix
-                let namespace = b"http://ns.adobe.com/xap/1.0/\0";
-                let mut marker_data = Vec::with_capacity(namespace.len() + xmp.len());
-                marker_data.extend_from_slice(namespace);
-                marker_data.extend_from_slice(xmp);
-                enc = enc.add_marker(1, marker_data);
+                enc = enc.xmp_data(xmp.to_vec());
             }
         }
 
@@ -626,6 +621,34 @@ mod tests {
             .encode(slice)
             .unwrap();
         assert!(!output.data().is_empty());
+    }
+
+    #[test]
+    fn xmp_metadata_emits_app1() {
+        let pixels = test_pixels_rgb(32, 32);
+        let config = MozjpegEncoderConfig::new();
+        let xmp = b"<x:xmpmeta xmlns:x=\"adobe:ns:meta/\">packet</x:xmpmeta>";
+        let meta = Metadata::default().with_xmp(xmp.to_vec());
+        let slice = PixelSlice::new(&pixels, 32, 32, 32 * 3, PixelDescriptor::RGB8_SRGB).unwrap();
+
+        let output = config
+            .job()
+            .with_metadata(meta)
+            .encoder()
+            .unwrap()
+            .encode(slice)
+            .unwrap();
+
+        // The XMP APP1 payload is namespace + packet, emitted verbatim.
+        let mut expected = b"http://ns.adobe.com/xap/1.0/\0".to_vec();
+        expected.extend_from_slice(xmp);
+        assert!(
+            output
+                .data()
+                .windows(expected.len())
+                .any(|w| w == expected.as_slice()),
+            "XMP APP1 (namespace + packet) not found in output"
+        );
     }
 
     #[test]

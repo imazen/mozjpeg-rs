@@ -222,6 +222,8 @@ pub struct Encoder {
     pixel_density: PixelDensity,
     /// EXIF data to embed (raw TIFF structure, without "Exif\0\0" header)
     exif_data: Option<Vec<u8>>,
+    /// XMP packet to embed (raw XML/RDF, without the APP1 identifier)
+    xmp_data: Option<Vec<u8>>,
     /// ICC color profile to embed (will be chunked into APP2 markers)
     icc_profile: Option<Vec<u8>>,
     /// Custom APP markers to embed (marker number 0-15, data)
@@ -364,6 +366,7 @@ impl Encoder {
             restart_interval: 0,
             pixel_density: PixelDensity::default(),
             exif_data: None,
+            xmp_data: None,
             icc_profile: None,
             custom_markers: Vec::new(),
             simd: SimdOps::detect(),
@@ -425,6 +428,7 @@ impl Encoder {
             restart_interval: 0,
             pixel_density: PixelDensity::default(),
             exif_data: None,
+            xmp_data: None,
             icc_profile: None,
             custom_markers: Vec::new(),
             simd: SimdOps::detect(),
@@ -487,6 +491,7 @@ impl Encoder {
             restart_interval: 0,
             pixel_density: PixelDensity::default(),
             exif_data: None,
+            xmp_data: None,
             icc_profile: None,
             custom_markers: Vec::new(),
             simd: SimdOps::detect(),
@@ -545,6 +550,7 @@ impl Encoder {
             restart_interval: 0,
             pixel_density: PixelDensity::default(),
             exif_data: None,
+            xmp_data: None,
             icc_profile: None,
             custom_markers: Vec::new(),
             simd: SimdOps::detect(),
@@ -754,6 +760,31 @@ impl Encoder {
         self
     }
 
+    /// Set XMP metadata to embed in the JPEG.
+    ///
+    /// # Arguments
+    /// * `data` - Raw XMP packet (XML/RDF). The
+    ///   `"http://ns.adobe.com/xap/1.0/\0"` identifier is added automatically,
+    ///   and the packet is emitted in an APP1 marker after the EXIF APP1.
+    ///
+    /// Extended XMP (the multi-segment `xmpNote:` scheme for packets over
+    /// ~64KB) is not supported: the packet must fit in a single APP1
+    /// segment, and oversized payloads are rejected at encode time.
+    ///
+    /// Pass empty or call without this method to omit XMP data.
+    ///
+    /// # Example
+    /// ```
+    /// use mozjpeg_rs::Encoder;
+    ///
+    /// let xmp = br#"<x:xmpmeta xmlns:x="adobe:ns:meta/"><rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"/></x:xmpmeta>"#;
+    /// let encoder = Encoder::baseline_optimized().xmp_data(xmp.to_vec());
+    /// ```
+    pub fn xmp_data(mut self, data: Vec<u8>) -> Self {
+        self.xmp_data = if data.is_empty() { None } else { Some(data) };
+        self
+    }
+
     /// Set pixel density for the JFIF APP0 marker.
     ///
     /// This specifies the physical pixel density (DPI/DPC) or aspect ratio.
@@ -930,9 +961,15 @@ impl Encoder {
             });
         }
 
-        // Check combined custom APP marker size limit
+        // Check combined APP marker size limit (custom markers + XMP)
         if limits.max_marker_bytes > 0 {
-            let total: usize = self.custom_markers.iter().map(|(_, data)| data.len()).sum();
+            let xmp_len = self.xmp_data.as_ref().map_or(0, Vec::len);
+            let total: usize = self
+                .custom_markers
+                .iter()
+                .map(|(_, data)| data.len())
+                .sum::<usize>()
+                + xmp_len;
             if total > limits.max_marker_bytes {
                 return Err(Error::MarkerDataTooLarge {
                     size: total,
@@ -1774,6 +1811,11 @@ impl Encoder {
         // EXIF (if present)
         if let Some(ref exif) = self.exif_data {
             marker_writer.write_app1_exif(exif)?;
+        }
+
+        // XMP (if present)
+        if let Some(ref xmp) = self.xmp_data {
+            marker_writer.write_app1_xmp(xmp)?;
         }
 
         // ICC profile (if present)
@@ -2898,6 +2940,11 @@ impl Encoder {
         // APP1 (EXIF) - if present
         if let Some(ref exif) = self.exif_data {
             marker_writer.write_app1_exif(exif)?;
+        }
+
+        // APP1 (XMP) - if present
+        if let Some(ref xmp) = self.xmp_data {
+            marker_writer.write_app1_xmp(xmp)?;
         }
 
         // ICC profile (if present)
@@ -4848,6 +4895,7 @@ impl Encoder {
             has_custom_qtables: self.custom_luma_qtable.is_some()
                 || self.custom_chroma_qtable.is_some(),
             exif_data: self.exif_data.clone(),
+            xmp_data: self.xmp_data.clone(),
             icc_profile: self.icc_profile.clone(),
             custom_markers: self.custom_markers.clone(),
         }

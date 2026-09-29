@@ -255,12 +255,13 @@ pub struct Limits {
     /// instead of an I/O error.
     pub max_exif_bytes: usize,
 
-    /// Maximum combined size of all custom APP markers, in bytes.
+    /// Maximum combined size of custom APP markers and XMP, in bytes.
     /// Set to 0 to disable (default).
     ///
     /// Applies to the sum of every payload added with
-    /// [`Encoder::add_marker`](crate::Encoder::add_marker). The sum is capped
-    /// rather than each marker individually, because any number of
+    /// [`Encoder::add_marker`](crate::Encoder::add_marker) plus the XMP packet
+    /// set with [`Encoder::xmp_data`](crate::Encoder::xmp_data). The sum is
+    /// capped rather than each marker individually, because any number of
     /// individually-legal markers can still bloat the output — a single marker
     /// over the cap trips it too.
     ///

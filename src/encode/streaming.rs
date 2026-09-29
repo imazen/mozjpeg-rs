@@ -68,6 +68,8 @@ pub struct StreamingEncoder {
     pixel_density: PixelDensity,
     /// EXIF data to embed
     exif_data: Option<Vec<u8>>,
+    /// XMP packet to embed
+    xmp_data: Option<Vec<u8>>,
     /// ICC color profile to embed
     icc_profile: Option<Vec<u8>>,
     /// Custom APP markers to embed
@@ -116,6 +118,7 @@ impl StreamingEncoder {
             restart_interval: 0,
             pixel_density: PixelDensity::default(),
             exif_data: None,
+            xmp_data: None,
             icc_profile: None,
             custom_markers: Vec::new(),
             simd: SimdOps::detect(),
@@ -179,6 +182,16 @@ impl StreamingEncoder {
         self
     }
 
+    /// Set XMP metadata to embed.
+    ///
+    /// Pass the raw XMP packet (XML/RDF). The
+    /// `"http://ns.adobe.com/xap/1.0/\0"` APP1 identifier is added
+    /// automatically. Extended XMP (packets over ~64KB) is not supported.
+    pub fn xmp_data(mut self, data: Vec<u8>) -> Self {
+        self.xmp_data = if data.is_empty() { None } else { Some(data) };
+        self
+    }
+
     /// Set ICC color profile to embed.
     pub fn icc_profile(mut self, profile: Vec<u8>) -> Self {
         self.icc_profile = if profile.is_empty() {
@@ -228,7 +241,7 @@ impl StreamingEncoder {
     /// | [`max_pixel_count`](Limits::max_pixel_count) | Identical — [`Error::PixelCountExceeded`] |
     /// | [`max_icc_profile_bytes`](Limits::max_icc_profile_bytes) | Identical — [`Error::IccProfileTooLarge`] |
     /// | [`max_exif_bytes`](Limits::max_exif_bytes) | Identical — [`Error::ExifDataTooLarge`] |
-    /// | [`max_marker_bytes`](Limits::max_marker_bytes) | Identical (sum of all custom APP payloads) — [`Error::MarkerDataTooLarge`] |
+    /// | [`max_marker_bytes`](Limits::max_marker_bytes) | Identical (sum of custom APP payloads plus XMP) — [`Error::MarkerDataTooLarge`] |
     /// | [`max_alloc_bytes`](Limits::max_alloc_bytes) | Applies, but against a **much smaller** estimate — see below |
     ///
     /// No cap is structurally inapplicable to streaming. `max_alloc_bytes` is
@@ -342,9 +355,15 @@ impl StreamingEncoder {
             });
         }
 
-        // Check combined custom APP marker size limit
+        // Check combined APP marker size limit (custom markers + XMP)
         if limits.max_marker_bytes > 0 {
-            let total: usize = self.custom_markers.iter().map(|(_, data)| data.len()).sum();
+            let xmp_len = self.xmp_data.as_ref().map_or(0, Vec::len);
+            let total: usize = self
+                .custom_markers
+                .iter()
+                .map(|(_, data)| data.len())
+                .sum::<usize>()
+                + xmp_len;
             if total > limits.max_marker_bytes {
                 return Err(Error::MarkerDataTooLarge {
                     size: total,
@@ -616,6 +635,11 @@ impl<W: Write> EncodingStream<W> {
         // Write EXIF data if provided
         if let Some(ref exif) = config.exif_data {
             marker_writer.write_app1_exif(exif)?;
+        }
+
+        // Write XMP data if provided
+        if let Some(ref xmp) = config.xmp_data {
+            marker_writer.write_app1_xmp(xmp)?;
         }
 
         // Write ICC profile if provided
