@@ -843,21 +843,99 @@ impl HuffmanTable {
 // Trellis Configuration
 // =============================================================================
 
+/// Operating mode for trellis quantization.
+///
+/// Selects between the optimized Rust implementation (the default) and a
+/// compatibility mode that reproduces C mozjpeg's trellis quantization
+/// output bit-exactly.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub enum TrellisMode {
+    /// Optimized Rust implementation (default).
+    ///
+    /// Uses standard-table rate estimation, adaptive search limiting
+    /// ([`TrellisSpeedMode`]), and continuous DC prediction chains. Produces
+    /// equal or smaller files than C mozjpeg on most inputs and is the
+    /// fastest trellis configuration.
+    #[default]
+    Optimized,
+
+    /// Bit-exact compatibility with C mozjpeg's trellis quantization.
+    ///
+    /// Replicates C mozjpeg's trellis pass structure exactly:
+    /// - Each component is re-quantized with rate tables built from its
+    ///   own coefficients (the C "gather then requantize" pass sequence):
+    ///   the AC table is the component's optimal table from normally
+    ///   quantized data; DC uses that same optimal table for baseline
+    ///   output and the standard table for progressive
+    /// - DC prediction chains restart at each iMCU row
+    /// - Arithmetic order and precision match the C code
+    /// - Padding blocks are synthesized like C (zero AC, DC copied from the
+    ///   last real block) instead of being DCT'd from edge-extended pixels
+    /// - C's `trellis_speed_level` search limiter applies
+    ///
+    /// This mode is slower than [`Optimized`](Self::Optimized). Its purpose
+    /// is validation and bit-exact output parity with C mozjpeg; `Optimized`
+    /// remains the default because it generally compresses better.
+    ///
+    /// `speed_level` is C mozjpeg's `trellis_speed_level` (0-10, default 7):
+    /// 0 disables search limiting (thorough), higher values limit the search
+    /// more aggressively on high-entropy blocks.
+    MozjpegExact {
+        /// C mozjpeg `trellis_speed_level` (0-10, default 7).
+        speed_level: u8,
+    },
+}
+
+impl TrellisMode {
+    /// C mozjpeg's default `trellis_speed_level`.
+    pub const MOZJPEG_DEFAULT_SPEED_LEVEL: u8 = 7;
+
+    /// Bit-exact C mozjpeg mode with the C default speed level (7).
+    pub const fn mozjpeg_exact() -> Self {
+        Self::MozjpegExact {
+            speed_level: Self::MOZJPEG_DEFAULT_SPEED_LEVEL,
+        }
+    }
+
+    /// Returns true if this is the bit-exact C compatibility mode.
+    #[inline]
+    pub fn is_exact(&self) -> bool {
+        matches!(self, Self::MozjpegExact { .. })
+    }
+
+    /// C `trellis_speed_level` for [`MozjpegExact`](Self::MozjpegExact),
+    /// or `None` for modes C does not define.
+    #[inline]
+    pub fn c_speed_level(&self) -> Option<u8> {
+        match *self {
+            Self::MozjpegExact { speed_level } => Some(speed_level.min(10)),
+            _ => None,
+        }
+    }
+}
+
 /// Speed optimization mode for trellis quantization.
 ///
 /// Trellis quantization has O(n²) complexity per block. For high-entropy
 /// blocks (many non-zero coefficients at high quality), this can be slow.
 /// These modes control how aggressively to limit the search space.
+///
+/// Only applies in [`TrellisMode::Optimized`]. [`TrellisMode::MozjpegExact`]
+/// uses C mozjpeg's `trellis_speed_level` formula instead (same formula as
+/// [`TrellisSpeedMode::Level`]).
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub enum TrellisSpeedMode {
     /// Full search on all blocks (slowest, optimal quality).
     /// Use when encoding time is not a concern.
     Thorough,
 
-    /// Two-tier adaptive limits matching C mozjpeg (default).
+    /// Two-tier adaptive limits (default).
     /// - nonzero > 55: lookback=8, candidates=3 (extreme entropy)
     /// - nonzero > 48: lookback=16, candidates=4 (high entropy)
     /// - otherwise: full search
+    ///
+    /// Faster than C mozjpeg's `trellis_speed_level` formula on dense blocks;
+    /// use [`TrellisMode::MozjpegExact`] for C-compatible limiting.
     #[default]
     Adaptive,
 
@@ -987,8 +1065,15 @@ pub struct TrellisConfig {
     pub delta_dc_weight: f32,
     /// Speed optimization mode for high-entropy blocks.
     ///
-    /// See [`TrellisSpeedMode`] for details on each mode.
+    /// See [`TrellisSpeedMode`] for details on each mode. Only used in
+    /// [`TrellisMode::Optimized`]; ignored by [`TrellisMode::MozjpegExact`].
     pub speed_mode: TrellisSpeedMode,
+    /// Operating mode for trellis quantization.
+    ///
+    /// [`TrellisMode::Optimized`] (default) keeps mozjpeg-rs's tuned behavior.
+    /// [`TrellisMode::MozjpegExact`] reproduces C mozjpeg's trellis output
+    /// bit-exactly (slower; for validation and parity).
+    pub mode: TrellisMode,
 }
 
 impl Default for TrellisConfig {
@@ -1009,6 +1094,7 @@ impl Default for TrellisConfig {
             num_loops: crate::consts::DEFAULT_TRELLIS_NUM_LOOPS,
             delta_dc_weight: crate::consts::DEFAULT_TRELLIS_DELTA_DC_WEIGHT,
             speed_mode: TrellisSpeedMode::Adaptive,
+            mode: TrellisMode::Optimized,
         }
     }
 }
@@ -1029,6 +1115,7 @@ impl TrellisConfig {
             num_loops: 1,
             delta_dc_weight: 0.0,
             speed_mode: TrellisSpeedMode::Adaptive,
+            mode: TrellisMode::Optimized,
         }
     }
 
@@ -1112,6 +1199,22 @@ impl TrellisConfig {
     /// See [`TrellisSpeedMode`] for available modes.
     pub fn speed_mode(mut self, mode: TrellisSpeedMode) -> Self {
         self.speed_mode = mode;
+        self
+    }
+
+    /// Set the trellis operating mode.
+    ///
+    /// [`TrellisMode::Optimized`] (default) keeps mozjpeg-rs's tuned behavior.
+    /// [`TrellisMode::MozjpegExact`] reproduces C mozjpeg's trellis output
+    /// bit-exactly at some cost to speed and compression.
+    ///
+    /// ```rust
+    /// use mozjpeg_rs::{TrellisConfig, TrellisMode};
+    ///
+    /// let config = TrellisConfig::default().mode(TrellisMode::mozjpeg_exact());
+    /// ```
+    pub fn mode(mut self, mode: TrellisMode) -> Self {
+        self.mode = mode;
         self
     }
 
