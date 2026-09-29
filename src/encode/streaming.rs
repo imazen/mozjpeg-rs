@@ -10,7 +10,7 @@ use crate::error::{Error, Result};
 use crate::huffman::DerivedTable;
 use crate::marker::MarkerWriter;
 use crate::progressive::generate_baseline_scan;
-use crate::quant::quantize_block;
+use crate::quant::{RecipQuantTable, quantize_block_recip};
 use crate::simd::SimdOps;
 use crate::types::{ComponentInfo, Limits, PixelDensity, QuantTable, Subsampling};
 
@@ -508,10 +508,10 @@ pub struct EncodingStream<W: Write> {
     mcu_width: u32,
     /// Number of MCUs per row
     mcus_per_row: u32,
-    /// Luminance quantization table (zigzag order)
-    luma_qtable: QuantTable,
-    /// Chrominance quantization table (zigzag order)
-    chroma_qtable: QuantTable,
+    /// C-style reciprocal divisors for the luma quant table
+    luma_recip: RecipQuantTable,
+    /// C-style reciprocal divisors for the chroma quant table
+    chroma_recip: RecipQuantTable,
     /// DC Huffman table for luminance
     dc_luma_table: DerivedTable,
     /// AC Huffman table for luminance
@@ -746,8 +746,8 @@ impl<W: Write> EncodingStream<W> {
             mcu_height,
             mcu_width,
             mcus_per_row,
-            luma_qtable,
-            chroma_qtable,
+            luma_recip: RecipQuantTable::new(&luma_qtable.values),
+            chroma_recip: RecipQuantTable::new(&chroma_qtable.values),
             dc_luma_table,
             ac_luma_table,
             dc_chroma_table,
@@ -857,9 +857,9 @@ impl<W: Write> EncodingStream<W> {
                 dct_i32[i] = dct_block[i] as i32;
             }
 
-            // Quantize
+            // Quantize (C reciprocal method on the ×8-scaled DCT)
             let mut quantized = [0i16; DCTSIZE2];
-            quantize_block(&dct_i32, &self.luma_qtable.values, &mut quantized);
+            quantize_block_recip(&dct_i32, &self.luma_recip, &mut quantized);
 
             // Encode DC coefficient (differential)
             let dc = quantized[0] as i32;
@@ -984,7 +984,7 @@ impl<W: Write> EncodingStream<W> {
         }
 
         let mut quantized = [0i16; DCTSIZE2];
-        quantize_block(&dct_i32, &self.luma_qtable.values, &mut quantized);
+        quantize_block_recip(&dct_i32, &self.luma_recip, &mut quantized);
 
         let dc = quantized[0] as i32;
         let dc_diff = dc - self.prev_dc[0];
@@ -1069,7 +1069,7 @@ impl<W: Write> EncodingStream<W> {
         }
 
         let mut quantized = [0i16; DCTSIZE2];
-        quantize_block(&dct_i32, &self.chroma_qtable.values, &mut quantized);
+        quantize_block_recip(&dct_i32, &self.chroma_recip, &mut quantized);
 
         let dc = quantized[0] as i32;
         let dc_diff = dc - self.prev_dc[comp_idx];

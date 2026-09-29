@@ -182,15 +182,110 @@ pub fn quantize_block(
     }
 }
 
+/// Fixed-point reciprocal divisors matching C mozjpeg's `quantize()`
+/// (jcdctmgr.c). C does not divide: it precomputes a `(recip, corr, shift)`
+/// triple per quant entry via `compute_reciprocal()` and evaluates
+/// `(coef + corr) * recip >> (shift + 16)` per coefficient. The reciprocal
+/// approximation differs from true `(coef + d/2) / d` division at boundary
+/// cases, so byte-parity requires reproducing it exactly.
+///
+/// Divisors are the post-DCT scaled values `quant_table[i] << 3` truncated
+/// to `UINT16`, exactly as the C call site passes them.
+#[derive(Clone, Debug)]
+pub struct RecipQuantTable {
+    /// `fq` reciprocal, `DCTELEM`-truncated (may wrap; read back as u16).
+    recip: [u16; DCTSIZE2],
+    /// `c` correction + round factor.
+    corr: [u16; DCTSIZE2],
+    /// `r - 16` shift (product is shifted right by `shift + 16`).
+    shift: [i32; DCTSIZE2],
+}
+
+impl RecipQuantTable {
+    /// Build the reciprocal divisor table for one 8-bit quantization table,
+    /// replicating C `compute_reciprocal()` (jcdctmgr.c) element by element.
+    pub fn new(quant_table: &[u16; DCTSIZE2]) -> Self {
+        let mut t = RecipQuantTable {
+            recip: [0; DCTSIZE2],
+            corr: [0; DCTSIZE2],
+            shift: [0; DCTSIZE2],
+        };
+        for i in 0..DCTSIZE2 {
+            // C passes `qtbl->quantval[i] << 3` into a UINT16 parameter:
+            // the shift happens in 32 bits, then truncates to 16.
+            let divisor = ((quant_table[i] as u32) << 3) as u16;
+            let (fq, c, r) = compute_reciprocal(divisor);
+            t.recip[i] = fq;
+            t.corr[i] = c;
+            t.shift[i] = r - 16;
+        }
+        t
+    }
+}
+
+/// Port of C `compute_reciprocal()` (jcdctmgr.c): returns
+/// `(recip fq, correction c, total right-shift r)` for `divisor`.
+fn compute_reciprocal(divisor: u16) -> (u16, u16, i32) {
+    if divisor == 1 {
+        // Identity mapping: `(temp + 0) * 1 >> 0`.
+        return (1, 0, 0);
+    }
+    // b = flss(divisor) - 1 = index of the second-highest set bit region;
+    // equivalently floor(log2(divisor)) - 1.
+    let b = 15 - divisor.leading_zeros() as i32 - 1;
+    let mut r = 16 + b;
+
+    let mut fq = (1u32 << r) / divisor as u32;
+    let fr = (1u32 << r) % divisor as u32;
+
+    let mut c = divisor / 2;
+    if fr == 0 {
+        // Power of two: fq is one bit too large for DCTELEM.
+        fq >>= 1;
+        r -= 1;
+    } else if fr <= divisor as u32 / 2 {
+        c += 1;
+    } else {
+        fq += 1;
+    }
+
+    // C stores fq into a DCTELEM (i16) slot; the u16 bit pattern is what the
+    // multiply reads back, so truncate rather than saturate.
+    (fq as u16, c, r)
+}
+
+/// Quantize a full 8x8 block of raw DCT coefficients using C's reciprocal
+/// method — `(|coef| + corr) * recip >> (shift + 16)`, truncated to DCTELEM.
+/// No clamping: C relies on DCTELEM truncation for large quotients.
+///
+/// # Arguments
+/// * `coeffs` - Raw DCT coefficients scaled by 8 (64 values)
+/// * `table` - Precomputed reciprocal divisors
+/// * `output` - Output quantized coefficients (64 values)
+pub fn quantize_block_recip(
+    coeffs: &[i32; DCTSIZE2],
+    table: &RecipQuantTable,
+    output: &mut [i16; DCTSIZE2],
+) {
+    for i in 0..DCTSIZE2 {
+        let coef = coeffs[i];
+        let (abs_coef, sign) = if coef < 0 {
+            (-coef, -1i16)
+        } else {
+            (coef, 1i16)
+        };
+        // (temp + corr) is computed in C `int` then multiplied by the u16
+        // reciprocal into a 32-bit unsigned product with wraparound.
+        let product = (abs_coef + table.corr[i] as i32) as u32 * table.recip[i] as u32;
+        output[i] = ((product >> (table.shift[i] + 16)) as i16).wrapping_mul(sign);
+    }
+}
+
 /// Quantize a full 8x8 block of raw DCT coefficients (scaled by 8).
 ///
-/// This function matches C mozjpeg's non-trellis quantization approach:
-/// - Takes raw DCT output (scaled by 8, NOT descaled)
-/// - Uses scaled quantization: `q_scaled = 8 * quant_table[i]`
-/// - Single rounding step: (abs(coef) + q_scaled/2) / q_scaled
-///
-/// This avoids the rounding differences that occur when descaling and
-/// quantizing are done as separate steps.
+/// Convenience wrapper that builds the reciprocal divisor table on the fly;
+/// hot paths should precompute [`RecipQuantTable`] and call
+/// [`quantize_block_recip`].
 ///
 /// # Arguments
 /// * `coeffs` - Raw DCT coefficients scaled by 8 (64 values)
@@ -201,25 +296,8 @@ pub fn quantize_block_raw(
     quant_table: &[u16; DCTSIZE2],
     output: &mut [i16; DCTSIZE2],
 ) {
-    // max_coef_bits = data_precision + 2 = 8 + 2 = 10 for 8-bit JPEG
-    const MAX_COEF_VAL: i32 = (1 << 10) - 1; // 1023
-
-    for i in 0..DCTSIZE2 {
-        let coef = coeffs[i];
-        // Scaled quantization value (includes DCT scale factor of 8)
-        let q = 8 * quant_table[i] as i32;
-
-        // Single-step quantization with rounding
-        let (abs_coef, sign) = if coef < 0 {
-            (-coef, -1i16)
-        } else {
-            (coef, 1i16)
-        };
-
-        // Round to nearest and clamp to valid range
-        let qval = ((abs_coef + q / 2) / q).min(MAX_COEF_VAL);
-        output[i] = (qval as i16) * sign;
-    }
+    let table = RecipQuantTable::new(quant_table);
+    quantize_block_recip(coeffs, &table, output);
 }
 
 /// Dequantize a full 8x8 block of coefficients.
