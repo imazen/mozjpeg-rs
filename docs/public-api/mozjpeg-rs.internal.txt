@@ -9,39 +9,46 @@
 
 ## summary
 #
-#   pub modules                                18
-#   pub types (struct/enum/trait/alias)        19
-#   pub consts/statics                         41
-#   free functions                             74
-#   inherent methods                          117
-#   struct fields                              22
+#   pub modules                                21
+#   pub types (struct/enum/trait/alias)        21
+#   pub consts/statics                         47
+#   free functions                             80
+#   inherent methods                          136
+#   struct fields                              28
 #   enum variants                              20
-#   trait roster entries (type × trait)        40
-#   auto-trait-complete types                  11
+#   trait roster entries (type × trait)        49
+#   auto-trait-complete types                  13
 #   auto-trait exceptions                       3
 #
 # per-module pub lines:
-#   (root)                           40
+#   (root)                           47
 #   bitstream                        15
 #   color                             9
+#   color_avx2                        2
 #   compat                            1
 #   consts                           53
 #   corpus                            9
-#   dct                               6
+#   dct                               9
 #   deringing                         1
 #   entropy                          33
 #   fast_entropy                     26
 #   huffman                          27
-#   progressive                      12
+#   progressive                      24
 #   quant                            12
-#   sample                            7
-#   simd                             19
+#   sample                            8
+#   simd                             36
 #   test_encoder                     25
 #   trellis                          16
 
-## items (307 lines)
+## items (348 lines)
 
 #[repr(u8)] pub enum QuantTableIdx [also: consts]
+pub const fn progressive::ScanInfo::ac_scan(u8, u8, u8, u8, u8) -> Self
+pub const fn progressive::ScanInfo::dc_scan(u8) -> Self
+pub const fn progressive::ScanInfo::dc_scan_pair(u8, u8) -> Self
+pub const fn progressive::ScanInfo::dc_scan_single(u8) -> Self
+pub const fn progressive::ScanInfo::is_dc_scan(&self) -> bool
+pub const fn progressive::ScanInfo::is_refinement(&self) -> bool
 pub const DCTSIZE2: usize [also: consts]
 pub const consts::AC_CHROMINANCE_BITS: [u8; 17]
 pub const consts::AC_CHROMINANCE_VALUES: [u8; 162]
@@ -95,15 +102,15 @@ pub fn StreamingEncoder::chroma_quality(self, core::option::Option<u8>) -> Self
 pub fn StreamingEncoder::quant_tables(self, consts::QuantTableIdx) -> Self
 pub fn Subsampling::assert_fields_are_eq(&self)
 pub fn bitstream::BitWriter<W>::bytes_written(&self) -> usize
-pub fn bitstream::BitWriter<W>::flush(&mut self) -> core::io::error::Result<()>
+pub fn bitstream::BitWriter<W>::flush(&mut self) -> std::io::error::Result<()>
 pub fn bitstream::BitWriter<W>::get_mut(&mut self) -> &mut W
 pub fn bitstream::BitWriter<W>::get_ref(&self) -> &W
 pub fn bitstream::BitWriter<W>::into_inner(self) -> W
 pub fn bitstream::BitWriter<W>::new(W) -> Self
-pub fn bitstream::BitWriter<W>::put_bits(&mut self, u32, u8) -> core::io::error::Result<()>
-pub fn bitstream::BitWriter<W>::put_bits_combined(&mut self, u32, u8, u32, u8) -> core::io::error::Result<()>
-pub fn bitstream::BitWriter<W>::write_byte(&mut self, u8) -> core::io::error::Result<()>
-pub fn bitstream::BitWriter<W>::write_bytes(&mut self, &[u8]) -> core::io::error::Result<()>
+pub fn bitstream::BitWriter<W>::put_bits(&mut self, u32, u8) -> std::io::error::Result<()>
+pub fn bitstream::BitWriter<W>::put_bits_combined(&mut self, u32, u8, u32, u8) -> std::io::error::Result<()>
+pub fn bitstream::BitWriter<W>::write_byte(&mut self, u8) -> std::io::error::Result<()>
+pub fn bitstream::BitWriter<W>::write_bytes(&mut self, &[u8]) -> std::io::error::Result<()>
 pub fn bitstream::BitWriter<alloc::vec::Vec<u8>>::into_bytes(self) -> alloc::vec::Vec<u8>
 pub fn bitstream::BitWriter<alloc::vec::Vec<u8>>::new_vec() -> Self
 pub fn bitstream::BitWriter<alloc::vec::Vec<u8>>::with_capacity(usize) -> Self
@@ -116,6 +123,8 @@ pub fn color::convert_rgba_to_ycbcr_c_compat(&[u8], &mut [u8], &mut [u8], &mut [
 pub fn color::rgb_to_gray(u8, u8, u8) -> u8
 pub fn color::rgb_to_ycbcr(u8, u8, u8) -> (u8, u8, u8) [also: simd::scalar]
 pub fn color::rgb_to_ycbcr_c_compat(u8, u8, u8) -> (u8, u8, u8)
+pub fn color_avx2::convert_rgb_to_ycbcr_avx2(archmage::tokens::generated::x86::X64V3Token, &[u8], &mut [u8], &mut [u8], &mut [u8], usize)
+pub fn color_avx2::convert_rgb_to_ycbcr_dispatch(&[u8], &mut [u8], &mut [u8], &mut [u8], usize)
 pub fn consts::QuantTableIdx::assert_fields_are_eq(&self)
 pub fn consts::QuantTableIdx::clone(&self) -> consts::QuantTableIdx
 pub fn consts::QuantTableIdx::eq(&self, &consts::QuantTableIdx) -> bool
@@ -130,6 +139,8 @@ pub fn corpus::corpus_dir() -> core::option::Option<std::path::PathBuf>
 pub fn corpus::kodak_dir() -> core::option::Option<std::path::PathBuf>
 pub fn corpus::load_png_as_rgb(&std::path::Path) -> core::option::Option<(alloc::vec::Vec<u8>, u32, u32)>
 pub fn corpus::png_files_in_dir(&std::path::Path) -> alloc::vec::Vec<std::path::PathBuf>
+pub fn dct::avx2_archmage::forward_dct_8x8_i16(archmage::tokens::generated::x86::X64V3Token, &[i16; 64], &mut [i16; 64])
+pub fn dct::avx2_archmage::forward_dct_8x8_i32(archmage::tokens::generated::x86::X64V3Token, &[i16; 64], &mut [i16; 64])
 pub fn dct::forward_dct_8x8_i32_multiversion(&[i16; 64], &mut [i16; 64])
 pub fn dct::forward_dct_8x8_i32_wide_gather(&[i16; 64], &mut [i16; 64])
 pub fn dct::forward_dct_8x8_i32_wide_transpose(&[i16; 64], &mut [i16; 64])
@@ -137,18 +148,18 @@ pub fn dct::forward_dct_u8_i32_multiversion(&[u8; 64], &mut [i16; 64])
 pub fn dct::forward_dct_u8_i32_multiversion_deringing(&[u8; 64], &mut [i16; 64], u16)
 pub fn dct::level_shift(&[u8; 64], &mut [i16; 64])
 pub fn deringing::preprocess_deringing(&mut [i16; 64], u16)
-pub fn entropy::EntropyEncoder<'a, W>::emit_restart(&mut self, u8) -> core::io::error::Result<()>
-pub fn entropy::EntropyEncoder<'a, W>::encode_block(&mut self, &[i16; 64], usize, &huffman::DerivedTable, &huffman::DerivedTable) -> core::io::error::Result<()>
-pub fn entropy::EntropyEncoder<'a, W>::flush(&mut self) -> core::io::error::Result<()>
+pub fn entropy::EntropyEncoder<'a, W>::emit_restart(&mut self, u8) -> std::io::error::Result<()>
+pub fn entropy::EntropyEncoder<'a, W>::encode_block(&mut self, &[i16; 64], usize, &huffman::DerivedTable, &huffman::DerivedTable) -> std::io::error::Result<()>
+pub fn entropy::EntropyEncoder<'a, W>::flush(&mut self) -> std::io::error::Result<()>
 pub fn entropy::EntropyEncoder<'a, W>::last_dc(&self, usize) -> i16
 pub fn entropy::EntropyEncoder<'a, W>::new(&'a mut bitstream::BitWriter<W>) -> Self
 pub fn entropy::EntropyEncoder<'a, W>::reset_dc(&mut self)
 pub fn entropy::EntropyEncoder<'a, W>::set_last_dc(&mut self, usize, i16)
-pub fn entropy::ProgressiveEncoder<'a, W>::encode_ac_first(&mut self, &[i16; 64], u8, u8, u8, &huffman::DerivedTable) -> core::io::error::Result<()>
-pub fn entropy::ProgressiveEncoder<'a, W>::encode_ac_refine(&mut self, &[i16; 64], u8, u8, u8, u8, &huffman::DerivedTable) -> core::io::error::Result<()>
-pub fn entropy::ProgressiveEncoder<'a, W>::encode_dc_first(&mut self, &[i16; 64], usize, &huffman::DerivedTable, u8) -> core::io::error::Result<()>
-pub fn entropy::ProgressiveEncoder<'a, W>::encode_dc_refine(&mut self, &[i16; 64], u8) -> core::io::error::Result<()>
-pub fn entropy::ProgressiveEncoder<'a, W>::finish_scan(&mut self, core::option::Option<&huffman::DerivedTable>) -> core::io::error::Result<()>
+pub fn entropy::ProgressiveEncoder<'a, W>::encode_ac_first(&mut self, &[i16; 64], u8, u8, u8, &huffman::DerivedTable) -> std::io::error::Result<()>
+pub fn entropy::ProgressiveEncoder<'a, W>::encode_ac_refine(&mut self, &[i16; 64], u8, u8, u8, u8, &huffman::DerivedTable) -> std::io::error::Result<()>
+pub fn entropy::ProgressiveEncoder<'a, W>::encode_dc_first(&mut self, &[i16; 64], usize, &huffman::DerivedTable, u8) -> std::io::error::Result<()>
+pub fn entropy::ProgressiveEncoder<'a, W>::encode_dc_refine(&mut self, &[i16; 64], u8) -> std::io::error::Result<()>
+pub fn entropy::ProgressiveEncoder<'a, W>::finish_scan(&mut self, core::option::Option<&huffman::DerivedTable>) -> std::io::error::Result<()>
 pub fn entropy::ProgressiveEncoder<'a, W>::new(&'a mut bitstream::BitWriter<W>) -> Self
 pub fn entropy::ProgressiveEncoder<'a, W>::new_standard_tables(&'a mut bitstream::BitWriter<W>) -> Self
 pub fn entropy::ProgressiveEncoder<'a, W>::reset(&mut self)
@@ -163,7 +174,7 @@ pub fn entropy::SymbolCounter::count_block(&mut self, &[i16; 64], usize, &mut hu
 pub fn entropy::SymbolCounter::default() -> Self
 pub fn entropy::SymbolCounter::new() -> Self
 pub fn entropy::SymbolCounter::reset(&mut self)
-pub fn entropy::encode_block_standalone<W: core::io::write::Write>(&mut bitstream::BitWriter<W>, &[i16; 64], i16, &huffman::DerivedTable, &huffman::DerivedTable) -> core::io::error::Result<i16>
+pub fn entropy::encode_block_standalone<W: std::io::Write>(&mut bitstream::BitWriter<W>, &[i16; 64], i16, &huffman::DerivedTable, &huffman::DerivedTable) -> std::io::error::Result<i16>
 pub fn entropy::jpeg_nbits(i16) -> u8
 pub fn entropy::jpeg_nbits_nonzero(u16) -> u8
 pub fn fast_entropy::FastBitWriter::as_bytes(&self) -> &[u8]
@@ -207,18 +218,23 @@ pub fn huffman::HuffTable::clone(&self) -> huffman::HuffTable
 pub fn huffman::HuffTable::default() -> Self
 pub fn huffman::HuffTable::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 pub fn huffman::generate_optimal_table(&mut [i64; 257]) -> Result<huffman::HuffTable>
-pub fn progressive::count_scans(&[types::ScanInfo]) -> usize
-pub fn progressive::generate_baseline_scan(u8) -> alloc::vec::Vec<types::ScanInfo>
-pub fn progressive::generate_c_simple_progressive_scans(u8) -> alloc::vec::Vec<types::ScanInfo>
-pub fn progressive::generate_dc_only_scan(u8) -> alloc::vec::Vec<types::ScanInfo>
-pub fn progressive::generate_minimal_progressive_scans(u8) -> alloc::vec::Vec<types::ScanInfo>
-pub fn progressive::generate_mozjpeg_max_compression_scans(u8) -> alloc::vec::Vec<types::ScanInfo>
-pub fn progressive::generate_optimized_progressive_scans(u8) -> alloc::vec::Vec<types::ScanInfo>
-pub fn progressive::generate_scan_candidates(u8) -> alloc::vec::Vec<alloc::vec::Vec<types::ScanInfo>>
-pub fn progressive::generate_simple_progressive_scans(u8) -> alloc::vec::Vec<types::ScanInfo>
-pub fn progressive::generate_standard_progressive_scans(u8) -> alloc::vec::Vec<types::ScanInfo>
-pub fn progressive::is_progressive_script(&[types::ScanInfo]) -> bool
-pub fn progressive::validate_scan_script(&[types::ScanInfo], u8) -> core::result::Result<(), &'static str>
+pub fn progressive::ScanInfo::assert_fields_are_eq(&self)
+pub fn progressive::ScanInfo::clone(&self) -> progressive::ScanInfo
+pub fn progressive::ScanInfo::default() -> Self
+pub fn progressive::ScanInfo::eq(&self, &progressive::ScanInfo) -> bool
+pub fn progressive::ScanInfo::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+pub fn progressive::count_scans(&[progressive::ScanInfo]) -> usize
+pub fn progressive::generate_baseline_scan(u8) -> alloc::vec::Vec<progressive::ScanInfo>
+pub fn progressive::generate_c_simple_progressive_scans(u8) -> alloc::vec::Vec<progressive::ScanInfo>
+pub fn progressive::generate_dc_only_scan(u8) -> alloc::vec::Vec<progressive::ScanInfo>
+pub fn progressive::generate_minimal_progressive_scans(u8) -> alloc::vec::Vec<progressive::ScanInfo>
+pub fn progressive::generate_mozjpeg_max_compression_scans(u8) -> alloc::vec::Vec<progressive::ScanInfo>
+pub fn progressive::generate_optimized_progressive_scans(u8) -> alloc::vec::Vec<progressive::ScanInfo>
+pub fn progressive::generate_scan_candidates(u8) -> alloc::vec::Vec<alloc::vec::Vec<progressive::ScanInfo>>
+pub fn progressive::generate_simple_progressive_scans(u8) -> alloc::vec::Vec<progressive::ScanInfo>
+pub fn progressive::generate_standard_progressive_scans(u8) -> alloc::vec::Vec<progressive::ScanInfo>
+pub fn progressive::is_progressive_script(&[progressive::ScanInfo]) -> bool
+pub fn progressive::validate_scan_script(&[progressive::ScanInfo], u8) -> core::result::Result<(), &'static str>
 pub fn quant::create_quant_table(&[u16; 64], u8, bool) -> types::QuantTable
 pub fn quant::create_quant_tables(u8, consts::QuantTableIdx, bool) -> (types::QuantTable, types::QuantTable)
 pub fn quant::create_quant_tables_split(u8, core::option::Option<u8>, consts::QuantTableIdx, bool) -> (types::QuantTable, types::QuantTable)
@@ -234,10 +250,14 @@ pub fn quant::quantize_coef(i32, u16) -> i16
 pub fn sample::downsample_h2v1_row(&[u8], &mut [u8])
 pub fn sample::downsample_h2v2_rows(&[u8], &[u8], &mut [u8])
 pub fn sample::downsample_plane(&[u8], usize, usize, usize, usize, &mut [u8]) -> (usize, usize)
+pub fn sample::downsample_plane_h2_c_padded(&[u8], usize, usize, usize, usize, &mut [u8]) -> usize
 pub fn sample::expand_to_mcu(&[u8], usize, usize, &mut [u8], usize, usize)
 pub fn sample::expand_to_mcu_strided(&[u8], usize, usize, usize, &mut [u8], usize, usize)
 pub fn sample::mcu_aligned_dimensions(usize, usize, usize, usize) -> (usize, usize)
 pub fn sample::subsampled_dimensions(usize, usize, usize, usize) -> (usize, usize)
+pub fn simd::SimdOps::avx2_archmage() -> core::option::Option<Self>
+pub fn simd::SimdOps::avx2_i16() -> core::option::Option<Self>
+pub fn simd::SimdOps::avx2_intrinsics() -> core::option::Option<Self>
 pub fn simd::SimdOps::clone(&self) -> simd::SimdOps
 pub fn simd::SimdOps::dct_variant_name(&self) -> &'static str
 pub fn simd::SimdOps::default() -> Self
@@ -245,9 +265,20 @@ pub fn simd::SimdOps::detect() -> Self
 pub fn simd::SimdOps::do_forward_dct(&self, &[i16; 64], &mut [i16; 64])
 pub fn simd::SimdOps::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 pub fn simd::SimdOps::scalar() -> Self
-pub fn simd::aarch64::neon::forward_dct_8x8_neon(archmage::tokens::generated::arm::NeonToken, &[i16; 64], &mut [i16; 64])
-pub fn simd::scalar::convert_rgb_to_ycbcr(&[u8], &mut [u8], &mut [u8], &mut [u8], usize)
+pub fn simd::scalar::convert_rgb_to_ycbcr(&[u8], &mut [u8], &mut [u8], &mut [u8], usize) [also: simd::x86_64::avx2]
 pub fn simd::scalar::forward_dct_8x8(&[i16; 64], &mut [i16; 64])
+pub fn simd::x86_64::avx2::forward_dct_8x8_i32_avx2_intrinsics(&[i16; 64], &mut [i16; 64])
+pub fn simd::x86_64::entropy::SimdEntropyEncoder::default() -> Self
+pub fn simd::x86_64::entropy::SimdEntropyEncoder::emit_restart(&mut self, u8)
+pub fn simd::x86_64::entropy::SimdEntropyEncoder::encode_block(&mut self, &[i16; 64], usize, &huffman::DerivedTable, &huffman::DerivedTable)
+pub fn simd::x86_64::entropy::SimdEntropyEncoder::finish(self) -> alloc::vec::Vec<u8>
+pub fn simd::x86_64::entropy::SimdEntropyEncoder::flush(&mut self)
+pub fn simd::x86_64::entropy::SimdEntropyEncoder::get_buffer(&self) -> &[u8]
+pub fn simd::x86_64::entropy::SimdEntropyEncoder::into_bytes(self) -> alloc::vec::Vec<u8>
+pub fn simd::x86_64::entropy::SimdEntropyEncoder::new() -> Self
+pub fn simd::x86_64::entropy::SimdEntropyEncoder::output_len(&self) -> usize
+pub fn simd::x86_64::entropy::SimdEntropyEncoder::reset_dc(&mut self)
+pub fn simd::x86_64::entropy::SimdEntropyEncoder::write_to<W: std::io::Write>(&mut self, &mut W) -> std::io::error::Result<()>
 pub fn test_encoder::JpegDecoder::decode(&self, &[u8]) -> core::option::Option<(alloc::vec::Vec<u8>, usize, usize)>
 pub fn test_encoder::TestEncoderConfig::baseline() -> Self
 pub fn test_encoder::TestEncoderConfig::baseline_huffman_opt() -> Self
@@ -273,9 +304,11 @@ pub fn trellis::trellis_quantize_block(&[i32; 64], &mut [i16; 64], &[u16; 64], &
 pub fn trellis::trellis_quantize_block_with_eob_info(&[i32; 64], &mut [i16; 64], &[u16; 64], &huffman::DerivedTable, &TrellisConfig, usize, usize) -> trellis::BlockEobInfo
 pub mod bitstream
 pub mod color
+pub mod color_avx2
 pub mod consts
 pub mod corpus
 pub mod dct
+pub mod dct::avx2_archmage
 pub mod deringing
 pub mod entropy
 pub mod fast_entropy
@@ -284,9 +317,10 @@ pub mod progressive
 pub mod quant
 pub mod sample
 pub mod simd
-pub mod simd::aarch64
-pub mod simd::aarch64::neon
 pub mod simd::scalar
+pub mod simd::x86_64
+pub mod simd::x86_64::avx2
+pub mod simd::x86_64::entropy
 pub mod test_encoder
 pub mod trellis
 pub ConfigError::UnsupportedQuantTable(consts::QuantTableIdx)
@@ -314,6 +348,12 @@ pub huffman::DerivedTable::ehufsi: [u8; 256]
 pub huffman::FrequencyCounter::counts: [i64; 257]
 pub huffman::HuffTable::bits: [u8; 17]
 pub huffman::HuffTable::huffval: [u8; 256]
+pub progressive::ScanInfo::ah: u8
+pub progressive::ScanInfo::al: u8
+pub progressive::ScanInfo::component_index: [u8; 4]
+pub progressive::ScanInfo::comps_in_scan: u8
+pub progressive::ScanInfo::se: u8
+pub progressive::ScanInfo::ss: u8
 pub simd::SimdOps::color_convert_rgb_to_ycbcr: simd::ColorConvertFn
 pub simd::SimdOps::forward_dct: simd::ForwardDctFn
 pub test_encoder::TestEncoderConfig::c_compat_color: bool
@@ -331,9 +371,9 @@ pub trellis::BlockEobInfo::best_cost_skip: f32
 pub trellis::BlockEobInfo::has_nonzero_ac: bool
 pub trellis::BlockEobInfo::requires_eob: u8
 pub trellis::BlockEobInfo::zero_block_cost: f32
-pub struct bitstream::BitWriter<W: core::io::write::Write>
-pub struct entropy::EntropyEncoder<'a, W: core::io::write::Write>
-pub struct entropy::ProgressiveEncoder<'a, W: core::io::write::Write>
+pub struct bitstream::BitWriter<W: std::io::Write>
+pub struct entropy::EntropyEncoder<'a, W: std::io::Write>
+pub struct entropy::ProgressiveEncoder<'a, W: std::io::Write>
 pub struct entropy::ProgressiveSymbolCounter
 pub struct entropy::SymbolCounter
 pub struct fast_entropy::FastBitWriter
@@ -341,7 +381,9 @@ pub struct fast_entropy::FastEntropyEncoder
 pub struct huffman::DerivedTable
 pub struct huffman::FrequencyCounter
 pub struct huffman::HuffTable
+pub struct progressive::ScanInfo
 pub struct simd::SimdOps
+pub struct simd::x86_64::entropy::SimdEntropyEncoder
 pub struct test_encoder::TestEncoderConfig
 pub struct trellis::BlockEobInfo
 pub trait test_encoder::JpegDecoder
@@ -349,7 +391,7 @@ pub type bitstream::VecBitWriter = bitstream::BitWriter<alloc::vec::Vec<u8>>
 pub type simd::ColorConvertFn = fn(&[u8], &mut [u8], &mut [u8], &mut [u8], usize)
 pub type simd::ForwardDctFn = fn(&[i16; 64], &mut [i16; 64])
 
-## trait impls (19 types)
+## trait impls (22 types)
 
 DensityUnit: TrivialClone
 Limits: TrivialClone
@@ -358,6 +400,7 @@ Preset: TrivialClone
 ResourceEstimate: TrivialClone
 Subsampling: TrivialClone
 TrellisConfig: TrivialClone
+TrellisMode: TrivialClone
 TrellisSpeedMode: TrivialClone
 consts::QuantTableIdx: Clone, Copy, Debug, Eq, PartialEq, TrivialClone
 entropy::ProgressiveSymbolCounter: Default
@@ -367,13 +410,15 @@ fast_entropy::FastEntropyEncoder: Default
 huffman::DerivedTable: Clone, Debug, Default
 huffman::FrequencyCounter: Clone, Debug, Default
 huffman::HuffTable: Clone, Debug, Default
+progressive::ScanInfo: Clone, Copy, Debug, Default, Eq, PartialEq, TrivialClone
 simd::SimdOps: Clone, Copy, Debug, Default, TrivialClone
+simd::x86_64::entropy::SimdEntropyEncoder: Default
 test_encoder::TestEncoderConfig: Clone, Debug, Default
 trellis::BlockEobInfo: Clone, Copy, Debug, TrivialClone
 
 ## auto traits
 
-11 types implement all of: Freeze, RefUnwindSafe, Send, Sync, Unpin, UnwindSafe
+13 types implement all of: Freeze, RefUnwindSafe, Send, Sync, Unpin, UnwindSafe
 bitstream::BitWriter<W>: !Freeze !RefUnwindSafe !Send !Sync !Unpin !UnwindSafe
 entropy::EntropyEncoder<'a, W>: !RefUnwindSafe !Send !Sync !UnwindSafe
 entropy::ProgressiveEncoder<'a, W>: !RefUnwindSafe !Send !Sync !UnwindSafe

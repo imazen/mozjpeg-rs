@@ -12,18 +12,18 @@
 #   pub modules                                 2
 #   pub types (struct/enum/trait/alias)        12
 #   inherent methods                           13
-#   struct fields                               6
+#   struct fields                               8
 #   enum variants                               8
 #   trait roster entries (type × trait)        17
 #   auto-trait-complete types                   4
 #   auto-trait exceptions                       2
 #
 # per-module pub lines:
-#   (root)                           17
+#   (root)                           18
 #   codec                             7
-#   compat                           17
+#   compat                           18
 
-## items (35 lines)
+## items (37 lines)
 
 pub mod codec
 pub fn codec::MozjpegEncoderConfig::new() -> Self
@@ -39,6 +39,7 @@ pub fn compat::CMozjpeg::encode_ycbcr_planar(&self, &[u8], &[u8], &[u8], u32, u3
 pub compat::ConfigWarnings::has_custom_markers: bool
 pub compat::ConfigWarnings::has_exif: bool
 pub compat::ConfigWarnings::has_icc_profile: bool
+pub compat::ConfigWarnings::has_xmp: bool
 pub fn compat::ConfigWarnings::has_warnings(&self) -> bool
 #[non_exhaustive] pub enum ConfigError [also: compat]
 pub ConfigError::CustomQuantTablesNotSupported
@@ -53,6 +54,7 @@ pub fn compat::CMozjpeg::encode_ycbcr_planar(&self, &[u8], &[u8], &[u8], u32, u3
 pub ConfigWarnings::has_custom_markers: bool
 pub ConfigWarnings::has_exif: bool
 pub ConfigWarnings::has_icc_profile: bool
+pub ConfigWarnings::has_xmp: bool
 pub fn compat::ConfigWarnings::has_warnings(&self) -> bool
 pub fn Encoder::to_c_mozjpeg(&self) -> compat::CMozjpeg
 pub struct MozjpegEncodeJob [also: codec]

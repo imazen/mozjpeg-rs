@@ -266,7 +266,7 @@ let limits = Limits::default()
     // Metadata caps — attacker-supplied EXIF/markers inflate output for free
     .max_icc_profile_bytes(1024 * 1024)  // sRGB is ~3 KB
     .max_exif_bytes(64 * 1024)           // camera EXIF is 2-16 KB
-    .max_marker_bytes(64 * 1024);        // all custom APP markers, combined
+    .max_marker_bytes(64 * 1024);        // custom APP markers + XMP, combined
 
 let jpeg = Encoder::default()
     .quality(85)
@@ -305,6 +305,7 @@ holds one MCU row rather than the whole image, so it is checked against
 - **Chroma subsampling** - 4:4:4, 4:2:2, 4:2:0 modes
 - **Type-safe imgref integration** - Encode `ImgRef<RGB8>` directly with automatic stride handling
 - **Strided encoding** - Memory-aligned buffers, crop without copy
+- **Metadata** - ICC profiles, EXIF, XMP (`xmp_data`), and custom APP markers
 - **100% Safe Rust** - `#![forbid(unsafe_code)]` with zero exceptions (archmage + safe_unaligned_simd for SIMD)
 
 ### Encoder Settings Matrix

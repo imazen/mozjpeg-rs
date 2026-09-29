@@ -26,6 +26,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   smaller files on most inputs and is faster; the exact mode exists for
   compatibility and validation.
 
+- **`Encoder::xmp_data` / `StreamingEncoder::xmp_data`** — native XMP
+  metadata support. Pass the raw XMP packet (XML/RDF); the
+  `"http://ns.adobe.com/xap/1.0/\0"` identifier is added automatically and
+  the packet is emitted in an APP1 marker after the EXIF APP1. Empty input
+  omits the marker (same convention as `exif_data`/`icc_profile`).
+  Extended XMP (multi-segment `xmpNote:`) is not supported — oversized
+  packets are rejected at encode time. XMP counts against
+  `Limits::max_marker_bytes`. The `zencodec` adapter now delegates to this
+  setter, so `Metadata::with_xmp` produces byte-identical output through
+  either API.
+
+- **`mozjpeg_rs::progressive::ScanInfo`** is now nameable downstream —
+  the `progressive` module re-exports the `ScanInfo` its generators
+  return. The module remains `#[doc(hidden)]` unstable tooling surface.
+
+### Fixed
+
+- **`CMozjpeg` EXIF marker** (`mozjpeg-sys-config`): the C-compat path
+  wrote the raw TIFF payload as APP1 without the required `Exif\0\0`
+  identifier, producing EXIF segments no decoder recognizes. Both
+  `encode_rgb` and `encode_ycbcr_planar` now prepend the identifier.
+  `CMozjpeg` also emits the XMP APP1 (same namespace+packet format as the
+  Rust path) and reports it via `ConfigWarnings::has_xmp`.
+
 ### Changed
 
 - **Third-party requirements written as full `x.y.z`**: `mozjpeg-sys` `"2.2"` → `"2.2.3"` and `rgb` `"0.8"` → `"0.8.53"`, in both the optional-dependency and dev-dependency positions (69af27b). Every other direct third-party requirement was checked against the crates.io API and is already at its latest published version, so there was nothing to bump. `Cargo.lock` is byte-identical after the edit. Note `Cargo.lock` is gitignored here, so CI resolves fresh on every run and is always on latest-compatible by design — there is no lockfile refresh to commit.

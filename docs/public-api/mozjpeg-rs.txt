@@ -6,27 +6,27 @@
 # impls omitted; re-export duplicates annotated `[also: path]`.
 # DO NOT EDIT BY HAND — commit regenerated changes with the code.
 #
-# files: mozjpeg-rs.txt 246 lines (supported surface) | mozjpeg-rs.features.txt 45 added (features: fast-yuv,imgref,mozjpeg-sys-config,png,simd,simd-intrinsics,zencodec) | mozjpeg-rs.internal.txt 330 lines (463 hidden + 0 excluded-feature)
+# files: mozjpeg-rs.txt 259 lines (supported surface) | mozjpeg-rs.features.txt 47 added (features: fast-yuv,imgref,mozjpeg-sys-config,png,simd,simd-intrinsics,zencodec) | mozjpeg-rs.internal.txt 374 lines (531 hidden + 0 excluded-feature)
 
 ## summary
 #
 #   pub modules                                 2
-#   pub types (struct/enum/trait/alias)        16
-#   pub consts/statics                         25
+#   pub types (struct/enum/trait/alias)        17
+#   pub consts/statics                         27
 #   free functions                              8
-#   inherent methods                           85
-#   struct fields                              54
-#   enum variants                              40
+#   inherent methods                           90
+#   struct fields                              56
+#   enum variants                              42
 #   re-exports                                  4
-#   trait roster entries (type × trait)        67
-#   auto-trait-complete types                  11
+#   trait roster entries (type × trait)        72
+#   auto-trait-complete types                  12
 #   auto-trait exceptions                       1
 #
 # per-module pub lines:
-#   (root)                          230
+#   (root)                          242
 #   imgref_ext                        4
 
-## items (227 lines)
+## items (239 lines)
 
 pub mod mozjpeg_rs
 pub use DCTSIZE2
@@ -112,6 +112,14 @@ pub Subsampling::S440
 pub Subsampling::S444
 pub const fn Subsampling::chroma_factors(self) -> (u8, u8)
 pub const fn Subsampling::luma_factors(self) -> (u8, u8)
+pub enum TrellisMode
+pub TrellisMode::MozjpegExact
+pub TrellisMode::MozjpegExact::speed_level: u8
+pub TrellisMode::Optimized
+pub const TrellisMode::MOZJPEG_DEFAULT_SPEED_LEVEL: u8
+pub fn TrellisMode::c_speed_level(&self) -> core::option::Option<u8>
+pub fn TrellisMode::is_exact(&self) -> bool
+pub const fn TrellisMode::mozjpeg_exact() -> Self
 pub enum TrellisSpeedMode
 pub TrellisSpeedMode::Adaptive
 pub TrellisSpeedMode::Custom
@@ -135,20 +143,20 @@ pub fn Encoder::custom_luma_qtable(self, [u16; 64]) -> Self
 pub fn Encoder::encode_gray(&self, &[u8], u32, u32) -> Result<alloc::vec::Vec<u8>>
 pub fn Encoder::encode_gray_cancellable(&self, &[u8], u32, u32, core::option::Option<&core::sync::atomic::AtomicBool>, core::option::Option<core::time::Duration>) -> Result<alloc::vec::Vec<u8>>
 pub fn Encoder::encode_gray_strided(&self, &[u8], u32, u32, usize) -> Result<alloc::vec::Vec<u8>>
-pub fn Encoder::encode_gray_to_writer<W: core::io::write::Write>(&self, &[u8], u32, u32, W) -> Result<()>
+pub fn Encoder::encode_gray_to_writer<W: std::io::Write>(&self, &[u8], u32, u32, W) -> Result<()>
 pub fn Encoder::encode_gray_with_stop(&self, &[u8], u32, u32, &dyn enough::Stop) -> Result<alloc::vec::Vec<u8>>
 pub fn Encoder::encode_rgb(&self, &[u8], u32, u32) -> Result<alloc::vec::Vec<u8>>
 pub fn Encoder::encode_rgb_cancellable(&self, &[u8], u32, u32, core::option::Option<&core::sync::atomic::AtomicBool>, core::option::Option<core::time::Duration>) -> Result<alloc::vec::Vec<u8>>
 pub fn Encoder::encode_rgb_strided(&self, &[u8], u32, u32, usize) -> Result<alloc::vec::Vec<u8>>
-pub fn Encoder::encode_rgb_to_writer<W: core::io::write::Write>(&self, &[u8], u32, u32, W) -> Result<()>
+pub fn Encoder::encode_rgb_to_writer<W: std::io::Write>(&self, &[u8], u32, u32, W) -> Result<()>
 pub fn Encoder::encode_rgb_with_stop(&self, &[u8], u32, u32, &dyn enough::Stop) -> Result<alloc::vec::Vec<u8>>
 pub fn Encoder::encode_rgba(&self, &[u8], u32, u32) -> Result<alloc::vec::Vec<u8>>
-pub fn Encoder::encode_rgba_to_writer<W: core::io::write::Write>(&self, &[u8], u32, u32, W) -> Result<()>
+pub fn Encoder::encode_rgba_to_writer<W: std::io::Write>(&self, &[u8], u32, u32, W) -> Result<()>
 pub fn Encoder::encode_rgba_with_stop(&self, &[u8], u32, u32, &dyn enough::Stop) -> Result<alloc::vec::Vec<u8>>
 pub fn Encoder::encode_ycbcr_planar(&self, &[u8], &[u8], &[u8], u32, u32) -> Result<alloc::vec::Vec<u8>>
 pub fn Encoder::encode_ycbcr_planar_strided(&self, &[u8], usize, &[u8], usize, &[u8], usize, u32, u32) -> Result<alloc::vec::Vec<u8>>
-pub fn Encoder::encode_ycbcr_planar_strided_to_writer<W: core::io::write::Write>(&self, &[u8], usize, &[u8], usize, &[u8], usize, u32, u32, W) -> Result<()>
-pub fn Encoder::encode_ycbcr_planar_to_writer<W: core::io::write::Write>(&self, &[u8], &[u8], &[u8], u32, u32, W) -> Result<()>
+pub fn Encoder::encode_ycbcr_planar_strided_to_writer<W: std::io::Write>(&self, &[u8], usize, &[u8], usize, &[u8], usize, u32, u32, W) -> Result<()>
+pub fn Encoder::encode_ycbcr_planar_to_writer<W: std::io::Write>(&self, &[u8], &[u8], &[u8], u32, u32, W) -> Result<()>
 pub fn Encoder::estimate_resources(&self, u32, u32) -> ResourceEstimate
 pub fn Encoder::estimate_resources_gray(&self, u32, u32) -> ResourceEstimate
 pub fn Encoder::exif_data(self, alloc::vec::Vec<u8>) -> Self
@@ -174,9 +182,10 @@ pub fn Encoder::simd_ops(self, SimdOps) -> Self
 pub fn Encoder::smoothing(self, u8) -> Self
 pub fn Encoder::subsampling(self, Subsampling) -> Self
 pub fn Encoder::trellis(self, TrellisConfig) -> Self
+pub fn Encoder::xmp_data(self, alloc::vec::Vec<u8>) -> Self
 pub fn Encoder::encode_imgref<P: imgref_ext::EncodeablePixel>(&self, imgref::ImgRef<'_, P>) -> Result<alloc::vec::Vec<u8>>
 pub fn Encoder::streaming() -> StreamingEncoder
-pub struct EncodingStream<W: core::io::write::Write>
+pub struct EncodingStream<W: std::io::Write>
 pub fn EncodingStream<W>::finish(self) -> Result<W>
 pub fn EncodingStream<W>::write_scanlines(&mut self, &[u8]) -> Result<()>
 #[non_exhaustive] pub struct Limits
@@ -220,9 +229,10 @@ pub fn StreamingEncoder::pixel_density(self, PixelDensity) -> Self
 pub fn StreamingEncoder::quality(self, u8) -> Self
 pub fn StreamingEncoder::quant_tables(self, QuantTableIdx) -> Self
 pub fn StreamingEncoder::restart_interval(self, u16) -> Self
-pub fn StreamingEncoder::start_gray<W: core::io::write::Write>(self, u32, u32, W) -> Result<EncodingStream<W>>
-pub fn StreamingEncoder::start_rgb<W: core::io::write::Write>(self, u32, u32, W) -> Result<EncodingStream<W>>
+pub fn StreamingEncoder::start_gray<W: std::io::Write>(self, u32, u32, W) -> Result<EncodingStream<W>>
+pub fn StreamingEncoder::start_rgb<W: std::io::Write>(self, u32, u32, W) -> Result<EncodingStream<W>>
 pub fn StreamingEncoder::subsampling(self, Subsampling) -> Self
+pub fn StreamingEncoder::xmp_data(self, alloc::vec::Vec<u8>) -> Self
 pub struct TrellisConfig
 pub TrellisConfig::dc_enabled: bool
 pub TrellisConfig::delta_dc_weight: f32
@@ -231,6 +241,7 @@ pub TrellisConfig::eob_opt: bool
 pub TrellisConfig::freq_split: i32
 pub TrellisConfig::lambda_log_scale1: f32
 pub TrellisConfig::lambda_log_scale2: f32
+pub TrellisConfig::mode: TrellisMode
 pub TrellisConfig::num_loops: i32
 pub TrellisConfig::q_opt: bool
 pub TrellisConfig::speed_mode: TrellisSpeedMode
@@ -243,6 +254,7 @@ pub fn TrellisConfig::eob_optimization(self, bool) -> Self
 pub fn TrellisConfig::favor_quality() -> Self
 pub fn TrellisConfig::favor_size() -> Self
 pub fn TrellisConfig::lambda_scales(self, f32, f32) -> Self
+pub fn TrellisConfig::mode(self, TrellisMode) -> Self
 pub fn TrellisConfig::rd_factor(self, f32) -> Self
 pub fn TrellisConfig::speed_level(self, u8) -> Self
 pub fn TrellisConfig::speed_mode(self, TrellisSpeedMode) -> Self
@@ -256,11 +268,11 @@ pub fn EncodeablePixel::to_gray(&self) -> u8
 pub fn EncodeablePixel::to_rgb(&self) -> (u8, u8, u8)
 pub type Result<T> = core::result::Result<T, Error>
 
-## trait impls (17 types)
+## trait impls (18 types)
 
 DensityUnit: Clone, Copy, Debug, Default, Eq, PartialEq
 Encoder: Clone, Debug, Default, Encode
-Error: Clone, Debug, Display, Eq, Error, From<alloc::collections::TryReserveError>, From<core::io::error::Error>, From<enough::reason::StopReason>, PartialEq
+Error: Clone, Debug, Display, Eq, Error, From<alloc::collections::TryReserveError>, From<enough::reason::StopReason>, From<std::io::error::Error>, PartialEq
 Limits: Clone, Copy, Debug, Default, Eq, PartialEq
 PixelDensity: Clone, Copy, Debug, Default, Eq, PartialEq
 Preset: Clone, Copy, Debug, Default, Eq, PartialEq
@@ -268,6 +280,7 @@ ResourceEstimate: Clone, Copy, Debug, PartialEq
 StreamingEncoder: Clone, Debug, Default, Encode
 Subsampling: Clone, Copy, Debug, Default, Eq, PartialEq
 TrellisConfig: Clone, Copy, Debug, Default, PartialEq
+TrellisMode: Clone, Copy, Debug, Default, PartialEq
 TrellisSpeedMode: Clone, Copy, Debug, Default, PartialEq
 [u8; 3]: imgref_ext::EncodeablePixel
 [u8; 4]: imgref_ext::EncodeablePixel
@@ -278,5 +291,5 @@ u8: imgref_ext::EncodeablePixel
 
 ## auto traits
 
-11 types implement all of: Freeze, RefUnwindSafe, Send, Sync, Unpin, UnwindSafe
+12 types implement all of: Freeze, RefUnwindSafe, Send, Sync, Unpin, UnwindSafe
 EncodingStream<W>: !Freeze !RefUnwindSafe !Send !Sync !Unpin !UnwindSafe
