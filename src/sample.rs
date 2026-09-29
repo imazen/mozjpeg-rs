@@ -74,6 +74,85 @@ pub fn downsample_h2v2_rows(row0: &[u8], row1: &[u8], output: &mut [u8]) {
     }
 }
 
+/// C mozjpeg-exact 2:1 horizontal downsampling to a block-padded width.
+///
+/// C's `h2v2_downsample`/`h2v1_downsample` right-edge-expand the *input*
+/// row to `output_width * 2` before applying the pair average with its
+/// alternating rounding bias over **every** output column, including the
+/// block padding. When the averaged sum is `≡ 2 (mod 4)` the bias makes
+/// the padded tail alternate ±1 rather than replicate the edge — behavior
+/// the encoder must reproduce for byte-exact output on non-MCU-aligned
+/// widths.
+///
+/// Vertical padding is unaffected: C replicates input rows (same as the
+/// `min` clamp here) and replicates *output* rows afterwards (handled by
+/// the caller's bottom-edge expansion).
+///
+/// # Arguments
+/// * `input` - Input plane (input_height x input_width)
+/// * `input_width` - Input plane width
+/// * `input_height` - Input plane height
+/// * `v_ratio` - Vertical downsampling ratio (1 or 2)
+/// * `output_width` - Padded output width (C `width_in_blocks * DCTSIZE`)
+/// * `output` - Output plane buffer, >= `output_width * ceil(input_height/v_ratio)`
+///
+/// # Returns
+/// Number of real output rows (`ceil(input_height/v_ratio)`); remaining
+/// output rows are left for the caller to replicate.
+pub fn downsample_plane_h2_c_padded(
+    input: &[u8],
+    input_width: usize,
+    input_height: usize,
+    v_ratio: usize,
+    output_width: usize,
+    output: &mut [u8],
+) -> usize {
+    let output_height = input_height.div_ceil(v_ratio);
+    assert!(
+        output.len() >= output_width * output_height,
+        "output buffer too small"
+    );
+    assert!(
+        input.len() >= input_width * input_height,
+        "input buffer too small"
+    );
+
+    // C `expand_right_edge`: replicate the last input column out to
+    // `output_width * h_expand` before averaging.
+    let expanded_width = output_width * 2;
+    let mut expanded = vec![0u16; 2 * expanded_width];
+
+    for y in 0..output_height {
+        let y0 = y * v_ratio;
+        let y1 = (y0 + 1).min(input_height - 1);
+        let row0 = &input[y0 * input_width..y0 * input_width + input_width];
+        let row1 = &input[y1 * input_width..y1 * input_width + input_width];
+        for c in 0..expanded_width {
+            let s = c.min(input_width - 1);
+            expanded[c] = row0[s] as u16;
+            expanded[expanded_width + c] = row1[s] as u16;
+        }
+        let (e0, e1) = expanded.split_at(expanded_width);
+        let out_row = &mut output[y * output_width..y * output_width + output_width];
+        if v_ratio == 2 {
+            // h2v2_downsample: (s + bias) >> 2, bias = 1,2,1,2,...
+            let mut bias = 1u16;
+            for (c, out) in out_row.iter_mut().enumerate() {
+                *out = ((e0[2 * c] + e0[2 * c + 1] + e1[2 * c] + e1[2 * c + 1] + bias) >> 2) as u8;
+                bias ^= 3;
+            }
+        } else {
+            // h2v1_downsample: (s + bias) >> 1, bias = 0,1,0,1,...
+            let mut bias = 0u16;
+            for (c, out) in out_row.iter_mut().enumerate() {
+                *out = ((e0[2 * c] + e0[2 * c + 1] + bias) >> 1) as u8;
+                bias ^= 1;
+            }
+        }
+    }
+    output_height
+}
+
 /// Downsample a component plane with the specified ratios.
 ///
 /// This is a higher-level function that handles full planes.

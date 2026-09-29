@@ -51,9 +51,10 @@ use crate::simd::SimdOps;
 #[cfg(target_arch = "x86_64")]
 use crate::simd::x86_64::entropy::SimdEntropyEncoder;
 use crate::trellis::trellis_quantize_block;
+use crate::trellis_exact::{ComponentGrid, ExactComponent, StdHuffTables, run_exact_trellis};
 use crate::types::{Limits, PixelDensity, Preset, Subsampling, TrellisConfig};
 
-mod helpers;
+pub(crate) mod helpers;
 mod streaming;
 
 pub(crate) use helpers::{
@@ -1798,13 +1799,16 @@ impl Encoder {
             &components,
         )?;
 
-        // DRI (restart interval)
-        if self.restart_interval > 0 {
+        // DRI (restart interval). C's emit_dri runs inside write_scan_header
+        // — after that scan's DHT tables, right before SOS — so exact mode
+        // defers to the buffered arms below.
+        if self.restart_interval > 0 && !self.use_exact_trellis() {
             marker_writer.write_dri(self.restart_interval)?;
         }
 
         // DHT (only luma tables for grayscale) - written later for progressive
-        if !self.progressive && !self.optimize_huffman {
+        // and for exact trellis (which emits C's post-gather slot tables).
+        if !self.progressive && !self.optimize_huffman && !self.use_exact_trellis() {
             marker_writer
                 .write_dht_multiple(&[(0, false, &dc_luma_huff), (0, true, &ac_luma_huff)])?;
         }
@@ -1820,8 +1824,10 @@ impl Encoder {
             let mut y_blocks = try_alloc_vec_array::<i16, DCTSIZE2>(num_blocks)?;
             let mut dct_block = [0i16; DCTSIZE2];
 
-            // Optionally collect raw DCT for DC trellis
-            let dc_trellis_enabled = self.trellis.enabled && self.trellis.dc_enabled;
+            // Optionally collect raw DCT for DC trellis / exact mode
+            let exact_trellis = self.use_exact_trellis();
+            let dc_trellis_enabled =
+                self.trellis.enabled && (self.trellis.dc_enabled || exact_trellis);
             let mut y_raw_dct = if dc_trellis_enabled {
                 Some(try_alloc_vec_array::<i32, DCTSIZE2>(num_blocks)?)
             } else {
@@ -1849,63 +1855,150 @@ impl Encoder {
                 }
             }
 
-            // Run DC trellis optimization if enabled
-            if dc_trellis_enabled && let Some(ref y_raw) = y_raw_dct {
-                run_dc_trellis_by_row(
-                    y_raw,
-                    &mut y_blocks,
-                    luma_qtable.values[0],
-                    &dc_luma_derived,
-                    self.trellis.lambda_log_scale1,
-                    self.trellis.lambda_log_scale2,
-                    mcu_rows,
-                    mcu_cols,
-                    mcu_cols,
-                    1,
-                    1,
-                    self.trellis.delta_dc_weight,
-                );
-            }
+            // C mozjpeg trellis passes (exact mode) or optimized DC trellis
+            let mut exact_tables = None;
+            if exact_trellis {
+                if let Some(ref y_raw) = y_raw_dct {
+                    let grid = ComponentGrid {
+                        width_in_blocks: mcu_cols,
+                        height_in_blocks: mcu_rows,
+                        h_samp: 1,
+                        v_samp: 1,
+                        mcu_cols,
+                        mcu_rows,
+                    };
+                    let std_tables = StdHuffTables {
+                        dc_luma: &dc_luma_huff,
+                        dc_chroma: &dc_luma_huff,
+                        ac_luma: &ac_luma_huff,
+                        ac_chroma: &ac_luma_huff,
+                    };
+                    let mut comps = [ExactComponent {
+                        blocks: &mut y_blocks,
+                        raw: y_raw,
+                        grid,
+                        qtbl: &luma_qtable.values,
+                        dc_tbl_no: 0,
+                        ac_tbl_no: 0,
+                        blocks_per_mcu: 1,
+                    }];
+                    exact_tables = Some(run_exact_trellis(
+                        &mut comps,
+                        true,
+                        self.optimize_huffman,
+                        self.restart_interval as usize,
+                        &std_tables,
+                        &self.trellis,
+                    )?);
+                }
+            } else {
+                // Run DC trellis optimization if enabled
+                if dc_trellis_enabled && let Some(ref y_raw) = y_raw_dct {
+                    run_dc_trellis_by_row(
+                        y_raw,
+                        &mut y_blocks,
+                        luma_qtable.values[0],
+                        &dc_luma_derived,
+                        self.trellis.lambda_log_scale1,
+                        self.trellis.lambda_log_scale2,
+                        mcu_rows,
+                        mcu_cols,
+                        mcu_cols,
+                        1,
+                        1,
+                        self.trellis.delta_dc_weight,
+                    );
+                }
 
-            // Run EOB optimization if enabled (cross-block EOBRUN optimization)
-            if self.trellis.enabled && self.trellis.eob_opt {
-                use crate::trellis::{estimate_block_eob_info, optimize_eob_runs};
+                // Run EOB optimization if enabled (cross-block EOBRUN optimization)
+                if self.trellis.enabled && self.trellis.eob_opt {
+                    use crate::trellis::{estimate_block_eob_info, optimize_eob_runs};
 
-                // Estimate EOB info for each block
-                let eob_info: Vec<_> = y_blocks
-                    .iter()
-                    .map(|block| estimate_block_eob_info(block, &ac_luma_derived, 1, 63))
-                    .collect();
+                    // Estimate EOB info for each block
+                    let eob_info: Vec<_> = y_blocks
+                        .iter()
+                        .map(|block| estimate_block_eob_info(block, &ac_luma_derived, 1, 63))
+                        .collect();
 
-                // Optimize EOB runs across all blocks
-                optimize_eob_runs(&mut y_blocks, &eob_info, &ac_luma_derived, 1, 63);
-            }
-
-            // Generate progressive scan script for grayscale (1 component)
-            let scans = generate_mozjpeg_max_compression_scans(1);
-
-            // Build optimized Huffman tables
-            let mut dc_freq = FrequencyCounter::new();
-            let mut dc_counter = ProgressiveSymbolCounter::new();
-            for scan in &scans {
-                let is_dc_first_scan = scan.ss == 0 && scan.se == 0 && scan.ah == 0;
-                if is_dc_first_scan {
-                    // Count DC symbols using progressive counter
-                    for block in &y_blocks {
-                        dc_counter.count_dc_first(block, 0, scan.al, &mut dc_freq);
-                    }
+                    // Optimize EOB runs across all blocks
+                    optimize_eob_runs(&mut y_blocks, &eob_info, &ac_luma_derived, 1, 63);
                 }
             }
 
-            let opt_dc_huff = dc_freq.generate_table()?;
+            // Generate progressive scan script for grayscale (1 component)
+            let scans = if self.optimize_scans {
+                self.optimize_progressive_scans(
+                    1,
+                    &y_blocks,
+                    &[],
+                    &[],
+                    mcu_rows,
+                    mcu_cols,
+                    1,
+                    1,
+                    width,
+                    height,
+                    0,
+                    0,
+                    &dc_luma_derived,
+                    &dc_luma_derived,
+                    &ac_luma_derived,
+                    &ac_luma_derived,
+                    stop,
+                )?
+            } else {
+                generate_mozjpeg_max_compression_scans(1)
+            };
+
+            // Exact trellis without Huffman optimization reuses C's
+            // post-trellis slot tables for every scan.
+            let exact_scan_tables = exact_tables.and_then(|t| {
+                if self.optimize_huffman {
+                    None
+                } else {
+                    Some((
+                        t.dc_huff[0].clone().unwrap_or_else(|| dc_luma_huff.clone()),
+                        t.ac_huff[0].clone().unwrap_or_else(|| ac_luma_huff.clone()),
+                    ))
+                }
+            });
+
+            let opt_dc_huff;
+            if let Some((ref exact_dc, _)) = exact_scan_tables {
+                // Slot table: emitted where C's sent_table dedup puts it,
+                // before the first (DC) scan.
+                marker_writer.write_dht_multiple(&[(0, false, exact_dc)])?;
+                opt_dc_huff = exact_dc.clone();
+            } else {
+                // Build optimized Huffman tables
+                let mut dc_freq = FrequencyCounter::new();
+                let mut dc_counter = ProgressiveSymbolCounter::new();
+                for scan in &scans {
+                    let is_dc_first_scan = scan.ss == 0 && scan.se == 0 && scan.ah == 0;
+                    if is_dc_first_scan {
+                        // Count DC symbols using progressive counter
+                        for block in &y_blocks {
+                            dc_counter.count_dc_first(block, 0, scan.al, &mut dc_freq);
+                        }
+                    }
+                }
+
+                opt_dc_huff = dc_freq.generate_table()?;
+
+                // Write DC Huffman table upfront
+                marker_writer.write_dht_multiple(&[(0, false, &opt_dc_huff)])?;
+            }
             let opt_dc_derived = DerivedTable::from_huff_table(&opt_dc_huff, true)?;
 
-            // Write DC Huffman table upfront
-            marker_writer.write_dht_multiple(&[(0, false, &opt_dc_huff)])?;
+            // C emits DRI after the first scan's DHT, right before SOS
+            if self.restart_interval > 0 && self.use_exact_trellis() {
+                marker_writer.write_dri(self.restart_interval)?;
+            }
 
             // Encode each scan
             let output = marker_writer.into_inner();
             let mut bit_writer = BitWriter::new(output);
+            let mut exact_ac_dht_written = false;
 
             for scan in &scans {
                 // Cooperative cancellation: once per scan (each scan walks
@@ -1935,38 +2028,49 @@ impl Encoder {
 
                     prog_encoder.finish_scan(None)?;
                 } else {
-                    // AC scan - generate per-scan Huffman table
-                    let mut ac_freq = FrequencyCounter::new();
-                    let mut ac_counter = ProgressiveSymbolCounter::new();
+                    // AC scan - generate per-scan Huffman table, or reuse the
+                    // exact-trellis slot table (already emitted upfront).
+                    let opt_ac_huff;
+                    if let Some((_, ref exact_ac)) = exact_scan_tables {
+                        opt_ac_huff = exact_ac.clone();
+                    } else {
+                        let mut ac_freq = FrequencyCounter::new();
+                        let mut ac_counter = ProgressiveSymbolCounter::new();
 
-                    for block in &y_blocks {
-                        if scan.ah == 0 {
-                            ac_counter.count_ac_first(
-                                block,
-                                scan.ss,
-                                scan.se,
-                                scan.al,
-                                &mut ac_freq,
-                            );
-                        } else {
-                            ac_counter.count_ac_refine(
-                                block,
-                                scan.ss,
-                                scan.se,
-                                scan.ah,
-                                scan.al,
-                                &mut ac_freq,
-                            );
+                        for block in &y_blocks {
+                            if scan.ah == 0 {
+                                ac_counter.count_ac_first(
+                                    block,
+                                    scan.ss,
+                                    scan.se,
+                                    scan.al,
+                                    &mut ac_freq,
+                                );
+                            } else {
+                                ac_counter.count_ac_refine(
+                                    block,
+                                    scan.ss,
+                                    scan.se,
+                                    scan.ah,
+                                    scan.al,
+                                    &mut ac_freq,
+                                );
+                            }
                         }
-                    }
-                    ac_counter.finish_scan(Some(&mut ac_freq));
+                        ac_counter.finish_scan(Some(&mut ac_freq));
 
-                    let opt_ac_huff = ac_freq.generate_table()?;
+                        opt_ac_huff = ac_freq.generate_table()?;
+                    }
                     let opt_ac_derived = DerivedTable::from_huff_table(&opt_ac_huff, false)?;
 
-                    // Write AC Huffman table and SOS
+                    // Write AC Huffman table and SOS. Exact mode emits the
+                    // slot table once, before the first AC scan (C sent_table
+                    // dedup); optimized mode emits per-scan tables.
                     marker_writer = MarkerWriter::new(bit_writer.into_inner());
-                    marker_writer.write_dht_multiple(&[(0, true, &opt_ac_huff)])?;
+                    if exact_scan_tables.is_none() || !exact_ac_dht_written {
+                        marker_writer.write_dht_multiple(&[(0, true, &opt_ac_huff)])?;
+                        exact_ac_dht_written = true;
+                    }
                     marker_writer.write_sos(scan, &components)?;
                     bit_writer = BitWriter::new(marker_writer.into_inner());
 
@@ -1999,10 +2103,19 @@ impl Encoder {
 
             let mut output = bit_writer.into_inner();
             output.write_all(&[0xFF, 0xD9])?; // EOI
-        } else if self.optimize_huffman {
-            // 2-pass: collect blocks, count frequencies, then encode
+        } else if self.optimize_huffman || self.use_exact_trellis() {
+            // 2-pass (or C-exact trellis): collect blocks, then encode
             let mut y_blocks = try_alloc_vec_array::<i16, DCTSIZE2>(num_blocks)?;
             let mut dct_block = [0i16; DCTSIZE2];
+
+            let exact_trellis = self.use_exact_trellis();
+            let dc_trellis_enabled = self.trellis.enabled && self.trellis.dc_enabled;
+            let keep_raw = self.trellis.enabled && (dc_trellis_enabled || exact_trellis);
+            let mut y_raw_dct = if keep_raw {
+                Some(try_alloc_vec_array::<i32, DCTSIZE2>(num_blocks)?)
+            } else {
+                None
+            };
 
             // Collect all blocks using the same process as RGB encoding
             for mcu_row in 0..mcu_rows {
@@ -2019,28 +2132,99 @@ impl Encoder {
                         &ac_luma_derived,
                         &mut y_blocks[block_idx],
                         &mut dct_block,
-                        None, // No raw DCT storage needed for grayscale
+                        y_raw_dct.as_mut().map(|v| v[block_idx].as_mut_slice()),
                     )?;
                 }
             }
 
-            // Count frequencies using SymbolCounter
-            let mut dc_freq = FrequencyCounter::new();
-            let mut ac_freq = FrequencyCounter::new();
-            let mut counter = SymbolCounter::new();
-            for block in &y_blocks {
-                counter.count_block(block, 0, &mut dc_freq, &mut ac_freq);
+            // C mozjpeg trellis passes (exact mode) or optimized DC trellis
+            let mut out_dc_huff = None;
+            let mut out_ac_huff = None;
+            if exact_trellis {
+                if let Some(ref y_raw) = y_raw_dct {
+                    let grid = ComponentGrid {
+                        width_in_blocks: mcu_cols,
+                        height_in_blocks: mcu_rows,
+                        h_samp: 1,
+                        v_samp: 1,
+                        mcu_cols,
+                        mcu_rows,
+                    };
+                    let std_tables = StdHuffTables {
+                        dc_luma: &dc_luma_huff,
+                        dc_chroma: &dc_luma_huff,
+                        ac_luma: &ac_luma_huff,
+                        ac_chroma: &ac_luma_huff,
+                    };
+                    let mut comps = [ExactComponent {
+                        blocks: &mut y_blocks,
+                        raw: y_raw,
+                        grid,
+                        qtbl: &luma_qtable.values,
+                        dc_tbl_no: 0,
+                        ac_tbl_no: 0,
+                        blocks_per_mcu: 1,
+                    }];
+                    let tables = run_exact_trellis(
+                        &mut comps,
+                        false,
+                        self.optimize_huffman,
+                        self.restart_interval as usize,
+                        &std_tables,
+                        &self.trellis,
+                    )?;
+                    out_dc_huff = tables.dc_huff[0].clone();
+                    out_ac_huff = tables.ac_huff[0].clone();
+                }
+            } else if dc_trellis_enabled && let Some(ref y_raw) = y_raw_dct {
+                run_dc_trellis_by_row(
+                    y_raw,
+                    &mut y_blocks,
+                    luma_qtable.values[0],
+                    &dc_luma_derived,
+                    self.trellis.lambda_log_scale1,
+                    self.trellis.lambda_log_scale2,
+                    mcu_rows,
+                    mcu_cols,
+                    mcu_cols,
+                    1,
+                    1,
+                    self.trellis.delta_dc_weight,
+                );
             }
 
-            // Generate optimized tables
-            let opt_dc_huff = dc_freq.generate_table()?;
-            let opt_ac_huff = ac_freq.generate_table()?;
+            // Select Huffman tables: optimized gather, or C's post-trellis
+            // slot tables for exact mode (which gathers with restart resets
+            // the generic counter doesn't model).
+            let (opt_dc_huff, opt_ac_huff);
+            if self.use_exact_trellis() {
+                opt_dc_huff = out_dc_huff.unwrap_or_else(|| dc_luma_huff.clone());
+                opt_ac_huff = out_ac_huff.unwrap_or_else(|| ac_luma_huff.clone());
+            } else if self.optimize_huffman {
+                // Count frequencies using SymbolCounter
+                let mut dc_freq = FrequencyCounter::new();
+                let mut ac_freq = FrequencyCounter::new();
+                let mut counter = SymbolCounter::new();
+                for block in &y_blocks {
+                    counter.count_block(block, 0, &mut dc_freq, &mut ac_freq);
+                }
+                opt_dc_huff = dc_freq.generate_table()?;
+                opt_ac_huff = ac_freq.generate_table()?;
+            } else {
+                opt_dc_huff = out_dc_huff.unwrap_or_else(|| dc_luma_huff.clone());
+                opt_ac_huff = out_ac_huff.unwrap_or_else(|| ac_luma_huff.clone());
+            }
             let opt_dc_derived = DerivedTable::from_huff_table(&opt_dc_huff, true)?;
             let opt_ac_derived = DerivedTable::from_huff_table(&opt_ac_huff, false)?;
 
             // Write optimized Huffman tables
             marker_writer
                 .write_dht_multiple(&[(0, false, &opt_dc_huff), (0, true, &opt_ac_huff)])?;
+
+            // C emits DRI after the scan's DHT, right before SOS
+            if self.restart_interval > 0 && self.use_exact_trellis() {
+                marker_writer.write_dri(self.restart_interval)?;
+            }
 
             // Write SOS and encode
             let scans = generate_baseline_scan(1);
@@ -2529,36 +2713,68 @@ impl Encoder {
         stop: &dyn enough::Stop,
     ) -> Result<()> {
         let (luma_h, luma_v) = self.subsampling.luma_factors();
-        let (chroma_width, chroma_height) =
+        let (mut chroma_width, chroma_height) =
             sample::subsampled_dimensions(width, height, luma_h as usize, luma_v as usize);
-
-        let chroma_size = chroma_width
-            .checked_mul(chroma_height)
-            .ok_or(Error::AllocationFailed)?;
-        let mut cb_subsampled = try_alloc_vec(0u8, chroma_size)?;
-        let mut cr_subsampled = try_alloc_vec(0u8, chroma_size)?;
-
-        sample::downsample_plane(
-            cb_plane,
-            width,
-            height,
-            luma_h as usize,
-            luma_v as usize,
-            &mut cb_subsampled,
-        );
-        sample::downsample_plane(
-            cr_plane,
-            width,
-            height,
-            luma_h as usize,
-            luma_v as usize,
-            &mut cr_subsampled,
-        );
 
         let (mcu_width, mcu_height) =
             sample::mcu_aligned_dimensions(width, height, luma_h as usize, luma_v as usize);
         let (mcu_chroma_w, mcu_chroma_h) =
             (mcu_width / luma_h as usize, mcu_height / luma_v as usize);
+
+        // In MozjpegExact mode, horizontally-downsampled planes must match
+        // C byte-for-byte: C expands the *input* to the padded output width
+        // before averaging, so its alternating rounding bias acts on the
+        // padding columns too (instead of flat edge replication).
+        let c_padded_chroma = self.use_exact_trellis() && luma_h == 2;
+        let subsampled_stride = if c_padded_chroma {
+            mcu_chroma_w
+        } else {
+            chroma_width
+        };
+        let chroma_size = subsampled_stride
+            .checked_mul(chroma_height)
+            .ok_or(Error::AllocationFailed)?;
+        let mut cb_subsampled = try_alloc_vec(0u8, chroma_size)?;
+        let mut cr_subsampled = try_alloc_vec(0u8, chroma_size)?;
+
+        if c_padded_chroma {
+            let rows = sample::downsample_plane_h2_c_padded(
+                cb_plane,
+                width,
+                height,
+                luma_v as usize,
+                mcu_chroma_w,
+                &mut cb_subsampled,
+            );
+            debug_assert_eq!(rows, chroma_height);
+            let rows = sample::downsample_plane_h2_c_padded(
+                cr_plane,
+                width,
+                height,
+                luma_v as usize,
+                mcu_chroma_w,
+                &mut cr_subsampled,
+            );
+            debug_assert_eq!(rows, chroma_height);
+            chroma_width = mcu_chroma_w;
+        } else {
+            sample::downsample_plane(
+                cb_plane,
+                width,
+                height,
+                luma_h as usize,
+                luma_v as usize,
+                &mut cb_subsampled,
+            );
+            sample::downsample_plane(
+                cr_plane,
+                width,
+                height,
+                luma_h as usize,
+                luma_v as usize,
+                &mut cr_subsampled,
+            );
+        }
 
         let mcu_y_size = mcu_width
             .checked_mul(mcu_height)
@@ -2709,14 +2925,16 @@ impl Encoder {
             &components,
         )?;
 
-        // DRI (restart interval) - if enabled
-        if self.restart_interval > 0 {
+        // DRI (restart interval) - if enabled. C emits it right before SOS
+        // (after the scan's DHT); exact mode writes it in the buffered arms.
+        if self.restart_interval > 0 && !self.use_exact_trellis() {
             marker_writer.write_dri(self.restart_interval)?;
         }
 
         // DHT (Huffman tables) - written here for non-optimized modes,
-        // or later after frequency counting for optimized modes
-        if !self.optimize_huffman {
+        // or later after frequency counting for optimized modes.
+        // Exact trellis writes its C slot tables in the buffered arms below.
+        if !self.optimize_huffman && !self.use_exact_trellis() {
             // Combine all tables into single DHT marker for smaller file size
             marker_writer.write_dht_multiple(&[
                 (0, false, &dc_luma_huff),
@@ -2744,8 +2962,10 @@ impl Encoder {
             let mut cb_blocks = try_alloc_vec_array::<i16, DCTSIZE2>(num_chroma_blocks)?;
             let mut cr_blocks = try_alloc_vec_array::<i16, DCTSIZE2>(num_chroma_blocks)?;
 
-            // Optionally collect raw DCT for DC trellis
-            let dc_trellis_enabled = self.trellis.enabled && self.trellis.dc_enabled;
+            // Optionally collect raw DCT for DC trellis / exact mode
+            let exact_trellis = self.use_exact_trellis();
+            let dc_trellis_enabled =
+                self.trellis.enabled && (self.trellis.dc_enabled || exact_trellis);
             let mut y_raw_dct = if dc_trellis_enabled {
                 Some(try_alloc_vec_array::<i32, DCTSIZE2>(num_y_blocks)?)
             } else {
@@ -2785,89 +3005,159 @@ impl Encoder {
                 stop,
             )?;
 
-            // Run DC trellis optimization if enabled
-            // C mozjpeg processes DC trellis row by row (each row is an independent chain)
-            if dc_trellis_enabled {
-                let h = luma_h as usize;
-                let v = luma_v as usize;
-                let y_block_cols = mcu_cols * h;
-                let y_block_rows = mcu_rows * v;
-
-                if let Some(ref y_raw) = y_raw_dct {
-                    run_dc_trellis_by_row(
-                        y_raw,
-                        &mut y_blocks,
-                        luma_qtable.values[0],
-                        &dc_luma_derived,
-                        self.trellis.lambda_log_scale1,
-                        self.trellis.lambda_log_scale2,
-                        y_block_rows,
-                        y_block_cols,
+            // C mozjpeg trellis passes (exact mode) or optimized trellis
+            let mut exact_tables = None;
+            if exact_trellis {
+                if let (Some(y_raw), Some(cb_raw), Some(cr_raw)) = (
+                    y_raw_dct.as_deref(),
+                    cb_raw_dct.as_deref(),
+                    cr_raw_dct.as_deref(),
+                ) {
+                    let y_grid = ComponentGrid {
+                        width_in_blocks: width.div_ceil(DCTSIZE),
+                        height_in_blocks: height.div_ceil(DCTSIZE),
+                        h_samp: luma_h as usize,
+                        v_samp: luma_v as usize,
                         mcu_cols,
-                        h,
-                        v,
-                        self.trellis.delta_dc_weight,
-                    );
-                }
-                // Chroma has 1x1 per MCU, so MCU order = row order
-                if let Some(ref cb_raw) = cb_raw_dct {
-                    run_dc_trellis_by_row(
-                        cb_raw,
-                        &mut cb_blocks,
-                        chroma_qtable.values[0],
-                        &dc_chroma_derived,
-                        self.trellis.lambda_log_scale1,
-                        self.trellis.lambda_log_scale2,
                         mcu_rows,
+                    };
+                    let c_grid = ComponentGrid {
+                        width_in_blocks: mcu_cols,
+                        height_in_blocks: mcu_rows,
+                        h_samp: 1,
+                        v_samp: 1,
                         mcu_cols,
-                        mcu_cols,
-                        1,
-                        1,
-                        self.trellis.delta_dc_weight,
-                    );
-                }
-                if let Some(ref cr_raw) = cr_raw_dct {
-                    run_dc_trellis_by_row(
-                        cr_raw,
-                        &mut cr_blocks,
-                        chroma_qtable.values[0],
-                        &dc_chroma_derived,
-                        self.trellis.lambda_log_scale1,
-                        self.trellis.lambda_log_scale2,
                         mcu_rows,
-                        mcu_cols,
-                        mcu_cols,
-                        1,
-                        1,
-                        self.trellis.delta_dc_weight,
-                    );
+                    };
+                    let std_tables = StdHuffTables {
+                        dc_luma: &dc_luma_huff,
+                        dc_chroma: &dc_chroma_huff,
+                        ac_luma: &ac_luma_huff,
+                        ac_chroma: &ac_chroma_huff,
+                    };
+                    let mut comps = [
+                        ExactComponent {
+                            blocks: &mut y_blocks,
+                            raw: y_raw,
+                            grid: y_grid,
+                            qtbl: &luma_qtable.values,
+                            dc_tbl_no: 0,
+                            ac_tbl_no: 0,
+                            blocks_per_mcu: (luma_h * luma_v) as usize,
+                        },
+                        ExactComponent {
+                            blocks: &mut cb_blocks,
+                            raw: cb_raw,
+                            grid: c_grid,
+                            qtbl: &chroma_qtable.values,
+                            dc_tbl_no: 1,
+                            ac_tbl_no: 1,
+                            blocks_per_mcu: 1,
+                        },
+                        ExactComponent {
+                            blocks: &mut cr_blocks,
+                            raw: cr_raw,
+                            grid: c_grid,
+                            qtbl: &chroma_qtable.values,
+                            dc_tbl_no: 1,
+                            ac_tbl_no: 1,
+                            blocks_per_mcu: 1,
+                        },
+                    ];
+                    exact_tables = Some(run_exact_trellis(
+                        &mut comps,
+                        true,
+                        self.optimize_huffman,
+                        self.restart_interval as usize,
+                        &std_tables,
+                        &self.trellis,
+                    )?);
                 }
-            }
+            } else {
+                // Run DC trellis optimization if enabled
+                // C mozjpeg processes DC trellis row by row (each row is an independent chain)
+                if dc_trellis_enabled {
+                    let h = luma_h as usize;
+                    let v = luma_v as usize;
+                    let y_block_cols = mcu_cols * h;
+                    let y_block_rows = mcu_rows * v;
 
-            // Run EOB optimization if enabled (cross-block EOBRUN optimization)
-            if self.trellis.enabled && self.trellis.eob_opt {
-                use crate::trellis::{estimate_block_eob_info, optimize_eob_runs};
+                    if let Some(ref y_raw) = y_raw_dct {
+                        run_dc_trellis_by_row(
+                            y_raw,
+                            &mut y_blocks,
+                            luma_qtable.values[0],
+                            &dc_luma_derived,
+                            self.trellis.lambda_log_scale1,
+                            self.trellis.lambda_log_scale2,
+                            y_block_rows,
+                            y_block_cols,
+                            mcu_cols,
+                            h,
+                            v,
+                            self.trellis.delta_dc_weight,
+                        );
+                    }
+                    // Chroma has 1x1 per MCU, so MCU order = row order
+                    if let Some(ref cb_raw) = cb_raw_dct {
+                        run_dc_trellis_by_row(
+                            cb_raw,
+                            &mut cb_blocks,
+                            chroma_qtable.values[0],
+                            &dc_chroma_derived,
+                            self.trellis.lambda_log_scale1,
+                            self.trellis.lambda_log_scale2,
+                            mcu_rows,
+                            mcu_cols,
+                            mcu_cols,
+                            1,
+                            1,
+                            self.trellis.delta_dc_weight,
+                        );
+                    }
+                    if let Some(ref cr_raw) = cr_raw_dct {
+                        run_dc_trellis_by_row(
+                            cr_raw,
+                            &mut cr_blocks,
+                            chroma_qtable.values[0],
+                            &dc_chroma_derived,
+                            self.trellis.lambda_log_scale1,
+                            self.trellis.lambda_log_scale2,
+                            mcu_rows,
+                            mcu_cols,
+                            mcu_cols,
+                            1,
+                            1,
+                            self.trellis.delta_dc_weight,
+                        );
+                    }
+                }
 
-                // Y component
-                let y_eob_info: Vec<_> = y_blocks
-                    .iter()
-                    .map(|block| estimate_block_eob_info(block, &ac_luma_derived, 1, 63))
-                    .collect();
-                optimize_eob_runs(&mut y_blocks, &y_eob_info, &ac_luma_derived, 1, 63);
+                // Run EOB optimization if enabled (cross-block EOBRUN optimization)
+                if self.trellis.enabled && self.trellis.eob_opt {
+                    use crate::trellis::{estimate_block_eob_info, optimize_eob_runs};
 
-                // Cb component
-                let cb_eob_info: Vec<_> = cb_blocks
-                    .iter()
-                    .map(|block| estimate_block_eob_info(block, &ac_chroma_derived, 1, 63))
-                    .collect();
-                optimize_eob_runs(&mut cb_blocks, &cb_eob_info, &ac_chroma_derived, 1, 63);
+                    // Y component
+                    let y_eob_info: Vec<_> = y_blocks
+                        .iter()
+                        .map(|block| estimate_block_eob_info(block, &ac_luma_derived, 1, 63))
+                        .collect();
+                    optimize_eob_runs(&mut y_blocks, &y_eob_info, &ac_luma_derived, 1, 63);
 
-                // Cr component
-                let cr_eob_info: Vec<_> = cr_blocks
-                    .iter()
-                    .map(|block| estimate_block_eob_info(block, &ac_chroma_derived, 1, 63))
-                    .collect();
-                optimize_eob_runs(&mut cr_blocks, &cr_eob_info, &ac_chroma_derived, 1, 63);
+                    // Cb component
+                    let cb_eob_info: Vec<_> = cb_blocks
+                        .iter()
+                        .map(|block| estimate_block_eob_info(block, &ac_chroma_derived, 1, 63))
+                        .collect();
+                    optimize_eob_runs(&mut cb_blocks, &cb_eob_info, &ac_chroma_derived, 1, 63);
+
+                    // Cr component
+                    let cr_eob_info: Vec<_> = cr_blocks
+                        .iter()
+                        .map(|block| estimate_block_eob_info(block, &ac_chroma_derived, 1, 63))
+                        .collect();
+                    optimize_eob_runs(&mut cr_blocks, &cr_eob_info, &ac_chroma_derived, 1, 63);
+                }
             }
 
             // Generate progressive scan script
@@ -2950,6 +3240,11 @@ impl Encoder {
 
                 let opt_dc_luma = DerivedTable::from_huff_table(&opt_dc_luma_huff, true)?;
                 let opt_dc_chroma = DerivedTable::from_huff_table(&opt_dc_chroma_huff, true)?;
+
+                // C emits DRI after the first scan's DHT, right before SOS
+                if self.restart_interval > 0 && self.use_exact_trellis() {
+                    marker_writer.write_dri(self.restart_interval)?;
+                }
 
                 // Get output writer from marker_writer
                 let output = marker_writer.into_inner();
@@ -3064,15 +3359,88 @@ impl Encoder {
                 let mut output = bit_writer.into_inner();
                 output.write_all(&[0xFF, 0xD9])?;
             } else {
-                // Standard tables mode (no optimization)
+                // Standard tables mode (no optimization). With exact trellis
+                // these are C's post-trellis slot tables, not necessarily std,
+                // emitted per scan with C's sent_table dedup.
+                let (sc_dc_luma_h, sc_dc_chroma_h, sc_ac_luma_h, sc_ac_chroma_h);
+                if let Some(ref t) = exact_tables {
+                    sc_dc_luma_h = t.dc_huff[0].clone().unwrap_or_else(|| dc_luma_huff.clone());
+                    sc_dc_chroma_h = t.dc_huff[1]
+                        .clone()
+                        .unwrap_or_else(|| dc_chroma_huff.clone());
+                    sc_ac_luma_h = t.ac_huff[0].clone().unwrap_or_else(|| ac_luma_huff.clone());
+                    sc_ac_chroma_h = t.ac_huff[1]
+                        .clone()
+                        .unwrap_or_else(|| ac_chroma_huff.clone());
+                } else {
+                    sc_dc_luma_h = dc_luma_huff.clone();
+                    sc_dc_chroma_h = dc_chroma_huff.clone();
+                    sc_ac_luma_h = ac_luma_huff.clone();
+                    sc_ac_chroma_h = ac_chroma_huff.clone();
+                }
+                let sc_dc_luma = DerivedTable::from_huff_table(&sc_dc_luma_h, true)?;
+                let sc_dc_chroma = DerivedTable::from_huff_table(&sc_dc_chroma_h, true)?;
+                let sc_ac_luma = DerivedTable::from_huff_table(&sc_ac_luma_h, false)?;
+                let sc_ac_chroma = DerivedTable::from_huff_table(&sc_ac_chroma_h, false)?;
+
                 let output = marker_writer.into_inner();
                 let mut bit_writer = BitWriter::new(output);
+                // C sent_table flags: tables are emitted at first use per
+                // scan. For non-exact mode all four were already written by
+                // the early combined DHT, so they start "sent".
+                let mut sent_dc = [!self.use_exact_trellis(); 4];
+                let mut sent_ac = sent_dc;
+                let mut first_scan = true;
 
                 for scan in &scans {
                     // Cooperative cancellation: once per scan.
                     stop.check()?;
                     bit_writer.flush()?;
                     let mut inner = bit_writer.into_inner();
+                    if self.use_exact_trellis() {
+                        // emit_multi_dht: needed-but-unsent tables for this
+                        // scan, in scan-component order (dc then ac per comp).
+                        let needs_dc = scan.ss == 0 && scan.ah == 0;
+                        let mut tables = Vec::new();
+                        for &ci in &scan.component_index[..scan.comps_in_scan as usize] {
+                            let no = if ci == 0 { 0 } else { 1 };
+                            if needs_dc && !sent_dc[no] {
+                                tables.push((
+                                    no as u8,
+                                    false,
+                                    if ci == 0 {
+                                        &sc_dc_luma_h
+                                    } else {
+                                        &sc_dc_chroma_h
+                                    },
+                                ));
+                                sent_dc[no] = true;
+                            }
+                            if scan.se > 0 && !sent_ac[no] {
+                                tables.push((
+                                    no as u8,
+                                    true,
+                                    if ci == 0 {
+                                        &sc_ac_luma_h
+                                    } else {
+                                        &sc_ac_chroma_h
+                                    },
+                                ));
+                                sent_ac[no] = true;
+                            }
+                        }
+                        if !tables.is_empty() {
+                            MarkerWriter::new(&mut inner).write_dht_multiple(&tables)?;
+                        }
+                    }
+                    // C's emit_dri runs after the scan's DHT, before SOS —
+                    // and only when the interval changed (once, first scan).
+                    if self.restart_interval > 0
+                        && self.use_exact_trellis()
+                        && std::mem::take(&mut first_scan)
+                    {
+                        MarkerWriter::new(&mut inner).write_dri(self.restart_interval)?;
+                    }
                     write_sos_marker(&mut inner, scan, &components)?;
 
                     bit_writer = BitWriter::new(inner);
@@ -3091,18 +3459,18 @@ impl Encoder {
                         height,
                         chroma_width,
                         chroma_height,
-                        &dc_luma_derived,
-                        &dc_chroma_derived,
-                        &ac_luma_derived,
-                        &ac_chroma_derived,
+                        &sc_dc_luma,
+                        &sc_dc_chroma,
+                        &sc_ac_luma,
+                        &sc_ac_chroma,
                         &mut prog_encoder,
                     )?;
 
                     let ac_table = if scan.ss > 0 {
                         if scan.component_index[0] == 0 {
-                            Some(&ac_luma_derived)
+                            Some(&sc_ac_luma)
                         } else {
-                            Some(&ac_chroma_derived)
+                            Some(&sc_ac_chroma)
                         }
                     } else {
                         None
@@ -3114,8 +3482,9 @@ impl Encoder {
                 let mut output = bit_writer.into_inner();
                 output.write_all(&[0xFF, 0xD9])?;
             }
-        } else if self.optimize_huffman {
-            // Baseline mode with Huffman optimization (2-pass)
+        } else if self.optimize_huffman || self.use_exact_trellis() {
+            // Baseline mode with Huffman optimization (2-pass), or C-exact
+            // trellis which also requires the buffered whole-image pass.
             // Pass 1: Collect blocks and count frequencies
             let mcu_rows = mcu_height / (DCTSIZE * luma_v as usize);
             let mcu_cols = mcu_width / (DCTSIZE * luma_h as usize);
@@ -3132,8 +3501,10 @@ impl Encoder {
             let mut cb_blocks = try_alloc_vec_array::<i16, DCTSIZE2>(num_chroma_blocks)?;
             let mut cr_blocks = try_alloc_vec_array::<i16, DCTSIZE2>(num_chroma_blocks)?;
 
-            // Optionally collect raw DCT for DC trellis
-            let dc_trellis_enabled = self.trellis.enabled && self.trellis.dc_enabled;
+            // Optionally collect raw DCT for DC trellis / exact mode
+            let exact_trellis = self.use_exact_trellis();
+            let dc_trellis_enabled =
+                self.trellis.enabled && (self.trellis.dc_enabled || exact_trellis);
             let mut y_raw_dct = if dc_trellis_enabled {
                 Some(try_alloc_vec_array::<i32, DCTSIZE2>(num_y_blocks)?)
             } else {
@@ -3173,9 +3544,76 @@ impl Encoder {
                 stop,
             )?;
 
-            // Run DC trellis optimization if enabled
-            // C mozjpeg processes DC trellis row by row (each row is an independent chain)
-            if dc_trellis_enabled {
+            // C mozjpeg trellis passes (exact mode) or optimized DC trellis
+            let mut exact_tables = None;
+            if exact_trellis {
+                if let (Some(y_raw), Some(cb_raw), Some(cr_raw)) = (
+                    y_raw_dct.as_deref(),
+                    cb_raw_dct.as_deref(),
+                    cr_raw_dct.as_deref(),
+                ) {
+                    let y_grid = ComponentGrid {
+                        width_in_blocks: width.div_ceil(DCTSIZE),
+                        height_in_blocks: height.div_ceil(DCTSIZE),
+                        h_samp: luma_h as usize,
+                        v_samp: luma_v as usize,
+                        mcu_cols,
+                        mcu_rows,
+                    };
+                    let c_grid = ComponentGrid {
+                        width_in_blocks: mcu_cols,
+                        height_in_blocks: mcu_rows,
+                        h_samp: 1,
+                        v_samp: 1,
+                        mcu_cols,
+                        mcu_rows,
+                    };
+                    let std_tables = StdHuffTables {
+                        dc_luma: &dc_luma_huff,
+                        dc_chroma: &dc_chroma_huff,
+                        ac_luma: &ac_luma_huff,
+                        ac_chroma: &ac_chroma_huff,
+                    };
+                    let mut comps = [
+                        ExactComponent {
+                            blocks: &mut y_blocks,
+                            raw: y_raw,
+                            grid: y_grid,
+                            qtbl: &luma_qtable.values,
+                            dc_tbl_no: 0,
+                            ac_tbl_no: 0,
+                            blocks_per_mcu: (luma_h * luma_v) as usize,
+                        },
+                        ExactComponent {
+                            blocks: &mut cb_blocks,
+                            raw: cb_raw,
+                            grid: c_grid,
+                            qtbl: &chroma_qtable.values,
+                            dc_tbl_no: 1,
+                            ac_tbl_no: 1,
+                            blocks_per_mcu: 1,
+                        },
+                        ExactComponent {
+                            blocks: &mut cr_blocks,
+                            raw: cr_raw,
+                            grid: c_grid,
+                            qtbl: &chroma_qtable.values,
+                            dc_tbl_no: 1,
+                            ac_tbl_no: 1,
+                            blocks_per_mcu: 1,
+                        },
+                    ];
+                    exact_tables = Some(run_exact_trellis(
+                        &mut comps,
+                        false,
+                        self.optimize_huffman,
+                        self.restart_interval as usize,
+                        &std_tables,
+                        &self.trellis,
+                    )?);
+                }
+            } else if dc_trellis_enabled {
+                // C mozjpeg processes DC trellis row by row (each row is an independent chain)
                 let h = luma_h as usize;
                 let v = luma_v as usize;
                 let y_block_cols = mcu_cols * h;
@@ -3232,65 +3670,110 @@ impl Encoder {
                 }
             }
 
-            // Count symbol frequencies
-            let mut dc_luma_freq = FrequencyCounter::new();
-            let mut dc_chroma_freq = FrequencyCounter::new();
-            let mut ac_luma_freq = FrequencyCounter::new();
-            let mut ac_chroma_freq = FrequencyCounter::new();
-
-            let mut counter = SymbolCounter::new();
+            // Count symbol frequencies (Huffman optimization) or reuse the
+            // tables C's trellis pass sequence left in its slots.
             let blocks_per_mcu_y = (luma_h * luma_v) as usize;
             let mut y_idx = 0;
             let mut c_idx = 0;
+            let (opt_dc_luma_huff, opt_dc_chroma_huff, opt_ac_luma_huff, opt_ac_chroma_huff);
+            if self.use_exact_trellis() {
+                // C-exact: emit the tables the last gather left in the
+                // slots — for !optimize_huffman the final trellis-pass
+                // gather, for optimize_huffman the real-scan huff_opt
+                // gather — rather than re-counting here (C's gather
+                // handles restarts and joint chroma slots differently).
+                let tables = exact_tables.unwrap_or_default();
+                opt_dc_luma_huff = tables.dc_huff[0]
+                    .clone()
+                    .unwrap_or_else(|| dc_luma_huff.clone());
+                opt_dc_chroma_huff = tables.dc_huff[1]
+                    .clone()
+                    .unwrap_or_else(|| dc_chroma_huff.clone());
+                opt_ac_luma_huff = tables.ac_huff[0]
+                    .clone()
+                    .unwrap_or_else(|| ac_luma_huff.clone());
+                opt_ac_chroma_huff = tables.ac_huff[1]
+                    .clone()
+                    .unwrap_or_else(|| ac_chroma_huff.clone());
+            } else if self.optimize_huffman {
+                let mut dc_luma_freq = FrequencyCounter::new();
+                let mut dc_chroma_freq = FrequencyCounter::new();
+                let mut ac_luma_freq = FrequencyCounter::new();
+                let mut ac_chroma_freq = FrequencyCounter::new();
 
-            for _mcu_row in 0..mcu_rows {
-                for _mcu_col in 0..mcu_cols {
-                    // Y blocks
-                    for _ in 0..blocks_per_mcu_y {
+                let mut counter = SymbolCounter::new();
+
+                for _mcu_row in 0..mcu_rows {
+                    for _mcu_col in 0..mcu_cols {
+                        // Y blocks
+                        for _ in 0..blocks_per_mcu_y {
+                            counter.count_block(
+                                &y_blocks[y_idx],
+                                0,
+                                &mut dc_luma_freq,
+                                &mut ac_luma_freq,
+                            );
+                            y_idx += 1;
+                        }
+                        // Cb block
                         counter.count_block(
-                            &y_blocks[y_idx],
-                            0,
-                            &mut dc_luma_freq,
-                            &mut ac_luma_freq,
+                            &cb_blocks[c_idx],
+                            1,
+                            &mut dc_chroma_freq,
+                            &mut ac_chroma_freq,
                         );
-                        y_idx += 1;
+                        // Cr block
+                        counter.count_block(
+                            &cr_blocks[c_idx],
+                            2,
+                            &mut dc_chroma_freq,
+                            &mut ac_chroma_freq,
+                        );
+                        c_idx += 1;
                     }
-                    // Cb block
-                    counter.count_block(
-                        &cb_blocks[c_idx],
-                        1,
-                        &mut dc_chroma_freq,
-                        &mut ac_chroma_freq,
-                    );
-                    // Cr block
-                    counter.count_block(
-                        &cr_blocks[c_idx],
-                        2,
-                        &mut dc_chroma_freq,
-                        &mut ac_chroma_freq,
-                    );
-                    c_idx += 1;
                 }
-            }
 
-            // Generate optimized Huffman tables
-            let opt_dc_luma_huff = dc_luma_freq.generate_table()?;
-            let opt_dc_chroma_huff = dc_chroma_freq.generate_table()?;
-            let opt_ac_luma_huff = ac_luma_freq.generate_table()?;
-            let opt_ac_chroma_huff = ac_chroma_freq.generate_table()?;
+                // Generate optimized Huffman tables
+                opt_dc_luma_huff = dc_luma_freq.generate_table()?;
+                opt_dc_chroma_huff = dc_chroma_freq.generate_table()?;
+                opt_ac_luma_huff = ac_luma_freq.generate_table()?;
+                opt_ac_chroma_huff = ac_chroma_freq.generate_table()?;
+            } else {
+                // !optimize_huffman without exact mode: standard tables.
+                opt_dc_luma_huff = dc_luma_huff.clone();
+                opt_dc_chroma_huff = dc_chroma_huff.clone();
+                opt_ac_luma_huff = ac_luma_huff.clone();
+                opt_ac_chroma_huff = ac_chroma_huff.clone();
+            }
 
             let opt_dc_luma = DerivedTable::from_huff_table(&opt_dc_luma_huff, true)?;
             let opt_dc_chroma = DerivedTable::from_huff_table(&opt_dc_chroma_huff, true)?;
             let opt_ac_luma = DerivedTable::from_huff_table(&opt_ac_luma_huff, false)?;
             let opt_ac_chroma = DerivedTable::from_huff_table(&opt_ac_chroma_huff, false)?;
 
-            // Write DHT with optimized tables - combined into single marker
-            marker_writer.write_dht_multiple(&[
-                (0, false, &opt_dc_luma_huff),
-                (1, false, &opt_dc_chroma_huff),
-                (0, true, &opt_ac_luma_huff),
-                (1, true, &opt_ac_chroma_huff),
-            ])?;
+            // Write DHT with optimized tables - combined into single marker.
+            // Exact mode uses C emit_multi_dht's per-component order
+            // (dc,ac per comp); optimized mode keeps the grouped order.
+            if self.use_exact_trellis() {
+                marker_writer.write_dht_multiple(&[
+                    (0, false, &opt_dc_luma_huff),
+                    (0, true, &opt_ac_luma_huff),
+                    (1, false, &opt_dc_chroma_huff),
+                    (1, true, &opt_ac_chroma_huff),
+                ])?;
+            } else {
+                marker_writer.write_dht_multiple(&[
+                    (0, false, &opt_dc_luma_huff),
+                    (1, false, &opt_dc_chroma_huff),
+                    (0, true, &opt_ac_luma_huff),
+                    (1, true, &opt_ac_chroma_huff),
+                ])?;
+            }
+
+            // C emits DRI after the scan's DHT, right before SOS
+            if self.restart_interval > 0 && self.use_exact_trellis() {
+                marker_writer.write_dri(self.restart_interval)?;
+            }
 
             // Write SOS and encode
             let scans = generate_baseline_scan(3);
@@ -3635,6 +4118,16 @@ impl Encoder {
         Ok(())
     }
 
+    /// Whether C-exact trellis mode is active.
+    ///
+    /// In this mode the collection pass stores normally-quantized
+    /// coefficients and [`run_exact_trellis`] replays C mozjpeg's trellis
+    /// pass sequence afterwards; the optimized path quantizes inline.
+    #[inline]
+    fn use_exact_trellis(&self) -> bool {
+        self.trellis.enabled && self.trellis.mode.is_exact()
+    }
+
     /// Collect all quantized DCT blocks for progressive encoding.
     /// Also collects raw DCT blocks if DC trellis is enabled.
     #[allow(clippy::too_many_arguments)]
@@ -3786,9 +4279,10 @@ impl Encoder {
             raw_out.copy_from_slice(&dct_i32);
         }
 
-        // Use trellis quantization if enabled
-        // Both paths expect raw DCT (scaled by 8) and handle the scaling internally
-        if self.trellis.enabled {
+        // Use trellis quantization if enabled. In MozjpegExact mode the
+        // collection pass produces normally-quantized coefficients only;
+        // the C-exact requantization runs afterwards in dedicated passes.
+        if self.trellis.enabled && !self.trellis.mode.is_exact() {
             trellis_quantize_block(&dct_i32, out_block, qtable, ac_table, &self.trellis);
         } else {
             // Non-trellis path: use single-step quantization matching C mozjpeg
@@ -3833,6 +4327,7 @@ impl Encoder {
     ) -> Result<Vec<crate::types::ScanInfo>> {
         let config = ScanSearchConfig::default();
         let candidate_scans = generate_search_scans(num_components, &config);
+        let selector = ScanSelector::new(num_components, config.clone());
 
         // Use ScanTrialEncoder for sequential trial encoding with proper state
         // tracking. The trial encoder checks `stop` between scans (the scan
@@ -3857,11 +4352,47 @@ impl Encoder {
         )
         .with_stop(stop);
 
-        // Trial-encode all scans sequentially to get accurate sizes
-        let scan_sizes = trial_encoder.encode_all_scans(&candidate_scans)?;
+        // C mozjpeg encodes the candidate scans in order and lets
+        // `select_scans` make the Al decision between them: the
+        // frequency-split candidates (luma scans 12..23, chroma 42..63) are
+        // then trial-encoded with `cinfo->Al` *overridden* to the chosen
+        // best_Al — the emitted scans are buffer copies of those trials, so
+        // the override must be applied here the same way (jcmaster.c
+        // `select_scan_parameters`).
+        let n = candidate_scans.len();
+        let mut scan_sizes = vec![0usize; n];
+
+        let lfss = selector.luma_freq_split_scan_start();
+        let nsl = selector.num_scans_luma();
+        let cfss = selector.chroma_freq_split_scan_start();
+        // Chroma unsplit pair precedes its freq-split region by 2 scans.
+        let chroma_full_base = if num_components >= 3 { cfss - 2 } else { n };
+
+        for i in 0..lfss {
+            stop.check()?;
+            scan_sizes[i] = trial_encoder.encode_scan(&candidate_scans[i])?;
+        }
+        let best_al_luma = selector.select_luma_al(&scan_sizes);
+        for i in lfss..nsl {
+            let mut scan = candidate_scans[i];
+            scan.al = best_al_luma;
+            scan_sizes[i] = trial_encoder.encode_scan(&scan)?;
+        }
+
+        if num_components >= 3 {
+            for i in nsl..chroma_full_base {
+                scan_sizes[i] = trial_encoder.encode_scan(&candidate_scans[i])?;
+            }
+            let best_al_chroma = selector.select_chroma_al(&scan_sizes);
+            // Chroma freq region = unsplit pair + all split quads.
+            for i in chroma_full_base..n {
+                let mut scan = candidate_scans[i];
+                scan.al = best_al_chroma;
+                scan_sizes[i] = trial_encoder.encode_scan(&scan)?;
+            }
+        }
 
         // Use ScanSelector to find the optimal configuration
-        let selector = ScanSelector::new(num_components, config.clone());
         let result = selector.select_best(&scan_sizes);
 
         // Build the final scan script from the selection

@@ -219,6 +219,10 @@ pub mod simd;
 #[allow(dead_code)]
 pub mod trellis;
 
+/// Bit-exact C mozjpeg trellis port (internal, `TrellisMode::MozjpegExact`).
+#[allow(dead_code)]
+pub(crate) mod trellis_exact;
+
 /// Type definitions (internal).
 #[allow(dead_code)]
 pub(crate) mod types;
@@ -455,6 +459,7 @@ pub use types::DensityUnit;
 /// # }
 /// ```
 pub use types::TrellisConfig;
+pub use types::TrellisMode;
 pub use types::TrellisSpeedMode;
 
 /// Estimated resource usage for an encoding operation.
