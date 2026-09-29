@@ -1,16 +1,24 @@
-/* Baseline non-optimized-trellis oracle for mozjpeg-rs parity tests.
+/* Library-level mozjpeg oracle for mozjpeg-rs parity tests.
  *
- * No cjpeg flag combination produces `optimize_coding = FALSE` with trellis
- * enabled: `cjpeg -baseline` still runs the JCP_MAX_COMPRESSION defaults
- * (optimize_coding=TRUE), and `-revert` selects JCP_FASTEST which disables
- * trellis entirely. This driver goes through the library API directly:
- * jpeg_set_defaults() under the default JCP_MAX_COMPRESSION profile, then
- * clears the progressive scan script and forces optimize_coding=FALSE.
+ * Primary role: produce `optimize_coding = FALSE` with trellis enabled,
+ * which no cjpeg flag combination yields (`cjpeg -baseline` still runs the
+ * JCP_MAX_COMPRESSION defaults with optimize_coding=TRUE, and `-revert`
+ * selects JCP_FASTEST which disables trellis entirely). This driver goes
+ * through the library API directly: jpeg_set_defaults() under the default
+ * JCP_MAX_COMPRESSION profile, then clears the progressive scan script and
+ * forces optimize_coding=FALSE — unless flags say otherwise.
+ *
+ * It also exposes parameters cjpeg cannot express:
+ *   -optimize       optimize_coding = TRUE (default is FALSE)
+ *   -progressive    keep the progressive scan script from the defaults
+ *                   (with -optimize, the master's scan search still runs)
+ *   -eob            trellis_eob_opt = TRUE (no cjpeg flag exists)
  *
  * Input:  P6 (RGB) or P5 (grayscale) Netpbm on stdin
  * Output: JPEG on stdout
  *
  * Usage: trellis_noopt_oracle -quality N [-sample HxV] [-restart N]
+ *            [-optimize] [-progressive] [-eob]
  *
  * Build (from the mozjpeg-rs repo root):
  *   cc -O2 -I ../mozjpeg -I ../mozjpeg/build \
@@ -26,7 +34,8 @@
 #include <setjmp.h>
 
 static void usage(void) {
-    fprintf(stderr, "usage: trellis_noopt_oracle -quality N [-sample HxV] [-restart N]\n");
+    fprintf(stderr, "usage: trellis_noopt_oracle -quality N [-sample HxV] [-restart N]\n"
+                    "            [-optimize] [-progressive] [-eob]\n");
     exit(1);
 }
 
@@ -34,6 +43,9 @@ int main(int argc, char **argv) {
     int quality = 75;
     int hsamp = 2, vsamp = 2;
     int restart = 0;
+    int optimize = 0;
+    int progressive = 0;
+    int eob = 0;
 
     for (int i = 1; i < argc; i++) {
         if (!strcmp(argv[i], "-quality") && i + 1 < argc)
@@ -42,6 +54,12 @@ int main(int argc, char **argv) {
             sscanf(argv[++i], "%dx%d", &hsamp, &vsamp);
         else if (!strcmp(argv[i], "-restart") && i + 1 < argc)
             restart = atoi(argv[++i]);
+        else if (!strcmp(argv[i], "-optimize"))
+            optimize = 1;
+        else if (!strcmp(argv[i], "-progressive"))
+            progressive = 1;
+        else if (!strcmp(argv[i], "-eob"))
+            eob = 1;
         else
             usage();
     }
@@ -98,16 +116,21 @@ int main(int argc, char **argv) {
 
     jpeg_set_defaults(&cinfo);
 
-    /* Force sequential baseline: drop the progressive script installed by
-     * the JCP_MAX_COMPRESSION defaults and disable Huffman optimization.
-     * validate_script() with scan_info == NULL produces the default single
-     * sequential scan; progressive_mode stays FALSE, so jcmaster does not
-     * re-force optimize_coding. */
-    cinfo.scan_info = NULL;
-    cinfo.num_scans = 0;
-    cinfo.optimize_coding = FALSE;
+    /* Sequential baseline unless -progressive: drop the script installed by
+     * the JCP_MAX_COMPRESSION defaults. validate_script() with scan_info ==
+     * NULL produces the default single sequential scan; progressive_mode
+     * stays FALSE, so jcmaster does not re-force optimize_coding. With
+     * -progressive the defaults' script stays and the master's optimize_scans
+     * search runs exactly as it does under cjpeg. */
+    if (!progressive) {
+        cinfo.scan_info = NULL;
+        cinfo.num_scans = 0;
+    }
+    cinfo.optimize_coding = optimize;
     cinfo.master->trellis_quant = TRUE;
     cinfo.master->trellis_quant_dc = TRUE;
+    if (eob)
+        cinfo.master->trellis_eob_opt = TRUE;
 
     jpeg_set_quality(&cinfo, quality, TRUE); /* force_baseline = TRUE */
 

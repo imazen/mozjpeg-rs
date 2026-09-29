@@ -43,7 +43,7 @@ use crate::huffman::DerivedTable;
 use crate::huffman::FrequencyCounter;
 use crate::marker::MarkerWriter;
 use crate::progressive::{generate_baseline_scan, generate_mozjpeg_max_compression_scans};
-use crate::quant::{create_quant_tables, quantize_block_raw};
+use crate::quant::{RecipQuantTable, create_quant_tables, quantize_block_recip};
 use crate::sample;
 use crate::scan_optimize::{ScanSearchConfig, ScanSelector, generate_search_scans};
 use crate::scan_trial::ScanTrialEncoder;
@@ -51,7 +51,10 @@ use crate::simd::SimdOps;
 #[cfg(target_arch = "x86_64")]
 use crate::simd::x86_64::entropy::SimdEntropyEncoder;
 use crate::trellis::trellis_quantize_block;
-use crate::trellis_exact::{ComponentGrid, ExactComponent, StdHuffTables, run_exact_trellis};
+use crate::trellis_exact::{
+    ComponentGrid, ExactComponent, RestartSpec, StdHuffTables, fill_main_pass_dummies,
+    run_exact_trellis,
+};
 use crate::types::{Limits, PixelDensity, Preset, Subsampling, TrellisConfig};
 
 pub(crate) mod helpers;
@@ -218,6 +221,13 @@ pub struct Encoder {
     optimize_scans: bool,
     /// Restart interval in MCUs (0 = disabled)
     restart_interval: u16,
+    /// Restart interval in MCU *rows* (0 = disabled). Mutually exclusive
+    /// with `restart_interval` — C `-restart N` vs `-restart NB`.
+    restart_in_rows: u16,
+    /// Whether `subsampling` was explicitly set (vs. a preset default).
+    /// C's `-quality` handler only overrides sampling when `-sample` wasn't
+    /// given (rdswitch.c), so exact mode needs the distinction.
+    subsampling_explicit: bool,
     /// Pixel density for JFIF APP0 marker
     pixel_density: PixelDensity,
     /// EXIF data to embed (raw TIFF structure, without "Exif\0\0" header)
@@ -364,6 +374,8 @@ impl Encoder {
             c_compat_color: true,
             optimize_scans: false,
             restart_interval: 0,
+            restart_in_rows: 0,
+            subsampling_explicit: false,
             pixel_density: PixelDensity::default(),
             exif_data: None,
             xmp_data: None,
@@ -426,6 +438,8 @@ impl Encoder {
             c_compat_color: true,
             optimize_scans: true,
             restart_interval: 0,
+            restart_in_rows: 0,
+            subsampling_explicit: false,
             pixel_density: PixelDensity::default(),
             exif_data: None,
             xmp_data: None,
@@ -489,6 +503,8 @@ impl Encoder {
             c_compat_color: true,
             optimize_scans: false, // Key difference from max_compression()
             restart_interval: 0,
+            restart_in_rows: 0,
+            subsampling_explicit: false,
             pixel_density: PixelDensity::default(),
             exif_data: None,
             xmp_data: None,
@@ -548,6 +564,8 @@ impl Encoder {
             c_compat_color: true,
             optimize_scans: false,
             restart_interval: 0,
+            restart_in_rows: 0,
+            subsampling_explicit: false,
             pixel_density: PixelDensity::default(),
             exif_data: None,
             xmp_data: None,
@@ -609,6 +627,7 @@ impl Encoder {
     /// Set chroma subsampling mode.
     pub fn subsampling(mut self, mode: Subsampling) -> Self {
         self.subsampling = mode;
+        self.subsampling_explicit = true;
         self
     }
 
@@ -743,8 +762,28 @@ impl Encoder {
     /// error recovery and parallel decoding. Set to 0 to disable (default).
     ///
     /// Common values: 0 (disabled), or image width in MCUs for row-by-row restarts.
+    ///
+    /// Equivalent to C mozjpeg `-restart NB`. Mutually exclusive with
+    /// [`restart_interval_rows`](Self::restart_interval_rows) — setting one
+    /// clears the other (cjpeg semantics).
     pub fn restart_interval(mut self, interval: u16) -> Self {
         self.restart_interval = interval;
+        self.restart_in_rows = 0;
+        self
+    }
+
+    /// Set restart interval in MCU *rows*.
+    ///
+    /// Restart markers are inserted every N rows of MCUs. Equivalent to C
+    /// mozjpeg `-restart N` (no `B` suffix): the actual marker interval is
+    /// converted per scan via that scan's `MCUs_per_row`, so
+    /// single-component progressive scans restart at a different cadence
+    /// than interleaved scans. Mutually exclusive with
+    /// [`restart_interval`](Self::restart_interval) — setting one clears
+    /// the other (cjpeg semantics).
+    pub fn restart_interval_rows(mut self, rows: u16) -> Self {
+        self.restart_in_rows = rows;
+        self.restart_interval = 0;
         self
     }
 
@@ -1276,8 +1315,11 @@ impl Encoder {
             });
         }
 
-        // Apply smoothing if enabled
-        let rgb_data = if self.smoothing > 0 {
+        // Apply smoothing if enabled. MozjpegExact skips this RGB-domain
+        // filter — C mozjpeg smooths the converted Y/Cb/Cr planes inside the
+        // downsample stage (jcsample.c), which `encode_ycbcr_planes_to_writer`
+        // reproduces instead.
+        let rgb_data = if self.smoothing > 0 && !self.exact_mode() {
             std::borrow::Cow::Owned(crate::smooth::smooth_rgb(
                 rgb_data,
                 width,
@@ -1323,8 +1365,10 @@ impl Encoder {
             });
         }
 
-        // Apply smoothing if enabled
-        let gray_data = if self.smoothing > 0 {
+        // Apply smoothing if enabled. MozjpegExact skips this filter — the
+        // C-compatible fullsize smoothing happens on the Y plane inside
+        // `encode_gray_to_writer_impl` instead.
+        let gray_data = if self.smoothing > 0 && !self.exact_mode() {
             std::borrow::Cow::Owned(crate::smooth::smooth_grayscale(
                 gray_data,
                 width,
@@ -1538,8 +1582,9 @@ impl Encoder {
         // Check for immediate cancellation
         stop.check()?;
 
-        // Apply smoothing if enabled
-        let rgb_data = if self.smoothing > 0 {
+        // Apply smoothing if enabled (skipped in MozjpegExact — see
+        // `encode_rgb` above).
+        let rgb_data = if self.smoothing > 0 && !self.exact_mode() {
             std::borrow::Cow::Owned(crate::smooth::smooth_rgb(
                 rgb_data,
                 width,
@@ -1605,8 +1650,9 @@ impl Encoder {
         // Check for immediate cancellation
         stop.check()?;
 
-        // Apply smoothing if enabled
-        let gray_data = if self.smoothing > 0 {
+        // Apply smoothing if enabled (skipped in MozjpegExact — see
+        // `encode_gray` above).
+        let gray_data = if self.smoothing > 0 && !self.exact_mode() {
             std::borrow::Cow::Owned(crate::smooth::smooth_grayscale(
                 gray_data,
                 width,
@@ -1771,11 +1817,34 @@ impl Encoder {
         // Grayscale uses 1x1 sampling
         let (mcu_width, mcu_height) = sample::mcu_aligned_dimensions(width, height, 1, 1);
 
+        // C mozjpeg input smoothing applies its fullsize kernel to the
+        // single component's plane during downsampling (jcsample.c).
+        let c_smooth = self.exact_mode() && self.smoothing > 0;
+        let mut y_smoothed;
+        let (y_plane, y_plane_w, y_plane_h) = if c_smooth {
+            let bw = width.div_ceil(DCTSIZE) * DCTSIZE;
+            let bh = height.div_ceil(DCTSIZE) * DCTSIZE;
+            y_smoothed = try_alloc_vec(0u8, bw.checked_mul(bh).ok_or(Error::AllocationFailed)?)?;
+            sample::fullsize_smooth_downsample(
+                y_plane,
+                width,
+                height,
+                bw,
+                &mut y_smoothed,
+                self.smoothing as i64,
+            );
+            (&y_smoothed[..], bw, bh)
+        } else {
+            (y_plane, width, height)
+        };
+
         let mcu_y_size = mcu_width
             .checked_mul(mcu_height)
             .ok_or(Error::AllocationFailed)?;
         let mut y_mcu = try_alloc_vec(0u8, mcu_y_size)?;
-        sample::expand_to_mcu(y_plane, width, height, &mut y_mcu, mcu_width, mcu_height);
+        sample::expand_to_mcu(
+            y_plane, y_plane_w, y_plane_h, &mut y_mcu, mcu_width, mcu_height,
+        );
 
         // Create quantization table (only luma needed)
         let luma_qtable = if let Some(ref custom) = self.custom_luma_qtable {
@@ -1792,8 +1861,24 @@ impl Encoder {
         let dc_luma_derived = DerivedTable::from_huff_table(&dc_luma_huff, true)?;
         let ac_luma_derived = DerivedTable::from_huff_table(&ac_luma_huff, false)?;
 
-        // Single component for grayscale
-        let components = create_components(Subsampling::Gray);
+        // Single component for grayscale. C's deferred `-quality` sampling
+        // rule still rewrites comp0's SOF byte (`-sample` wins; else last
+        // quality rating >=90 -> 1x1, >=80 -> 2x1; below 80 the grayscale
+        // colorspace default 1x1 stands). Single-component scans always use
+        // one block per MCU, so only the emitted byte differs.
+        let mut components = create_components(Subsampling::Gray);
+        if self.exact_mode() {
+            let last_q = self.chroma_quality.unwrap_or(self.quality);
+            let (gh, gv) = if self.subsampling_explicit {
+                self.subsampling.luma_factors()
+            } else if last_q >= 80 && last_q < 90 {
+                (2, 1)
+            } else {
+                (1, 1)
+            };
+            components[0].h_samp_factor = gh;
+            components[0].v_samp_factor = gv;
+        }
 
         // Write JPEG file
         let mut marker_writer = MarkerWriter::new(output);
@@ -1841,11 +1926,16 @@ impl Encoder {
             &components,
         )?;
 
+        let mcu_rows = mcu_height / DCTSIZE;
+        let mcu_cols = mcu_width / DCTSIZE;
+        // Single-component scan: MCUs_per_row = width_in_blocks = mcu_cols.
+        let restart_interval = self.effective_restart(mcu_cols);
+
         // DRI (restart interval). C's emit_dri runs inside write_scan_header
         // — after that scan's DHT tables, right before SOS — so exact mode
         // defers to the buffered arms below.
-        if self.restart_interval > 0 && !self.use_exact_trellis() {
-            marker_writer.write_dri(self.restart_interval)?;
+        if restart_interval > 0 && !self.exact_mode() {
+            marker_writer.write_dri(restart_interval as u16)?;
         }
 
         // DHT (only luma tables for grayscale) - written later for progressive
@@ -1853,10 +1943,13 @@ impl Encoder {
         if !self.progressive && !self.optimize_huffman && !self.use_exact_trellis() {
             marker_writer
                 .write_dht_multiple(&[(0, false, &dc_luma_huff), (0, true, &ac_luma_huff)])?;
+            // Direct path under exact emission semantics: C puts DRI after
+            // the DHT, right before SOS.
+            if restart_interval > 0 && self.exact_mode() {
+                marker_writer.write_dri(restart_interval as u16)?;
+            }
         }
 
-        let mcu_rows = mcu_height / DCTSIZE;
-        let mcu_cols = mcu_width / DCTSIZE;
         let num_blocks = mcu_rows
             .checked_mul(mcu_cols)
             .ok_or(Error::AllocationFailed)?;
@@ -1876,6 +1969,8 @@ impl Encoder {
                 None
             };
 
+            let luma_recip = RecipQuantTable::new(&luma_qtable.values);
+
             // Collect all blocks
             for mcu_row in 0..mcu_rows {
                 // Cooperative cancellation: once per MCU row (DCT + trellis
@@ -1889,6 +1984,7 @@ impl Encoder {
                         mcu_row,
                         mcu_col,
                         &luma_qtable.values,
+                        &luma_recip,
                         &ac_luma_derived,
                         &mut y_blocks[block_idx],
                         &mut dct_block,
@@ -1928,7 +2024,10 @@ impl Encoder {
                         &mut comps,
                         true,
                         self.optimize_huffman,
-                        self.restart_interval as usize,
+                        RestartSpec {
+                            interval: self.restart_interval as usize,
+                            rows: self.restart_in_rows as usize,
+                        },
                         &std_tables,
                         &self.trellis,
                     )?);
@@ -1968,7 +2067,7 @@ impl Encoder {
             }
 
             // Generate progressive scan script for grayscale (1 component)
-            let scans = if self.optimize_scans {
+            let (scans, scan_dri_flags) = if self.optimize_scans {
                 self.optimize_progressive_scans(
                     1,
                     &y_blocks,
@@ -1989,7 +2088,7 @@ impl Encoder {
                     stop,
                 )?
             } else {
-                generate_mozjpeg_max_compression_scans(1)
+                (generate_mozjpeg_max_compression_scans(1), None)
             };
 
             // Exact trellis without Huffman optimization reuses C's
@@ -2014,13 +2113,21 @@ impl Encoder {
             } else {
                 // Build optimized Huffman tables
                 let mut dc_freq = FrequencyCounter::new();
-                let mut dc_counter = ProgressiveSymbolCounter::new();
                 for scan in &scans {
                     let is_dc_first_scan = scan.ss == 0 && scan.se == 0 && scan.ah == 0;
                     if is_dc_first_scan {
-                        // Count DC symbols using progressive counter
+                        // Count DC symbols using progressive counter. C's
+                        // gather resets DC predictions at restart boundaries
+                        // (and at each scan's start_pass).
+                        let mut dc_counter = ProgressiveSymbolCounter::new();
+                        let mut restarts_to_go = restart_interval;
                         for block in &y_blocks {
+                            if restart_interval > 0 && restarts_to_go == 0 {
+                                dc_counter.count_restart(None);
+                                restarts_to_go = restart_interval;
+                            }
                             dc_counter.count_dc_first(block, 0, scan.al, &mut dc_freq);
+                            restarts_to_go = restarts_to_go.saturating_sub(1);
                         }
                     }
                 }
@@ -2032,39 +2139,66 @@ impl Encoder {
             }
             let opt_dc_derived = DerivedTable::from_huff_table(&opt_dc_huff, true)?;
 
-            // C emits DRI after the first scan's DHT, right before SOS
-            if self.restart_interval > 0 && self.use_exact_trellis() {
-                marker_writer.write_dri(self.restart_interval)?;
-            }
-
             // Encode each scan
             let output = marker_writer.into_inner();
             let mut bit_writer = BitWriter::new(output);
             let mut exact_ac_dht_written = false;
+            // C re-emits DRI inside write_scan_header whenever the per-scan
+            // converted interval changes (constant for grayscale, so this is
+            // "first scan only"). Under optimize_scans the decision was made
+            // per trial buffer — `scan_dri_flags` carries that simulation.
+            let mut last_dri: usize = 0;
 
-            for scan in &scans {
+            for (scan_idx, scan) in scans.iter().enumerate() {
                 // Cooperative cancellation: once per scan (each scan walks
                 // every block). No-op for `Unstoppable`.
                 stop.check()?;
                 let is_dc_scan = scan.ss == 0 && scan.se == 0;
+                let emit_dri = match &scan_dri_flags {
+                    Some(flags) => flags[scan_idx],
+                    None => {
+                        let changed = restart_interval != last_dri;
+                        if changed {
+                            last_dri = restart_interval;
+                        }
+                        changed
+                    }
+                };
 
                 if is_dc_scan {
                     // DC scan
                     marker_writer = MarkerWriter::new(bit_writer.into_inner());
+                    if emit_dri {
+                        marker_writer.write_dri(restart_interval as u16)?;
+                    }
                     marker_writer.write_sos(scan, &components)?;
                     bit_writer = BitWriter::new(marker_writer.into_inner());
 
                     let mut prog_encoder = ProgressiveEncoder::new(&mut bit_writer);
 
+                    let mut restarts_to_go = restart_interval;
+                    let mut restart_num = 0u8;
                     if scan.ah == 0 {
                         // DC first scan
                         for block in &y_blocks {
+                            if restart_interval > 0 && restarts_to_go == 0 {
+                                prog_encoder.emit_restart(restart_num, None)?;
+                                restart_num = restart_num.wrapping_add(1) & 0x07;
+                                restarts_to_go = restart_interval;
+                            }
                             prog_encoder.encode_dc_first(block, 0, &opt_dc_derived, scan.al)?;
+                            restarts_to_go = restarts_to_go.saturating_sub(1);
                         }
                     } else {
                         // DC refinement scan
                         for block in &y_blocks {
+                            if restart_interval > 0 && restarts_to_go == 0 {
+                                prog_encoder.emit_restart(restart_num, None)?;
+                                restart_num = restart_num.wrapping_add(1) & 0x07;
+                                restarts_to_go = restart_interval;
+                            }
                             prog_encoder.encode_dc_refine(block, scan.al)?;
+                            restarts_to_go = restarts_to_go.saturating_sub(1);
                         }
                     }
 
@@ -2078,8 +2212,13 @@ impl Encoder {
                     } else {
                         let mut ac_freq = FrequencyCounter::new();
                         let mut ac_counter = ProgressiveSymbolCounter::new();
+                        let mut restarts_to_go = restart_interval;
 
                         for block in &y_blocks {
+                            if restart_interval > 0 && restarts_to_go == 0 {
+                                ac_counter.count_restart(Some(&mut ac_freq));
+                                restarts_to_go = restart_interval;
+                            }
                             if scan.ah == 0 {
                                 ac_counter.count_ac_first(
                                     block,
@@ -2098,6 +2237,7 @@ impl Encoder {
                                     &mut ac_freq,
                                 );
                             }
+                            restarts_to_go = restarts_to_go.saturating_sub(1);
                         }
                         ac_counter.finish_scan(Some(&mut ac_freq));
 
@@ -2113,12 +2253,22 @@ impl Encoder {
                         marker_writer.write_dht_multiple(&[(0, true, &opt_ac_huff)])?;
                         exact_ac_dht_written = true;
                     }
+                    if emit_dri {
+                        marker_writer.write_dri(restart_interval as u16)?;
+                    }
                     marker_writer.write_sos(scan, &components)?;
                     bit_writer = BitWriter::new(marker_writer.into_inner());
 
                     let mut prog_encoder = ProgressiveEncoder::new(&mut bit_writer);
 
+                    let mut restarts_to_go = restart_interval;
+                    let mut restart_num = 0u8;
                     for block in &y_blocks {
+                        if restart_interval > 0 && restarts_to_go == 0 {
+                            prog_encoder.emit_restart(restart_num, Some(&opt_ac_derived))?;
+                            restart_num = restart_num.wrapping_add(1) & 0x07;
+                            restarts_to_go = restart_interval;
+                        }
                         if scan.ah == 0 {
                             prog_encoder.encode_ac_first(
                                 block,
@@ -2137,6 +2287,7 @@ impl Encoder {
                                 &opt_ac_derived,
                             )?;
                         }
+                        restarts_to_go = restarts_to_go.saturating_sub(1);
                     }
 
                     prog_encoder.finish_scan(Some(&opt_ac_derived))?;
@@ -2159,6 +2310,8 @@ impl Encoder {
                 None
             };
 
+            let luma_recip = RecipQuantTable::new(&luma_qtable.values);
+
             // Collect all blocks using the same process as RGB encoding
             for mcu_row in 0..mcu_rows {
                 // Cooperative cancellation: once per MCU row.
@@ -2171,6 +2324,7 @@ impl Encoder {
                         mcu_row,
                         mcu_col,
                         &luma_qtable.values,
+                        &luma_recip,
                         &ac_luma_derived,
                         &mut y_blocks[block_idx],
                         &mut dct_block,
@@ -2211,7 +2365,10 @@ impl Encoder {
                         &mut comps,
                         false,
                         self.optimize_huffman,
-                        self.restart_interval as usize,
+                        RestartSpec {
+                            interval: self.restart_interval as usize,
+                            rows: self.restart_in_rows as usize,
+                        },
                         &std_tables,
                         &self.trellis,
                     )?;
@@ -2243,12 +2400,19 @@ impl Encoder {
                 opt_dc_huff = out_dc_huff.unwrap_or_else(|| dc_luma_huff.clone());
                 opt_ac_huff = out_ac_huff.unwrap_or_else(|| ac_luma_huff.clone());
             } else if self.optimize_huffman {
-                // Count frequencies using SymbolCounter
+                // Count frequencies using SymbolCounter. C's gather resets
+                // DC predictions at restart boundaries.
                 let mut dc_freq = FrequencyCounter::new();
                 let mut ac_freq = FrequencyCounter::new();
                 let mut counter = SymbolCounter::new();
+                let mut restarts_to_go = restart_interval;
                 for block in &y_blocks {
+                    if restart_interval > 0 && restarts_to_go == 0 {
+                        counter.reset();
+                        restarts_to_go = restart_interval;
+                    }
                     counter.count_block(block, 0, &mut dc_freq, &mut ac_freq);
+                    restarts_to_go = restarts_to_go.saturating_sub(1);
                 }
                 opt_dc_huff = dc_freq.generate_table()?;
                 opt_ac_huff = ac_freq.generate_table()?;
@@ -2264,8 +2428,8 @@ impl Encoder {
                 .write_dht_multiple(&[(0, false, &opt_dc_huff), (0, true, &opt_ac_huff)])?;
 
             // C emits DRI after the scan's DHT, right before SOS
-            if self.restart_interval > 0 && self.use_exact_trellis() {
-                marker_writer.write_dri(self.restart_interval)?;
+            if restart_interval > 0 && self.exact_mode() {
+                marker_writer.write_dri(restart_interval as u16)?;
             }
 
             // Write SOS and encode
@@ -2277,7 +2441,6 @@ impl Encoder {
             let mut encoder = EntropyEncoder::new(&mut bit_writer);
 
             // Restart marker support for grayscale (each block = 1 MCU)
-            let restart_interval = self.restart_interval as usize;
             let mut restart_num = 0u8;
 
             for (mcu_count, block) in y_blocks.iter().enumerate() {
@@ -2303,11 +2466,11 @@ impl Encoder {
             let output = marker_writer.into_inner();
             let mut bit_writer = BitWriter::new(output);
             let mut encoder = EntropyEncoder::new(&mut bit_writer);
+            let luma_recip = RecipQuantTable::new(&luma_qtable.values);
             let mut dct_block = [0i16; DCTSIZE2];
             let mut quant_block = [0i16; DCTSIZE2];
 
             // Restart marker support
-            let restart_interval = self.restart_interval as usize;
             let mut mcu_count = 0usize;
             let mut restart_num = 0u8;
 
@@ -2331,6 +2494,7 @@ impl Encoder {
                         mcu_row,
                         mcu_col,
                         &luma_qtable.values,
+                        &luma_recip,
                         &ac_luma_derived,
                         &mut quant_block,
                         &mut dct_block,
@@ -2619,7 +2783,9 @@ impl Encoder {
             mcu_chroma_h,
         );
 
-        // Encode using shared helper
+        // Encode using shared helper. Planar input is already subsampled —
+        // `subsampling` is descriptive here, so C's `-quality` auto-rule
+        // does not apply.
         self.encode_ycbcr_mcu_to_writer(
             &y_mcu,
             &cb_mcu,
@@ -2632,6 +2798,7 @@ impl Encoder {
             chroma_height,
             mcu_chroma_w,
             mcu_chroma_h,
+            self.subsampling,
             output,
             &enough::Unstoppable,
         )
@@ -2754,8 +2921,11 @@ impl Encoder {
         output: W,
         stop: &dyn enough::Stop,
     ) -> Result<()> {
-        let (luma_h, luma_v) = self.subsampling.luma_factors();
-        let (mut chroma_width, chroma_height) =
+        // C's deferred `-quality` rule can override the sampling when no
+        // explicit `-sample` equivalent was given (exact mode only).
+        let sampling = self.c_sampling();
+        let (luma_h, luma_v) = sampling.luma_factors();
+        let (mut chroma_width, mut chroma_height) =
             sample::subsampled_dimensions(width, height, luma_h as usize, luma_v as usize);
 
         let (mcu_width, mcu_height) =
@@ -2763,23 +2933,81 @@ impl Encoder {
         let (mcu_chroma_w, mcu_chroma_h) =
             (mcu_width / luma_h as usize, mcu_height / luma_v as usize);
 
+        // C mozjpeg applies INPUT_SMOOTHING inside the downsample stage on
+        // the converted planes (jcsample.c): components at the max factors
+        // get fullsize_smooth_downsample (always luma, and chroma under
+        // 1x1), chroma under 2x2 gets h2v2_smooth_downsample, and other
+        // chroma ratios get plain downsampling (C emits a SMOOTH_NOTIMPL
+        // trace). MozjpegExact reproduces this; Optimized keeps the cheaper
+        // RGB-domain smoothing applied by the entry points.
+        let c_smooth = self.exact_mode() && self.smoothing > 0;
+        let c_smooth_h2v2 = c_smooth && luma_h == 2 && luma_v == 2;
+        let c_smooth_fullsize = c_smooth && luma_h == 1 && luma_v == 1;
+
         // In MozjpegExact mode, horizontally-downsampled planes must match
         // C byte-for-byte: C expands the *input* to the padded output width
         // before averaging, so its alternating rounding bias acts on the
         // padding columns too (instead of flat edge replication).
-        let c_padded_chroma = self.use_exact_trellis() && luma_h == 2;
-        let subsampled_stride = if c_padded_chroma {
-            mcu_chroma_w
+        // (The 2x2 smoothing arm above takes precedence; h2v1 chroma still
+        // lands here when smoothing is on, matching C's plain downsample.)
+        let c_padded_chroma = self.exact_mode() && luma_h == 2;
+
+        // The smoothed kernels write the component's block-padded plane —
+        // for 2x2 that is exactly the MCU-aligned chroma extent.
+        let block_chroma_w = chroma_width.div_ceil(DCTSIZE) * DCTSIZE;
+        let block_chroma_h = chroma_height.div_ceil(DCTSIZE) * DCTSIZE;
+        let (subsampled_stride, subsampled_rows) = if c_smooth_h2v2 || c_smooth_fullsize {
+            (block_chroma_w, block_chroma_h)
+        } else if c_padded_chroma {
+            (mcu_chroma_w, chroma_height)
         } else {
-            chroma_width
+            (chroma_width, chroma_height)
         };
         let chroma_size = subsampled_stride
-            .checked_mul(chroma_height)
+            .checked_mul(subsampled_rows)
             .ok_or(Error::AllocationFailed)?;
         let mut cb_subsampled = try_alloc_vec(0u8, chroma_size)?;
         let mut cr_subsampled = try_alloc_vec(0u8, chroma_size)?;
 
-        if c_padded_chroma {
+        if c_smooth_h2v2 {
+            sample::h2v2_smooth_downsample(
+                cb_plane,
+                width,
+                height,
+                block_chroma_w,
+                &mut cb_subsampled,
+                self.smoothing as i64,
+            );
+            sample::h2v2_smooth_downsample(
+                cr_plane,
+                width,
+                height,
+                block_chroma_w,
+                &mut cr_subsampled,
+                self.smoothing as i64,
+            );
+            chroma_width = block_chroma_w;
+            chroma_height = block_chroma_h;
+        } else if c_smooth_fullsize {
+            sample::fullsize_smooth_downsample(
+                cb_plane,
+                width,
+                height,
+                block_chroma_w,
+                &mut cb_subsampled,
+                self.smoothing as i64,
+            );
+            sample::fullsize_smooth_downsample(
+                cr_plane,
+                width,
+                height,
+                block_chroma_w,
+                &mut cr_subsampled,
+                self.smoothing as i64,
+            );
+            chroma_width = block_chroma_w;
+            chroma_height = block_chroma_h;
+        } else if c_padded_chroma {
             let rows = sample::downsample_plane_h2_c_padded(
                 cb_plane,
                 width,
@@ -2818,6 +3046,29 @@ impl Encoder {
             );
         }
 
+        // Luma always carries the max sampling factors, so under C input
+        // smoothing it gets the fullsize kernel, written at the
+        // block-padded extent (padding columns inside real blocks are
+        // smoothed edge-expanded values, not replicated rows).
+        let mut y_smoothed = Vec::new();
+        let (y_plane_w, y_plane_h) = if c_smooth {
+            let bw = width.div_ceil(DCTSIZE) * DCTSIZE;
+            let bh = height.div_ceil(DCTSIZE) * DCTSIZE;
+            y_smoothed = try_alloc_vec(0u8, bw.checked_mul(bh).ok_or(Error::AllocationFailed)?)?;
+            sample::fullsize_smooth_downsample(
+                y_plane,
+                width,
+                height,
+                bw,
+                &mut y_smoothed,
+                self.smoothing as i64,
+            );
+            (bw, bh)
+        } else {
+            (width, height)
+        };
+        let y_plane = if c_smooth { &y_smoothed[..] } else { y_plane };
+
         let mcu_y_size = mcu_width
             .checked_mul(mcu_height)
             .ok_or(Error::AllocationFailed)?;
@@ -2828,7 +3079,9 @@ impl Encoder {
         let mut cb_mcu = try_alloc_vec(0u8, mcu_chroma_size)?;
         let mut cr_mcu = try_alloc_vec(0u8, mcu_chroma_size)?;
 
-        sample::expand_to_mcu(y_plane, width, height, &mut y_mcu, mcu_width, mcu_height);
+        sample::expand_to_mcu(
+            y_plane, y_plane_w, y_plane_h, &mut y_mcu, mcu_width, mcu_height,
+        );
         sample::expand_to_mcu(
             &cb_subsampled,
             chroma_width,
@@ -2858,6 +3111,7 @@ impl Encoder {
             chroma_height,
             mcu_chroma_w,
             mcu_chroma_h,
+            sampling,
             output,
             stop,
         )
@@ -2881,10 +3135,11 @@ impl Encoder {
         chroma_height: usize,
         mcu_chroma_w: usize,
         mcu_chroma_h: usize,
+        sampling: Subsampling,
         output: W,
         stop: &dyn enough::Stop,
     ) -> Result<()> {
-        let (luma_h, luma_v) = self.subsampling.luma_factors();
+        let (luma_h, luma_v) = sampling.luma_factors();
 
         // Step 4: Create quantization tables
         let (luma_qtable, chroma_qtable) = {
@@ -2922,7 +3177,7 @@ impl Encoder {
         let ac_chroma_derived = DerivedTable::from_huff_table(&ac_chroma_huff, false)?;
 
         // Step 6: Set up components
-        let components = create_ycbcr_components(self.subsampling);
+        let components = create_ycbcr_components(sampling);
 
         // Step 7: Write JPEG file
         let mut marker_writer = MarkerWriter::new(output);
@@ -2973,22 +3228,40 @@ impl Encoder {
         )?;
 
         // DRI (restart interval) - if enabled. C emits it right before SOS
-        // (after the scan's DHT); exact mode writes it in the buffered arms.
-        if self.restart_interval > 0 && !self.use_exact_trellis() {
-            marker_writer.write_dri(self.restart_interval)?;
+        // (after the scan's DHT); exact mode writes it in the buffered arms,
+        // and progressive mode emits it per scan since the rows form
+        // converts against each scan's own MCUs_per_row.
+        let baseline_restart = self.effective_restart(mcu_width / (DCTSIZE * luma_h as usize));
+        if baseline_restart > 0 && !self.exact_mode() && !self.progressive {
+            marker_writer.write_dri(baseline_restart as u16)?;
         }
 
         // DHT (Huffman tables) - written here for non-optimized modes,
         // or later after frequency counting for optimized modes.
         // Exact trellis writes its C slot tables in the buffered arms below.
         if !self.optimize_huffman && !self.use_exact_trellis() {
-            // Combine all tables into single DHT marker for smaller file size
-            marker_writer.write_dht_multiple(&[
-                (0, false, &dc_luma_huff),
-                (1, false, &dc_chroma_huff),
-                (0, true, &ac_luma_huff),
-                (1, true, &ac_chroma_huff),
-            ])?;
+            if self.exact_mode() {
+                // C emit_multi_dht order: dc then ac per scan component.
+                marker_writer.write_dht_multiple(&[
+                    (0, false, &dc_luma_huff),
+                    (0, true, &ac_luma_huff),
+                    (1, false, &dc_chroma_huff),
+                    (1, true, &ac_chroma_huff),
+                ])?;
+            } else {
+                // Combine all tables into single DHT marker for smaller file size
+                marker_writer.write_dht_multiple(&[
+                    (0, false, &dc_luma_huff),
+                    (1, false, &dc_chroma_huff),
+                    (0, true, &ac_luma_huff),
+                    (1, true, &ac_chroma_huff),
+                ])?;
+            }
+            // Direct path under exact emission semantics: C puts DRI after
+            // the DHT, right before SOS. Progressive arms emit per-scan.
+            if baseline_restart > 0 && self.exact_mode() && !self.progressive {
+                marker_writer.write_dri(baseline_restart as u16)?;
+            }
         }
 
         if self.progressive {
@@ -3051,6 +3324,33 @@ impl Encoder {
                 luma_v,
                 stop,
             )?;
+
+            // C's compress_first_pass synthesizes right-edge/bottom dummy
+            // blocks (zero AC, DC copied) instead of DCT-ing the replicated
+            // pad region. `run_exact_trellis` does this internally; apply it
+            // here for exact emission without the exact quantizer
+            // (C's `-notrellis`).
+            if self.exact_mode() && !exact_trellis {
+                let y_grid = ComponentGrid {
+                    width_in_blocks: width.div_ceil(DCTSIZE),
+                    height_in_blocks: height.div_ceil(DCTSIZE),
+                    h_samp: luma_h as usize,
+                    v_samp: luma_v as usize,
+                    mcu_cols,
+                    mcu_rows,
+                };
+                let c_grid = ComponentGrid {
+                    width_in_blocks: mcu_cols,
+                    height_in_blocks: mcu_rows,
+                    h_samp: 1,
+                    v_samp: 1,
+                    mcu_cols,
+                    mcu_rows,
+                };
+                fill_main_pass_dummies(&mut y_blocks, &y_grid);
+                fill_main_pass_dummies(&mut cb_blocks, &c_grid);
+                fill_main_pass_dummies(&mut cr_blocks, &c_grid);
+            }
 
             // C mozjpeg trellis passes (exact mode) or optimized trellis
             let mut exact_tables = None;
@@ -3115,7 +3415,10 @@ impl Encoder {
                         &mut comps,
                         true,
                         self.optimize_huffman,
-                        self.restart_interval as usize,
+                        RestartSpec {
+                            interval: self.restart_interval as usize,
+                            rows: self.restart_in_rows as usize,
+                        },
                         &std_tables,
                         &self.trellis,
                     )?);
@@ -3208,7 +3511,7 @@ impl Encoder {
             }
 
             // Generate progressive scan script
-            let scans = if self.optimize_scans {
+            let (scans, scan_dri_flags) = if self.optimize_scans {
                 // When optimize_scans is enabled, use the scan optimizer to find
                 // the best frequency split and Al levels, including SA refinement.
                 self.optimize_progressive_scans(
@@ -3237,7 +3540,7 @@ impl Encoder {
                 // - DC with no successive approximation (Al=0)
                 // - 8/9 frequency split for luma with successive approximation
                 // - No successive approximation for chroma
-                generate_mozjpeg_max_compression_scans(3)
+                (generate_mozjpeg_max_compression_scans(3), None)
             };
 
             // Build Huffman tables and encode scans
@@ -3271,6 +3574,12 @@ impl Encoder {
                             mcu_cols,
                             luma_h,
                             luma_v,
+                            self.effective_restart(Self::scan_mcus_per_row(
+                                scan,
+                                mcu_cols,
+                                width,
+                                chroma_width,
+                            )),
                             &mut dc_luma_freq,
                             &mut dc_chroma_freq,
                         );
@@ -3288,17 +3597,18 @@ impl Encoder {
                 let opt_dc_luma = DerivedTable::from_huff_table(&opt_dc_luma_huff, true)?;
                 let opt_dc_chroma = DerivedTable::from_huff_table(&opt_dc_chroma_huff, true)?;
 
-                // C emits DRI after the first scan's DHT, right before SOS
-                if self.restart_interval > 0 && self.use_exact_trellis() {
-                    marker_writer.write_dri(self.restart_interval)?;
-                }
-
                 // Get output writer from marker_writer
                 let output = marker_writer.into_inner();
                 let mut bit_writer = BitWriter::new(output);
+                // C re-emits DRI inside write_scan_header whenever the
+                // per-scan converted interval changes (the rows form differs
+                // across scan geometries; the MCU form is constant). Under
+                // optimize_scans the decision was made per trial buffer —
+                // `scan_dri_flags` carries that simulation.
+                let mut last_dri: usize = 0;
 
                 // Encode each scan with per-scan AC tables
-                for scan in &scans {
+                for (scan_idx, scan) in scans.iter().enumerate() {
                     // Cooperative cancellation: once per scan (each scan
                     // walks every block twice). No-op for `Unstoppable`.
                     stop.check()?;
@@ -3306,6 +3616,22 @@ impl Encoder {
                     let mut inner = bit_writer.into_inner();
 
                     let is_dc_scan = scan.ss == 0 && scan.se == 0;
+                    let scan_restart = self.effective_restart(Self::scan_mcus_per_row(
+                        scan,
+                        mcu_cols,
+                        width,
+                        chroma_width,
+                    ));
+                    let emit_dri = match &scan_dri_flags {
+                        Some(flags) => flags[scan_idx],
+                        None => {
+                            let changed = scan_restart != last_dri;
+                            if changed {
+                                last_dri = scan_restart;
+                            }
+                            changed
+                        }
+                    };
 
                     if !is_dc_scan {
                         // AC scan: build per-scan optimal Huffman table
@@ -3337,6 +3663,7 @@ impl Encoder {
                             comp_idx,
                             block_cols,
                             block_rows,
+                            scan_restart,
                             &mut ac_freq,
                         );
 
@@ -3344,6 +3671,12 @@ impl Encoder {
                         let ac_huff = ac_freq.generate_table()?;
                         let table_idx = if comp_idx == 0 { 0 } else { 1 };
                         write_dht_marker(&mut inner, table_idx, true, &ac_huff)?;
+
+                        // C's emit_dri runs inside write_scan_header: after
+                        // the scan's DHT, before SOS.
+                        if emit_dri {
+                            MarkerWriter::new(&mut inner).write_dri(scan_restart as u16)?;
+                        }
 
                         // Write SOS and encode
                         write_sos_marker(&mut inner, scan, &components)?;
@@ -3369,11 +3702,16 @@ impl Encoder {
                             &opt_dc_chroma,
                             &ac_derived,
                             &ac_derived, // Not used for AC scans, but needed for signature
+                            scan_restart,
                             &mut prog_encoder,
                         )?;
                         prog_encoder.finish_scan(Some(&ac_derived))?;
                     } else {
-                        // DC scan: use global DC tables
+                        // DC scan: use global DC tables. DRI placement is the
+                        // same — after (no) per-scan DHT, before SOS.
+                        if emit_dri {
+                            MarkerWriter::new(&mut inner).write_dri(scan_restart as u16)?;
+                        }
                         write_sos_marker(&mut inner, scan, &components)?;
                         bit_writer = BitWriter::new(inner);
 
@@ -3395,6 +3733,7 @@ impl Encoder {
                             &opt_dc_chroma,
                             &ac_luma_derived, // Not used for DC scans
                             &ac_chroma_derived,
+                            scan_restart,
                             &mut prog_encoder,
                         )?;
                         prog_encoder.finish_scan(None)?;
@@ -3437,13 +3776,33 @@ impl Encoder {
                 // the early combined DHT, so they start "sent".
                 let mut sent_dc = [!self.use_exact_trellis(); 4];
                 let mut sent_ac = sent_dc;
-                let mut first_scan = true;
+                // C re-emits DRI inside write_scan_header whenever the
+                // per-scan converted interval changes. Under optimize_scans
+                // the decision was made per trial buffer — `scan_dri_flags`
+                // carries that simulation.
+                let mut last_dri: usize = 0;
 
-                for scan in &scans {
+                for (scan_idx, scan) in scans.iter().enumerate() {
                     // Cooperative cancellation: once per scan.
                     stop.check()?;
                     bit_writer.flush()?;
                     let mut inner = bit_writer.into_inner();
+                    let scan_restart = self.effective_restart(Self::scan_mcus_per_row(
+                        scan,
+                        mcu_cols,
+                        width,
+                        chroma_width,
+                    ));
+                    let emit_dri = match &scan_dri_flags {
+                        Some(flags) => flags[scan_idx],
+                        None => {
+                            let changed = scan_restart != last_dri;
+                            if changed {
+                                last_dri = scan_restart;
+                            }
+                            changed
+                        }
+                    };
                     if self.use_exact_trellis() {
                         // emit_multi_dht: needed-but-unsent tables for this
                         // scan, in scan-component order (dc then ac per comp).
@@ -3480,13 +3839,9 @@ impl Encoder {
                             MarkerWriter::new(&mut inner).write_dht_multiple(&tables)?;
                         }
                     }
-                    // C's emit_dri runs after the scan's DHT, before SOS —
-                    // and only when the interval changed (once, first scan).
-                    if self.restart_interval > 0
-                        && self.use_exact_trellis()
-                        && std::mem::take(&mut first_scan)
-                    {
-                        MarkerWriter::new(&mut inner).write_dri(self.restart_interval)?;
+                    // C's emit_dri runs after the scan's DHT, before SOS.
+                    if emit_dri {
+                        MarkerWriter::new(&mut inner).write_dri(scan_restart as u16)?;
                     }
                     write_sos_marker(&mut inner, scan, &components)?;
 
@@ -3510,6 +3865,7 @@ impl Encoder {
                         &sc_dc_chroma,
                         &sc_ac_luma,
                         &sc_ac_chroma,
+                        scan_restart,
                         &mut prog_encoder,
                     )?;
 
@@ -3529,9 +3885,10 @@ impl Encoder {
                 let mut output = bit_writer.into_inner();
                 output.write_all(&[0xFF, 0xD9])?;
             }
-        } else if self.optimize_huffman || self.use_exact_trellis() {
+        } else if self.optimize_huffman || self.exact_mode() {
             // Baseline mode with Huffman optimization (2-pass), or C-exact
-            // trellis which also requires the buffered whole-image pass.
+            // mode which also requires the buffered whole-image pass (for
+            // dummy-block synthesis even when the quantizer is off).
             // Pass 1: Collect blocks and count frequencies
             let mcu_rows = mcu_height / (DCTSIZE * luma_v as usize);
             let mcu_cols = mcu_width / (DCTSIZE * luma_h as usize);
@@ -3590,6 +3947,33 @@ impl Encoder {
                 luma_v,
                 stop,
             )?;
+
+            // C's compress_first_pass synthesizes right-edge/bottom dummy
+            // blocks (zero AC, DC copied) instead of DCT-ing the replicated
+            // pad region. `run_exact_trellis` does this internally; apply it
+            // here for exact emission without the exact quantizer
+            // (C's `-notrellis`).
+            if self.exact_mode() && !exact_trellis {
+                let y_grid = ComponentGrid {
+                    width_in_blocks: width.div_ceil(DCTSIZE),
+                    height_in_blocks: height.div_ceil(DCTSIZE),
+                    h_samp: luma_h as usize,
+                    v_samp: luma_v as usize,
+                    mcu_cols,
+                    mcu_rows,
+                };
+                let c_grid = ComponentGrid {
+                    width_in_blocks: mcu_cols,
+                    height_in_blocks: mcu_rows,
+                    h_samp: 1,
+                    v_samp: 1,
+                    mcu_cols,
+                    mcu_rows,
+                };
+                fill_main_pass_dummies(&mut y_blocks, &y_grid);
+                fill_main_pass_dummies(&mut cb_blocks, &c_grid);
+                fill_main_pass_dummies(&mut cr_blocks, &c_grid);
+            }
 
             // C mozjpeg trellis passes (exact mode) or optimized DC trellis
             let mut exact_tables = None;
@@ -3654,7 +4038,10 @@ impl Encoder {
                         &mut comps,
                         false,
                         self.optimize_huffman,
-                        self.restart_interval as usize,
+                        RestartSpec {
+                            interval: self.restart_interval as usize,
+                            rows: self.restart_in_rows as usize,
+                        },
                         &std_tables,
                         &self.trellis,
                     )?);
@@ -3749,9 +4136,16 @@ impl Encoder {
                 let mut ac_chroma_freq = FrequencyCounter::new();
 
                 let mut counter = SymbolCounter::new();
+                // C's gather resets DC predictions at restart boundaries
+                // (jchuff encode_mcu_gather), so the stats must too.
+                let mut restarts_to_go = baseline_restart;
 
                 for _mcu_row in 0..mcu_rows {
                     for _mcu_col in 0..mcu_cols {
+                        if baseline_restart > 0 && restarts_to_go == 0 {
+                            counter.reset();
+                            restarts_to_go = baseline_restart;
+                        }
                         // Y blocks
                         for _ in 0..blocks_per_mcu_y {
                             counter.count_block(
@@ -3777,6 +4171,7 @@ impl Encoder {
                             &mut ac_chroma_freq,
                         );
                         c_idx += 1;
+                        restarts_to_go = restarts_to_go.saturating_sub(1);
                     }
                 }
 
@@ -3801,7 +4196,7 @@ impl Encoder {
             // Write DHT with optimized tables - combined into single marker.
             // Exact mode uses C emit_multi_dht's per-component order
             // (dc,ac per comp); optimized mode keeps the grouped order.
-            if self.use_exact_trellis() {
+            if self.exact_mode() {
                 marker_writer.write_dht_multiple(&[
                     (0, false, &opt_dc_luma_huff),
                     (0, true, &opt_ac_luma_huff),
@@ -3818,8 +4213,8 @@ impl Encoder {
             }
 
             // C emits DRI after the scan's DHT, right before SOS
-            if self.restart_interval > 0 && self.use_exact_trellis() {
-                marker_writer.write_dri(self.restart_interval)?;
+            if baseline_restart > 0 && self.exact_mode() {
+                marker_writer.write_dri(baseline_restart as u16)?;
             }
 
             // Write SOS and encode
@@ -3837,7 +4232,7 @@ impl Encoder {
                 // Encode from stored blocks with restart marker support
                 y_idx = 0;
                 c_idx = 0;
-                let restart_interval = self.restart_interval as usize;
+                let restart_interval = baseline_restart;
                 let mut mcu_count = 0usize;
                 let mut restart_num = 0u8;
 
@@ -3896,7 +4291,7 @@ impl Encoder {
                 // Encode from stored blocks with restart marker support
                 y_idx = 0;
                 c_idx = 0;
-                let restart_interval = self.restart_interval as usize;
+                let restart_interval = baseline_restart;
                 let mut mcu_count = 0usize;
                 let mut restart_num = 0u8;
 
@@ -4015,11 +4410,14 @@ impl Encoder {
         let mcu_cols = y_width / (DCTSIZE * h_samp as usize);
         let total_mcus = mcu_rows * mcu_cols;
 
+        let luma_recip = RecipQuantTable::new(luma_qtable);
+        let chroma_recip = RecipQuantTable::new(chroma_qtable);
+
         let mut dct_block = [0i16; DCTSIZE2];
         let mut quant_block = [0i16; DCTSIZE2];
 
         // Restart marker tracking
-        let restart_interval = self.restart_interval as usize;
+        let restart_interval = self.effective_restart(mcu_cols);
         let mut mcu_count = 0usize;
         let mut restart_num = 0u8;
 
@@ -4051,6 +4449,7 @@ impl Encoder {
                             block_row,
                             block_col,
                             luma_qtable,
+                            &luma_recip,
                             dc_luma,
                             ac_luma,
                             0, // Y component
@@ -4068,6 +4467,7 @@ impl Encoder {
                     mcu_row,
                     mcu_col,
                     chroma_qtable,
+                    &chroma_recip,
                     dc_chroma,
                     ac_chroma,
                     1, // Cb component
@@ -4083,6 +4483,7 @@ impl Encoder {
                     mcu_row,
                     mcu_col,
                     chroma_qtable,
+                    &chroma_recip,
                     dc_chroma,
                     ac_chroma,
                     2, // Cr component
@@ -4110,6 +4511,7 @@ impl Encoder {
         block_row: usize,
         block_col: usize,
         qtable: &[u16; DCTSIZE2],
+        recip_table: &RecipQuantTable,
         dc_table: &DerivedTable,
         ac_table: &DerivedTable,
         component: usize,
@@ -4154,9 +4556,8 @@ impl Encoder {
         if self.trellis.enabled {
             trellis_quantize_block(&dct_i32, quant_block, qtable, ac_table, &self.trellis);
         } else {
-            // Non-trellis path: use single-step quantization matching C mozjpeg
-            // This takes raw DCT (scaled by 8) and uses q_scaled = 8 * qtable[i]
-            quantize_block_raw(&dct_i32, qtable, quant_block);
+            // Non-trellis path: C's reciprocal quantization (not true division)
+            quantize_block_recip(&dct_i32, recip_table, quant_block);
         }
 
         // Entropy encode
@@ -4173,6 +4574,69 @@ impl Encoder {
     #[inline]
     fn use_exact_trellis(&self) -> bool {
         self.trellis.enabled && self.trellis.mode.is_exact()
+    }
+
+    /// Whether C-mozjpeg-compatible emission semantics are active. Set by
+    /// selecting `TrellisMode::MozjpegExact`, and applies whether or not
+    /// the trellis quantizer itself is enabled — matching C, where
+    /// `-notrellis` changes only quantization, not DHT ordering, DRI
+    /// placement, restart handling, or chroma padding geometry.
+    fn exact_mode(&self) -> bool {
+        self.trellis.mode.is_exact()
+    }
+
+    /// Per-scan effective restart interval in that scan's MCUs. C converts
+    /// `restart_in_rows` per scan via `MCUs_per_row` (per_scan_setup):
+    /// interleaved scans count iMCUs, single-component scans count that
+    /// component's real blocks. The `B` (absolute-MCU) form is used
+    /// verbatim in every scan's MCU units. Capped at 65535 like C.
+    fn effective_restart(&self, mcus_per_row: usize) -> usize {
+        if self.restart_in_rows > 0 {
+            (self.restart_in_rows as usize * mcus_per_row).min(65535)
+        } else {
+            self.restart_interval as usize
+        }
+    }
+
+    /// `MCUs_per_row` for a given scan, matching C's `per_scan_setup`: a
+    /// single-component scan uses that component's `width_in_blocks`;
+    /// interleaved scans use the frame's MCU row count.
+    fn scan_mcus_per_row(
+        scan: &crate::types::ScanInfo,
+        mcu_cols: usize,
+        width: usize,
+        chroma_width: usize,
+    ) -> usize {
+        if scan.comps_in_scan == 1 {
+            if scan.component_index[0] == 0 {
+                width.div_ceil(DCTSIZE)
+            } else {
+                chroma_width.div_ceil(DCTSIZE)
+            }
+        } else {
+            mcu_cols
+        }
+    }
+
+    /// C mozjpeg's deferred `-quality` sampling rule (rdswitch.c
+    /// `set_quality_ratings`): when `-sample` wasn't given, a last quality
+    /// rating ≥90 forces 1x1 and ≥80 forces 2x1 luma factors — even for
+    /// grayscale, whose `jpeg_set_colorspace` default (1x1) is overridden.
+    /// The rule reads the *last* rating (`chroma_quality` when set).
+    /// Only applied in exact mode; optimized mode keeps the
+    /// configured/default value.
+    fn c_sampling(&self) -> Subsampling {
+        if self.subsampling_explicit || !self.exact_mode() {
+            return self.subsampling;
+        }
+        let last_q = self.chroma_quality.unwrap_or(self.quality);
+        if last_q >= 90 {
+            Subsampling::S444
+        } else if last_q >= 80 {
+            Subsampling::S422
+        } else {
+            self.subsampling
+        }
     }
 
     /// Collect all quantized DCT blocks for progressive encoding.
@@ -4204,6 +4668,9 @@ impl Encoder {
         let mcu_rows = y_height / (DCTSIZE * v_samp as usize);
         let mcu_cols = y_width / (DCTSIZE * h_samp as usize);
 
+        let luma_recip = RecipQuantTable::new(luma_qtable);
+        let chroma_recip = RecipQuantTable::new(chroma_qtable);
+
         let mut y_idx = 0;
         let mut c_idx = 0;
         let mut dct_block = [0i16; DCTSIZE2];
@@ -4230,6 +4697,7 @@ impl Encoder {
                             block_row,
                             block_col,
                             luma_qtable,
+                            &luma_recip,
                             ac_luma,
                             &mut y_blocks[y_idx],
                             &mut dct_block,
@@ -4247,6 +4715,7 @@ impl Encoder {
                     mcu_row,
                     mcu_col,
                     chroma_qtable,
+                    &chroma_recip,
                     ac_chroma,
                     &mut cb_blocks[c_idx],
                     &mut dct_block,
@@ -4261,6 +4730,7 @@ impl Encoder {
                     mcu_row,
                     mcu_col,
                     chroma_qtable,
+                    &chroma_recip,
                     ac_chroma,
                     &mut cr_blocks[c_idx],
                     &mut dct_block,
@@ -4284,6 +4754,7 @@ impl Encoder {
         block_row: usize,
         block_col: usize,
         qtable: &[u16; DCTSIZE2],
+        recip_table: &RecipQuantTable,
         ac_table: &DerivedTable,
         out_block: &mut [i16; DCTSIZE2],
         dct_block: &mut [i16; DCTSIZE2],
@@ -4332,9 +4803,8 @@ impl Encoder {
         if self.trellis.enabled && !self.trellis.mode.is_exact() {
             trellis_quantize_block(&dct_i32, out_block, qtable, ac_table, &self.trellis);
         } else {
-            // Non-trellis path: use single-step quantization matching C mozjpeg
-            // This takes raw DCT (scaled by 8) and uses q_scaled = 8 * qtable[i]
-            quantize_block_raw(&dct_i32, qtable, out_block);
+            // Non-trellis / exact-collection path: C's reciprocal quantization
+            quantize_block_recip(&dct_i32, recip_table, out_block);
         }
 
         Ok(())
@@ -4371,7 +4841,7 @@ impl Encoder {
         ac_luma: &DerivedTable,
         ac_chroma: &DerivedTable,
         stop: &dyn enough::Stop,
-    ) -> Result<Vec<crate::types::ScanInfo>> {
+    ) -> Result<(Vec<crate::types::ScanInfo>, Option<Vec<bool>>)> {
         let config = ScanSearchConfig::default();
         let candidate_scans = generate_search_scans(num_components, &config);
         let selector = ScanSelector::new(num_components, config.clone());
@@ -4443,7 +4913,78 @@ impl Encoder {
         let result = selector.select_best(&scan_sizes);
 
         // Build the final scan script from the selection
-        Ok(result.build_final_scans(num_components, &config))
+        let scans = result.build_final_scans(num_components, &config);
+
+        // C mozjpeg emits each candidate scan's header (incl. DRI) into its
+        // trial buffer; `last_restart_interval` therefore evolves in TRIAL
+        // order, not final-scan order, and a winning buffer carries a DRI
+        // iff its trial's converted interval differed from the previous
+        // emitting trial's. Simulate that emission so the final file's DRI
+        // markers match byte-for-byte (jcmaster.c `copy_buffer` order).
+        let dri_flags = (self.restart_interval > 0 || self.restart_in_rows > 0).then(|| {
+            let mut emit: Vec<bool> = Vec::with_capacity(n);
+            let mut last = 0usize;
+            for cand in &candidate_scans {
+                let mpr = Self::scan_mcus_per_row(cand, mcu_cols, actual_width, chroma_width);
+                let ri = self.effective_restart(mpr);
+                emit.push(ri != last);
+                if ri != last {
+                    last = ri;
+                }
+            }
+            // Map each emitted final scan to its source candidate index.
+            let mut winners: Vec<usize> = Vec::with_capacity(scans.len());
+            let al = result.best_al_luma as usize;
+            let al_c = result.best_al_chroma as usize;
+            let min_al = al.min(al_c);
+            winners.push(0);
+            if num_components >= 3 && config.dc_scan_opt_mode != 0 {
+                if result.interleave_chroma_dc && config.dc_scan_opt_mode != 1 {
+                    winners.push(nsl);
+                } else {
+                    winners.push(nsl + 1);
+                    winners.push(nsl + 2);
+                }
+            }
+            if result.best_freq_split_luma > 0 {
+                let k = result.best_freq_split_luma;
+                winners.push(lfss + 2 * (k - 1) + 1);
+                winners.push(lfss + 2 * (k - 1) + 2);
+            } else {
+                winners.push(lfss);
+            }
+            for ra in (min_al..al).rev() {
+                winners.push(3 + 3 * ra);
+            }
+            if num_components >= 3 {
+                // `chroma_full_base` = C's chroma_freq_split_scan_start.
+                if result.best_freq_split_chroma > 0 {
+                    let k = result.best_freq_split_chroma;
+                    for off in 0..4 {
+                        winners.push(chroma_full_base + 4 * (k - 1) + 2 + off);
+                    }
+                } else {
+                    winners.push(chroma_full_base);
+                    winners.push(chroma_full_base + 1);
+                }
+                let base = nsl + 3; // num_scans_chroma_dc
+                for ra in (min_al..al_c).rev() {
+                    winners.push(base + 6 * ra + 4);
+                    winners.push(base + 6 * ra + 5);
+                }
+            }
+            for ra in (0..min_al).rev() {
+                winners.push(3 + 3 * ra);
+                if num_components >= 3 {
+                    winners.push(nsl + 3 + 6 * ra + 4);
+                    winners.push(nsl + 3 + 6 * ra + 5);
+                }
+            }
+            debug_assert_eq!(winners.len(), scans.len());
+            winners.into_iter().map(|i| emit[i]).collect::<Vec<bool>>()
+        });
+
+        Ok((scans, dri_flags))
     }
 
     /// Encode a single progressive scan.
@@ -4466,6 +5007,7 @@ impl Encoder {
         dc_chroma: &DerivedTable,
         ac_luma: &DerivedTable,
         ac_chroma: &DerivedTable,
+        restart_interval: usize,
         encoder: &mut ProgressiveEncoder<W>,
     ) -> Result<()> {
         let is_dc_scan = scan.ss == 0 && scan.se == 0;
@@ -4485,6 +5027,7 @@ impl Encoder {
                 dc_luma,
                 dc_chroma,
                 is_refinement,
+                restart_interval,
                 encoder,
             )?;
         } else {
@@ -4529,6 +5072,7 @@ impl Encoder {
                 block_rows,
                 ac_table,
                 is_refinement,
+                restart_interval,
                 encoder,
             )?;
         }
@@ -4551,14 +5095,23 @@ impl Encoder {
         dc_luma: &DerivedTable,
         dc_chroma: &DerivedTable,
         is_refinement: bool,
+        restart_interval: usize,
         encoder: &mut ProgressiveEncoder<W>,
     ) -> Result<()> {
         let blocks_per_mcu_y = (h_samp * v_samp) as usize;
         let mut y_idx = 0;
         let mut c_idx = 0;
+        let mut restarts_to_go = restart_interval;
+        let mut restart_num = 0u8;
 
         for _mcu_row in 0..mcu_rows {
             for _mcu_col in 0..mcu_cols {
+                // Emit restart marker at MCU boundaries (jcphuff emit_restart)
+                if restart_interval > 0 && restarts_to_go == 0 {
+                    encoder.emit_restart(restart_num, None)?;
+                    restart_num = restart_num.wrapping_add(1) & 0x07;
+                    restarts_to_go = restart_interval;
+                }
                 // Encode Y blocks
                 for _ in 0..blocks_per_mcu_y {
                     if is_refinement {
@@ -4584,6 +5137,7 @@ impl Encoder {
                 }
 
                 c_idx += 1;
+                restarts_to_go = restarts_to_go.saturating_sub(1);
             }
         }
 
@@ -4619,6 +5173,7 @@ impl Encoder {
         block_rows: usize,
         ac_table: &DerivedTable,
         is_refinement: bool,
+        restart_interval: usize,
         encoder: &mut ProgressiveEncoder<W>,
     ) -> Result<()> {
         // For Y component with subsampling, blocks are stored in MCU-interleaved order
@@ -4633,17 +5188,26 @@ impl Encoder {
         } else {
             1
         };
+        // Non-interleaved scans restart per block (each block is one "MCU").
+        let mut restarts_to_go = restart_interval;
+        let mut restart_num = 0u8;
 
         if blocks_per_mcu == 1 {
             // Chroma or 4:4:4 Y: storage order = raster order
             let total_blocks = block_rows * block_cols;
             for block in blocks.iter().take(total_blocks) {
+                if restart_interval > 0 && restarts_to_go == 0 {
+                    encoder.emit_restart(restart_num, Some(ac_table))?;
+                    restart_num = restart_num.wrapping_add(1) & 0x07;
+                    restarts_to_go = restart_interval;
+                }
                 if is_refinement {
                     encoder
                         .encode_ac_refine(block, scan.ss, scan.se, scan.ah, scan.al, ac_table)?;
                 } else {
                     encoder.encode_ac_first(block, scan.ss, scan.se, scan.al, ac_table)?;
                 }
+                restarts_to_go = restarts_to_go.saturating_sub(1);
             }
         } else {
             // Y component with subsampling (h_samp > 1 or v_samp > 1)
@@ -4663,6 +5227,12 @@ impl Encoder {
                         + v_idx * h
                         + h_idx;
 
+                    if restart_interval > 0 && restarts_to_go == 0 {
+                        encoder.emit_restart(restart_num, Some(ac_table))?;
+                        restart_num = restart_num.wrapping_add(1) & 0x07;
+                        restarts_to_go = restart_interval;
+                    }
+
                     if is_refinement {
                         encoder.encode_ac_refine(
                             &blocks[storage_idx],
@@ -4681,6 +5251,7 @@ impl Encoder {
                             ac_table,
                         )?;
                     }
+                    restarts_to_go = restarts_to_go.saturating_sub(1);
                 }
             }
         }
@@ -4700,6 +5271,7 @@ impl Encoder {
         mcu_cols: usize,
         h_samp: u8,
         v_samp: u8,
+        restart_interval: usize,
         dc_luma_freq: &mut FrequencyCounter,
         dc_chroma_freq: &mut FrequencyCounter,
     ) {
@@ -4707,9 +5279,17 @@ impl Encoder {
         let mut y_idx = 0;
         let mut c_idx = 0;
         let mut counter = ProgressiveSymbolCounter::new();
+        // C's gather applies the same restart resets as the output pass
+        // (jchuff encode_mcu_gather / jcphuff emit_restart under
+        // gather_statistics): DC predictions zero at each boundary.
+        let mut restarts_to_go = restart_interval;
 
         for _mcu_row in 0..mcu_rows {
             for _mcu_col in 0..mcu_cols {
+                if restart_interval > 0 && restarts_to_go == 0 {
+                    counter.count_restart(None);
+                    restarts_to_go = restart_interval;
+                }
                 // Y blocks
                 for _ in 0..blocks_per_mcu_y {
                     counter.count_dc_first(&y_blocks[y_idx], 0, scan.al, dc_luma_freq);
@@ -4720,6 +5300,7 @@ impl Encoder {
                 // Cr block
                 counter.count_dc_first(&cr_blocks[c_idx], 2, scan.al, dc_chroma_freq);
                 c_idx += 1;
+                restarts_to_go = restarts_to_go.saturating_sub(1);
             }
         }
     }
@@ -4742,6 +5323,7 @@ impl Encoder {
         comp_idx: usize,
         block_cols: usize,
         block_rows: usize,
+        restart_interval: usize,
         ac_freq: &mut FrequencyCounter,
     ) {
         let blocks_per_mcu = if comp_idx == 0 {
@@ -4752,16 +5334,24 @@ impl Encoder {
 
         let mut counter = ProgressiveSymbolCounter::new();
         let is_refinement = scan.ah != 0;
+        let mut restarts_to_go = restart_interval;
 
         if blocks_per_mcu == 1 {
             // Chroma or 4:4:4 Y: storage order = raster order
             let total_blocks = block_rows * block_cols;
             for block in blocks.iter().take(total_blocks) {
+                // Restart boundary: pending EOBRUN counts flush into stats
+                // (C's emit_restart under gather_statistics).
+                if restart_interval > 0 && restarts_to_go == 0 {
+                    counter.count_restart(Some(ac_freq));
+                    restarts_to_go = restart_interval;
+                }
                 if is_refinement {
                     counter.count_ac_refine(block, scan.ss, scan.se, scan.ah, scan.al, ac_freq);
                 } else {
                     counter.count_ac_first(block, scan.ss, scan.se, scan.al, ac_freq);
                 }
+                restarts_to_go = restarts_to_go.saturating_sub(1);
             }
         } else {
             // Y component with subsampling - iterate in raster order (matching encode_ac_scan)
@@ -4779,6 +5369,11 @@ impl Encoder {
                         + mcu_col * blocks_per_mcu
                         + v_idx * h
                         + h_idx;
+
+                    if restart_interval > 0 && restarts_to_go == 0 {
+                        counter.count_restart(Some(ac_freq));
+                        restarts_to_go = restart_interval;
+                    }
 
                     if is_refinement {
                         counter.count_ac_refine(
@@ -4798,6 +5393,7 @@ impl Encoder {
                             ac_freq,
                         );
                     }
+                    restarts_to_go = restarts_to_go.saturating_sub(1);
                 }
             }
         }
@@ -4891,6 +5487,7 @@ impl Encoder {
             overshoot_deringing: self.overshoot_deringing,
             smoothing: self.smoothing,
             restart_interval: self.restart_interval,
+            restart_in_rows: self.restart_in_rows,
             quant_table_idx: self.quant_table_idx,
             has_custom_qtables: self.custom_luma_qtable.is_some()
                 || self.custom_chroma_qtable.is_some(),

@@ -21,10 +21,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   non-MCU-aligned dimensions, 4:4:4/4:2:2/4:2:0 subsampling, and trellis
   speed levels (`tests/exact_trellis_parity.rs`; the non-optimized case is
   oracle'd by `tests/oracle/trellis_noopt_oracle.c`, since no cjpeg flag
-  combination yields trellis + `optimize_coding=FALSE`).
+  combination yields trellis + `optimize_coding=FALSE`). Coverage extends
+  to `-restart N` MCU-row intervals (converted per scan as C does),
+  `-restart NB` MCU intervals, `-smooth` input smoothing (C's
+  `jcsample.c` plane-domain kernels, incl. grayscale and odd sizes), all
+  nine `-quant-table` selections, `-tune-*` lambda variants, `-notrellis`,
+  `-fastcrush`, `-quality luma,chroma`, overshoot deringing, EOB
+  optimization, and multi-chunk ICC.
   `TrellisMode::Optimized` remains the default — it produces equal or
   smaller files on most inputs and is faster; the exact mode exists for
   compatibility and validation.
+
+- **`Encoder::restart_interval_rows`** — row-unit restart intervals,
+  matching C's `-restart N` (no `B` suffix) semantics: the value is a
+  count of MCU *rows*, converted per scan via that scan's MCUs-per-row
+  (single-component scans count blocks; interleaved scans count iMCUs),
+  so the emitted DRI can differ across a progressive scan script — as it
+  does in C. `Encoder::restart_interval` keeps the MCU-count semantic
+  (C's `-restart NB`). Setting one clears the other, as in cjpeg.
 
 - **`Encoder::xmp_data` / `StreamingEncoder::xmp_data`** — native XMP
   metadata support. Pass the raw XMP packet (XML/RDF); the

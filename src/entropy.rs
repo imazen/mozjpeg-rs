@@ -820,6 +820,29 @@ impl<'a, W: Write> ProgressiveEncoder<'a, W> {
         self.writer.flush()?;
         Ok(())
     }
+
+    /// Emit a restart marker inside a progressive scan.
+    ///
+    /// Mirrors C's `emit_restart` (jcphuff.c): flush the pending EOBRUN and
+    /// buffered correction bits with the current scan's AC table, byte-align,
+    /// emit the RSTn marker, then reset DC predictions and AC run state.
+    /// Pass the scan's AC table for AC scans (`Ss > 0`), `None` for DC scans.
+    pub fn emit_restart(
+        &mut self,
+        restart_num: u8,
+        ac_table: Option<&DerivedTable>,
+    ) -> std::io::Result<()> {
+        if let Some(table) = ac_table {
+            self.flush_eobrun_with_bits(table)?;
+        }
+        self.writer.flush()?;
+        let rst_marker = 0xD0 + (restart_num & 0x07);
+        self.writer.write_bytes(&[0xFF, rst_marker])?;
+        self.last_dc_val = [0; 4];
+        self.eobrun = 0;
+        self.correction_bits.clear();
+        Ok(())
+    }
 }
 
 // =============================================================================
@@ -1078,6 +1101,20 @@ impl ProgressiveSymbolCounter {
         if let Some(counter) = ac_counter {
             self.flush_eobrun_count(counter);
         }
+    }
+
+    /// Model a restart boundary during symbol counting.
+    ///
+    /// Mirrors C's `emit_restart` under `gather_statistics` (jcphuff.c):
+    /// a pending EOBRUN is flushed into the stats, then DC predictions and
+    /// AC run state reset. No marker bytes are counted.
+    pub fn count_restart(&mut self, ac_counter: Option<&mut FrequencyCounter>) {
+        if let Some(counter) = ac_counter {
+            self.flush_eobrun_count(counter);
+        }
+        self.last_dc_val = [0; 4];
+        self.eobrun = 0;
+        self.correction_bits_count = 0;
     }
 }
 

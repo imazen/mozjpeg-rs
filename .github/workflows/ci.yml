@@ -194,6 +194,16 @@ jobs:
       - name: Run sys-local tests
         run: cargo test -p sys-local
 
+      - name: Run FFI parity tests
+        run: |
+          cargo test --test ffi_validation
+          cargo test --test parity_tests
+          cargo test --test preset_parity
+          cargo test --test chroma_quality_test
+
+      - name: Run byte-exact parity suite vs C oracle
+        run: cargo test --test exact_trellis_parity
+
   # Documentation build
   docs:
     name: Documentation

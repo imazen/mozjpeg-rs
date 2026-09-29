@@ -336,6 +336,118 @@ pub fn expand_to_mcu_strided(
     }
 }
 
+// ============================================================================
+// C mozjpeg input smoothing (jcsample.c INPUT_SMOOTHING_SUPPORTED)
+// ============================================================================
+
+/// Read an input pixel with C's edge-expansion semantics: coordinates
+/// outside `[0,width) × [0,height)` replicate the nearest edge pixel
+/// (`expand_right_edge` / `expand_bottom_edge` and the top dummy context
+/// rows created by `pre_process_context`).
+#[inline]
+fn px_edge(input: &[u8], width: usize, height: usize, x: isize, y: isize) -> i64 {
+    let xc = x.clamp(0, width as isize - 1) as usize;
+    let yc = y.clamp(0, height as isize - 1) as usize;
+    input[yc * width + xc] as i64
+}
+
+/// Port of C mozjpeg's `fullsize_smooth_downsample` (jcsample.c): 8-neighbor
+/// input smoothing for a component that keeps full resolution (all
+/// components under 1x1 sampling; luma always, since it carries the max
+/// factors).
+///
+/// `input` is `width`×`height` and `out` receives rows of `out_w` pixels —
+/// pass the component's block-padded width (`width_in_blocks * 8`) so the
+/// smoothing also covers the padding columns C computes from its
+/// edge-expanded input. One output row per input row.
+pub fn fullsize_smooth_downsample(
+    input: &[u8],
+    width: usize,
+    height: usize,
+    out_w: usize,
+    out: &mut [u8],
+    smoothing_factor: i64,
+) {
+    // memberscale = scaled (1-8*SF), neighscale = scaled SF, where
+    // SF = smoothing_factor/1024 and the scale is 2^16 (jcsample.c:420-421).
+    let memberscale: i64 = 65536 - smoothing_factor * 512;
+    let neighscale: i64 = smoothing_factor * 64;
+
+    for (y, out_row) in out.chunks_exact_mut(out_w).enumerate() {
+        let y = y as isize;
+        for (x, px_out) in out_row.iter_mut().enumerate() {
+            let x = x as isize;
+            // Sum of the eight neighbors with edge replication; C's
+            // special-cased first/last columns produce the same sum.
+            let neighsum = px_edge(input, width, height, x - 1, y - 1)
+                + px_edge(input, width, height, x, y - 1)
+                + px_edge(input, width, height, x + 1, y - 1)
+                + px_edge(input, width, height, x - 1, y)
+                + px_edge(input, width, height, x + 1, y)
+                + px_edge(input, width, height, x - 1, y + 1)
+                + px_edge(input, width, height, x, y + 1)
+                + px_edge(input, width, height, x + 1, y + 1);
+            let membersum = px_edge(input, width, height, x, y);
+            let v = membersum * memberscale + neighsum * neighscale;
+            *px_out = ((v + 32768) >> 16) as u8;
+        }
+    }
+}
+
+/// Port of C mozjpeg's `h2v2_smooth_downsample` (jcsample.c): smoothed 2x2
+/// downsample for a chroma component under 2x2 sampling.
+///
+/// `input` is the full-resolution component plane (`width`×`height`); `out`
+/// receives one row per input row pair, `out_w` columns wide — pass the
+/// subsampled component's block-padded width (`width_in_blocks * 8`), which
+/// for 2x2 equals the MCU-aligned chroma width.
+pub fn h2v2_smooth_downsample(
+    input: &[u8],
+    width: usize,
+    height: usize,
+    out_w: usize,
+    out: &mut [u8],
+    smoothing_factor: i64,
+) {
+    // memberscale = scaled (1-5*SF)/4, neighscale = scaled SF/4
+    // (jcsample.c:337-338), scaled by 2^16.
+    let memberscale: i64 = 16384 - smoothing_factor * 80;
+    let neighscale: i64 = smoothing_factor * 16;
+
+    for (r, out_row) in out.chunks_exact_mut(out_w).enumerate() {
+        let iy = 2 * r as isize; // top input row of this output row's pair
+        for (c, px_out) in out_row.iter_mut().enumerate() {
+            let ix = 2 * c as isize; // left input column of this pair
+            let xm = ix - 1;
+            let xp = ix + 2;
+
+            // The four pixels directly mapped to this output element.
+            let membersum = px_edge(input, width, height, ix, iy)
+                + px_edge(input, width, height, ix + 1, iy)
+                + px_edge(input, width, height, ix, iy + 1)
+                + px_edge(input, width, height, ix + 1, iy + 1);
+            // Edge-adjacent neighbors count twice as much as corners.
+            let mut neighsum = px_edge(input, width, height, ix, iy - 1)
+                + px_edge(input, width, height, ix + 1, iy - 1)
+                + px_edge(input, width, height, ix, iy + 2)
+                + px_edge(input, width, height, ix + 1, iy + 2)
+                + px_edge(input, width, height, xm, iy)
+                + px_edge(input, width, height, xp, iy)
+                + px_edge(input, width, height, xm, iy + 1)
+                + px_edge(input, width, height, xp, iy + 1);
+            neighsum += neighsum;
+            // Corner-adjacent neighbors.
+            neighsum += px_edge(input, width, height, xm, iy - 1)
+                + px_edge(input, width, height, xp, iy - 1)
+                + px_edge(input, width, height, xm, iy + 2)
+                + px_edge(input, width, height, xp, iy + 2);
+
+            let v = membersum * memberscale + neighsum * neighscale;
+            *px_out = ((v + 32768) >> 16) as u8;
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

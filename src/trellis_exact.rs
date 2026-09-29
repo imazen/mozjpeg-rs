@@ -732,7 +732,7 @@ pub(crate) struct ExactTablesOut {
 ///
 /// Must run while `blocks` still holds *normally quantized* coefficients,
 /// before the exact trellis passes re-quantize real blocks.
-fn fill_main_pass_dummies(blocks: &mut [[i16; DCTSIZE2]], grid: &ComponentGrid) {
+pub(crate) fn fill_main_pass_dummies(blocks: &mut [[i16; DCTSIZE2]], grid: &ComponentGrid) {
     let w = grid.width_in_blocks;
     let padded_cols = grid.padded_cols();
     if padded_cols == w && grid.padded_rows() == grid.height_in_blocks {
@@ -762,6 +762,32 @@ fn fill_main_pass_dummies(blocks: &mut [[i16; DCTSIZE2]], grid: &ComponentGrid) 
                     }
                 }
             }
+        }
+    }
+}
+
+/// C mozjpeg restart configuration: `restart_interval` (absolute MCUs,
+/// `-restart NB`) or `restart_in_rows` (`-restart N`), converted to an
+/// absolute interval *per scan* via that scan's `MCUs_per_row`
+/// (per_scan_setup). Single-component scans count the component's real
+/// blocks; interleaved scans count iMCUs.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct RestartSpec {
+    /// Absolute MCUs per restart, in each scan's MCU units (`-restart NB`).
+    pub interval: usize,
+    /// MCU rows per restart, or 0 (`-restart N`) — converted per scan.
+    pub rows: usize,
+}
+
+impl RestartSpec {
+    /// Effective restart interval for a scan with `mcus_per_row` MCUs per
+    /// row, capped at 65535 like C (`MIN(nominal, 65535)`).
+    #[inline]
+    pub fn for_scan(&self, mcus_per_row: usize) -> usize {
+        if self.rows > 0 {
+            (self.rows * mcus_per_row).min(65535)
+        } else {
+            self.interval
         }
     }
 }
@@ -1007,7 +1033,7 @@ pub(crate) fn run_exact_trellis(
     comps: &mut [ExactComponent<'_>],
     progressive: bool,
     optimize_coding: bool,
-    restart_interval: usize,
+    restart: RestartSpec,
     std: &StdHuffTables<'_>,
     trellis: &TrellisConfig,
 ) -> Result<ExactTablesOut> {
@@ -1037,7 +1063,7 @@ pub(crate) fn run_exact_trellis(
     gather_into_slots(
         &comps[0],
         model,
-        restart_interval,
+        restart.for_scan(comps[0].grid.width_in_blocks),
         &mut dc_huff,
         &mut ac_huff,
     )?;
@@ -1061,7 +1087,7 @@ pub(crate) fn run_exact_trellis(
             gather_into_slots(
                 &comps[ci],
                 model,
-                restart_interval,
+                restart.for_scan(comps[ci].grid.width_in_blocks),
                 &mut dc_huff,
                 &mut ac_huff,
             )?;
@@ -1102,7 +1128,7 @@ pub(crate) fn run_exact_trellis(
             gather_into_slots(
                 &comps[ci],
                 model,
-                restart_interval,
+                restart.for_scan(comps[ci].grid.width_in_blocks),
                 &mut dc_huff,
                 &mut ac_huff,
             )?;
@@ -1114,7 +1140,12 @@ pub(crate) fn run_exact_trellis(
     // (post-trellis) coefficients, including dummies and restart resets —
     // this produces the emitted tables for a single-scan baseline image.
     if optimize_coding && !progressive {
-        gather_main_scan_into_slots(comps, restart_interval, &mut dc_huff, &mut ac_huff)?;
+        gather_main_scan_into_slots(
+            comps,
+            restart.for_scan(comps[0].grid.mcu_cols),
+            &mut dc_huff,
+            &mut ac_huff,
+        )?;
     }
 
     Ok(ExactTablesOut { dc_huff, ac_huff })

@@ -127,6 +127,7 @@ pub struct CMozjpeg {
     pub(crate) overshoot_deringing: bool,
     pub(crate) smoothing: u8,
     pub(crate) restart_interval: u16,
+    pub(crate) restart_in_rows: u16,
     pub(crate) quant_table_idx: QuantTableIdx,
     pub(crate) has_custom_qtables: bool,
     pub(crate) exif_data: Option<Vec<u8>>,
@@ -228,6 +229,7 @@ impl CMozjpeg {
 
         // Restart interval
         cinfo.restart_interval = self.restart_interval as u32;
+        cinfo.restart_in_rows = self.restart_in_rows as i32;
 
         // optimize_scans MUST be set BEFORE jpeg_simple_progression
         jpeg_c_set_bool_param(
