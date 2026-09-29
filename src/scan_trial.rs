@@ -179,23 +179,74 @@ impl<'a> ScanTrialEncoder<'a> {
     /// 1. First pass: count symbol frequencies
     /// 2. Build optimal Huffman table from frequencies
     /// 3. Second pass: encode with optimal table
-    fn encode_scan(&mut self, scan: &ScanInfo) -> Result<usize> {
+    ///
+    /// The returned size matches C's `scan_size[]`: every byte the output
+    /// pass writes to the buffered destination, i.e. the emitted DHT
+    /// marker(s) and SOS header *plus* the entropy payload. C's
+    /// `emit_multi_dht` writes every needed table that is not yet marked
+    /// `sent_table` — and each trial's freshly-gathered table always is —
+    /// so each trial pays its own table(s) plus the SOS header.
+    pub(crate) fn encode_scan(&mut self, scan: &ScanInfo) -> Result<usize> {
         let is_dc_scan = scan.ss == 0 && scan.se == 0;
         let is_refinement = scan.ah != 0;
+        // SOS marker bytes: FFC4-like marker(2) + length field(6 + 2*Ns).
+        let sos_bytes = 8 + 2 * scan.comps_in_scan as usize;
 
         if is_dc_scan {
-            // DC scans - use stored tables (DC scans are small, optimization less impactful)
-            let mut buffer = Vec::new();
-            let mut bit_writer = BitWriter::new(&mut buffer);
-            let mut encoder = ProgressiveEncoder::new(&mut bit_writer);
+            if is_refinement {
+                // DC refinement scans write raw bits, no DHT at all
+                // (emit_multi_dht needs Ss == 0 && Ah == 0 for DC).
+                let mut buffer = Vec::new();
+                let mut bit_writer = BitWriter::new(&mut buffer);
+                let mut encoder = ProgressiveEncoder::new(&mut bit_writer);
 
-            self.encode_dc_scan_with_stored_tables(scan, is_refinement, &mut encoder)?;
-            encoder.finish_scan(None)?;
-            bit_writer.flush()?;
+                self.encode_dc_scan_with_stored_tables(scan, is_refinement, &mut encoder)?;
+                encoder.finish_scan(None)?;
+                bit_writer.flush()?;
 
-            let size = buffer.len();
-            self.scan_buffers.push(buffer);
-            Ok(size)
+                let size = buffer.len() + sos_bytes;
+                self.scan_buffers.push(buffer);
+                Ok(size)
+            } else {
+                // DC first scan: C gathers an optimal DC table per table
+                // slot and emits the DHT before SOS.
+                let mut dc_freq: [FrequencyCounter; 2] =
+                    std::array::from_fn(|_| FrequencyCounter::new());
+                self.count_dc_scan_symbols(scan, &mut dc_freq)?;
+                let dc_luma = dc_freq[0].generate_table()?;
+                let dc_chroma = dc_freq[1].generate_table()?;
+                let dc_luma_derived = DerivedTable::from_huff_table(&dc_luma, true)?;
+                let dc_chroma_derived = DerivedTable::from_huff_table(&dc_chroma, true)?;
+
+                let mut buffer = Vec::new();
+                let mut bit_writer = BitWriter::new(&mut buffer);
+                let mut encoder = ProgressiveEncoder::new(&mut bit_writer);
+
+                self.encode_dc_scan_with_tables(
+                    scan,
+                    &dc_luma_derived,
+                    &dc_chroma_derived,
+                    &mut encoder,
+                )?;
+                encoder.finish_scan(None)?;
+                bit_writer.flush()?;
+
+                // One DHT marker holding each table used by this scan's
+                // components (per-table: 1 spec + 16 bits + nsyms bytes).
+                let mut dht = 4usize;
+                let mut seen = [false; 2];
+                for &ci in &scan.component_index[..scan.comps_in_scan as usize] {
+                    let no = if ci == 0 { 0 } else { 1 };
+                    if !seen[no] {
+                        seen[no] = true;
+                        let tbl = if no == 0 { &dc_luma } else { &dc_chroma };
+                        dht += 17 + tbl.bits[1..=16].iter().map(|&b| b as usize).sum::<usize>();
+                    }
+                }
+                let size = buffer.len() + dht + sos_bytes;
+                self.scan_buffers.push(buffer);
+                Ok(size)
+            }
         } else {
             // AC scans - use per-scan optimal Huffman tables
             // Pass 1: Count symbol frequencies
@@ -215,7 +266,9 @@ impl<'a> ScanTrialEncoder<'a> {
             encoder.finish_scan(Some(&ac_table))?;
             bit_writer.flush()?;
 
-            let size = buffer.len();
+            // AC scans emit their one fresh table before the SOS.
+            let nsyms: usize = ac_huff.bits[1..=16].iter().map(|&b| b as usize).sum();
+            let size = buffer.len() + (21 + nsyms) + sos_bytes;
             self.scan_buffers.push(buffer);
             Ok(size)
         }
@@ -302,6 +355,61 @@ impl<'a> ScanTrialEncoder<'a> {
         Ok(())
     }
 
+    /// Count DC-first symbols of a DC scan into per-table-slot counters
+    /// (tbl_no 0 for component 0, 1 for the others), matching the MCU-order
+    /// block sequence the scan encodes in.
+    fn count_dc_scan_symbols(
+        &self,
+        scan: &ScanInfo,
+        dc_freq: &mut [FrequencyCounter; 2],
+    ) -> Result<()> {
+        let al = scan.al;
+        let mut counter = ProgressiveSymbolCounter::new();
+
+        for mcu_row in 0..self.mcu_rows {
+            for mcu_col in 0..self.mcu_cols {
+                for i in 0..scan.comps_in_scan as usize {
+                    let comp_idx = scan.component_index[i] as usize;
+                    let (blocks, freq) = match comp_idx {
+                        0 => (self.y_blocks, &mut dc_freq[0]),
+                        1 | 2 => {
+                            let blocks = if comp_idx == 1 {
+                                self.cb_blocks
+                            } else {
+                                self.cr_blocks
+                            };
+                            (blocks, &mut dc_freq[1])
+                        }
+                        _ => continue,
+                    };
+
+                    let (h_blocks, v_blocks) = if comp_idx == 0 {
+                        (self.h_samp as usize, self.v_samp as usize)
+                    } else {
+                        (1, 1)
+                    };
+
+                    for v in 0..v_blocks {
+                        for h in 0..h_blocks {
+                            let block_row = mcu_row * v_blocks + v;
+                            let block_col = mcu_col * h_blocks + h;
+                            let blocks_per_row = if comp_idx == 0 {
+                                self.mcu_cols * h_blocks
+                            } else {
+                                self.mcu_cols
+                            };
+                            let block_idx = block_row * blocks_per_row + block_col;
+                            if block_idx < blocks.len() {
+                                counter.count_dc_first(&blocks[block_idx], comp_idx, al, freq);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
     /// Encode DC scan with stored Huffman tables.
     fn encode_dc_scan_with_stored_tables<W: Write>(
         &mut self,
@@ -309,6 +417,20 @@ impl<'a> ScanTrialEncoder<'a> {
         is_refinement: bool,
         encoder: &mut ProgressiveEncoder<W>,
     ) -> Result<()> {
+        self.encode_dc_scan_with_tables(scan, self.dc_luma, self.dc_chroma, encoder)?;
+        let _ = is_refinement;
+        Ok(())
+    }
+
+    /// Encode DC scan with the given derived tables.
+    fn encode_dc_scan_with_tables<W: Write>(
+        &mut self,
+        scan: &ScanInfo,
+        dc_luma: &DerivedTable,
+        dc_chroma: &DerivedTable,
+        encoder: &mut ProgressiveEncoder<W>,
+    ) -> Result<()> {
+        let is_refinement = scan.ah != 0;
         let al = scan.al;
 
         for mcu_row in 0..self.mcu_rows {
@@ -316,9 +438,9 @@ impl<'a> ScanTrialEncoder<'a> {
                 for i in 0..scan.comps_in_scan as usize {
                     let comp_idx = scan.component_index[i] as usize;
                     let (blocks, state, dc_table) = match comp_idx {
-                        0 => (self.y_blocks, &mut self.y_state, self.dc_luma),
-                        1 => (self.cb_blocks, &mut self.cb_state, self.dc_chroma),
-                        2 => (self.cr_blocks, &mut self.cr_state, self.dc_chroma),
+                        0 => (self.y_blocks, &mut self.y_state, dc_luma),
+                        1 => (self.cb_blocks, &mut self.cb_state, dc_chroma),
+                        2 => (self.cr_blocks, &mut self.cr_state, dc_chroma),
                         _ => continue,
                     };
 
