@@ -182,7 +182,10 @@ pub mod huffman;
 #[allow(dead_code)]
 pub(crate) mod marker;
 
-/// Progressive scan generation (internal).
+/// Progressive scan-script generation.
+///
+/// Unstable tooling surface for tests and examples — doc-hidden and not
+/// covered by the crate's semver/API guarantees.
 #[doc(hidden)]
 #[allow(dead_code)]
 pub mod progressive;

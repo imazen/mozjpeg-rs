@@ -10,7 +10,10 @@
 //!
 //! Reference: mozjpeg jcparam.c, jcphuff.c
 
-use crate::types::ScanInfo;
+// `pub use` so downstream users can name the type the generators return
+// (`mozjpeg_rs::progressive::ScanInfo`). The module is `#[doc(hidden)]` —
+// this is tooling surface, not stable API.
+pub use crate::types::ScanInfo;
 
 /// Maximum number of components in a scan.
 const MAX_COMPS_IN_SCAN: usize = 4;
