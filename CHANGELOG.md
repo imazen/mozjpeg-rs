@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`TrellisMode`** and **`TrellisMode::MozjpegExact`** — a public opt-in
+  trellis-quantization mode that reproduces the patched C mozjpeg
+  encoder's output byte-exactly. Select it with
+  `TrellisConfig::default().mode(TrellisMode::mozjpeg_exact())` (C default
+  `trellis_speed_level` 7) or `TrellisMode::MozjpegExact { speed_level }`
+  for the C 0–10 range. Verified bit-identical against the patched
+  imazen/mozjpeg scalar oracle (`cjpeg-static` + `JSIMD_FORCENONE=1`)
+  across baseline optimized and non-optimized Huffman coding, progressive
+  color and grayscale with `optimize_scans`, restart intervals,
+  non-MCU-aligned dimensions, 4:4:4/4:2:2/4:2:0 subsampling, and trellis
+  speed levels (`tests/exact_trellis_parity.rs`; the non-optimized case is
+  oracle'd by `tests/oracle/trellis_noopt_oracle.c`, since no cjpeg flag
+  combination yields trellis + `optimize_coding=FALSE`).
+  `TrellisMode::Optimized` remains the default — it produces equal or
+  smaller files on most inputs and is faster; the exact mode exists for
+  compatibility and validation.
+
 ### Changed
 
 - **Third-party requirements written as full `x.y.z`**: `mozjpeg-sys` `"2.2"` → `"2.2.3"` and `rgb` `"0.8"` → `"0.8.53"`, in both the optional-dependency and dev-dependency positions (69af27b). Every other direct third-party requirement was checked against the crates.io API and is already at its latest published version, so there was nothing to bump. `Cargo.lock` is byte-identical after the edit. Note `Cargo.lock` is gitignored here, so CI resolves fresh on every run and is always on latest-compatible by design — there is no lockfile refresh to commit.

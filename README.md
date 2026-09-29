@@ -410,7 +410,7 @@ mozjpeg-rs aims for compatibility with C mozjpeg but has some differences:
 
 **Baseline and Progressive modes**: Byte-identical output (0.00% difference) when using default color conversion.
 
-**With trellis quantization**: Rust produces 0.05-0.80% smaller files than C mozjpeg due to slightly better rate-distortion optimization.
+**With trellis quantization**: Rust produces 0.05-0.80% smaller files than C mozjpeg due to slightly better rate-distortion optimization. For byte-exact C mozjpeg output, `TrellisMode::MozjpegExact` reproduces the C trellis pass structure bit-for-bit (slower; see `TrellisConfig::mode`).
 
 **With `fast_color(true)`**: ±1 rounding difference in color conversion (uses `yuv` crate for ~40% faster RGB→YCbCr), producing slightly different but visually identical output.
 
