@@ -148,6 +148,19 @@ adding a limit costs a major bump.
 Confirmed by `cargo semver-checks --baseline-version 0.9.2` — two major checks
 failed, both `*_marked_non_exhaustive`, on three items (0ef2cd2):
 
+- **The C mozjpeg compatibility layer left the published crate.** Removed:
+  the `mozjpeg-sys-config` feature, `Encoder::to_c_mozjpeg()`, and
+  `compat::{CMozjpeg, ConfigError, ConfigWarnings}` (and their top-level
+  re-exports). It moved verbatim to a new unpublished workspace crate,
+  `crates/sys-config` (`publish = false`), reachable as
+  `sys_config::CMozjpeg::from_encoder(&encoder)`. The layer existed only for
+  differential testing against C mozjpeg — no published crate that depends on
+  `mozjpeg-rs` enabled the feature — and keeping it out means the published
+  crate is `#![forbid(unsafe_code)]` with no C/FFI in it at all (the one
+  `unsafe`-bearing module is gone). `Encoder` gains a `#[doc(hidden)]`
+  `c_compat_config()` accessor that the new crate consumes; it is internal
+  plumbing, not public API. Verified with `cargo test -p sys-config`.
+
 - `struct_marked_non_exhaustive`: **`Limits`** (`src/types.rs`) is now
   `#[non_exhaustive]`. Struct literals and `..Default::default()` no longer
   construct it from outside the crate. Migration: use `Limits::default()` (or
@@ -155,12 +168,13 @@ failed, both `*_marked_non_exhaustive`, on three items (0ef2cd2):
   `Limits::default().max_width(8192).max_exif_bytes(65_536)`. Every field stays
   `pub`, readable, and assignable on an owned value; only the literal form goes
   away. Adding a cap is non-breaking from here on.
-- `struct_marked_non_exhaustive`: **`ConfigWarnings`** (`src/compat.rs`,
-  `mozjpeg-sys-config` feature) is now `#[non_exhaustive]`. It is an output
-  type; build one with `ConfigWarnings::default()` and assign fields.
-- `enum_marked_non_exhaustive`: **`ConfigError`** (`src/compat.rs`,
-  `mozjpeg-sys-config` feature) is now `#[non_exhaustive]`. `match` on it must
-  carry a `_` arm. New variants are non-breaking from here on.
+- `struct_marked_non_exhaustive`: **`ConfigWarnings`** was made
+  `#[non_exhaustive]` earlier in this cycle, but is now removed from the
+  published crate entirely (see the compat-layer move above); it lives in
+  `crates/sys-config`. No longer part of the public surface.
+- `enum_marked_non_exhaustive`: **`ConfigError`** was made `#[non_exhaustive]`
+  earlier in this cycle, but is likewise now removed from the published crate
+  (moved to `crates/sys-config`). No longer part of the public surface.
 
 Not affected: `Error` (`src/error.rs`) was already `#[non_exhaustive]`, so the
 two new variants below are additive. The input-shaped config structs callers

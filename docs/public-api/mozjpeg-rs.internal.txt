@@ -10,22 +10,21 @@
 ## summary
 #
 #   pub modules                                21
-#   pub types (struct/enum/trait/alias)        22
+#   pub types (struct/enum/trait/alias)        23
 #   pub consts/statics                         47
 #   free functions                             84
-#   inherent methods                          138
-#   struct fields                              28
-#   enum variants                              20
-#   trait roster entries (type × trait)        52
+#   inherent methods                          141
+#   struct fields                              46
+#   enum variants                              18
+#   trait roster entries (type × trait)        54
 #   auto-trait-complete types                  14
 #   auto-trait exceptions                       3
 #
 # per-module pub lines:
-#   (root)                           44
+#   (root)                           65
 #   bitstream                        15
 #   color                             9
 #   color_avx2                        2
-#   compat                            1
 #   consts                           52
 #   corpus                            9
 #   dct                               9
@@ -40,7 +39,7 @@
 #   test_encoder                     25
 #   trellis                          16
 
-## items (355 lines)
+## items (375 lines)
 
 #[repr(u8)] pub enum QuantTableIdx [also: consts]
 pub const fn progressive::ScanInfo::ac_scan(u8, u8, u8, u8, u8) -> Self
@@ -88,6 +87,9 @@ pub const consts::QuantTableIdx::ImageMagick: Self
 pub const consts::STD_CHROMINANCE_QUANT_TBL: [[u16; 64]; 9]
 pub const consts::STD_LUMINANCE_QUANT_TBL: [[u16; 64]; 9]
 pub const huffman::MAX_CODE_LENGTH: usize
+pub fn CCompatConfig::clone(&self) -> Self
+pub fn CCompatConfig::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+pub fn Encoder::c_compat_config(&self) -> CCompatConfig
 pub fn Encoder::chroma_quality(self, core::option::Option<u8>) -> Self
 pub fn Encoder::get_chroma_quality(&self) -> core::option::Option<u8>
 pub fn Encoder::qtable(self, consts::QuantTableIdx) -> Self
@@ -329,7 +331,24 @@ pub mod simd::x86_64::avx2
 pub mod simd::x86_64::entropy
 pub mod test_encoder
 pub mod trellis
-pub ConfigError::UnsupportedQuantTable(consts::QuantTableIdx)
+pub CCompatConfig::color_space: JpegColorSpace
+pub CCompatConfig::custom_markers: alloc::vec::Vec<(u8, alloc::vec::Vec<u8>)>
+pub CCompatConfig::exif_data: core::option::Option<alloc::vec::Vec<u8>>
+pub CCompatConfig::force_baseline: bool
+pub CCompatConfig::has_custom_qtables: bool
+pub CCompatConfig::icc_profile: core::option::Option<alloc::vec::Vec<u8>>
+pub CCompatConfig::optimize_huffman: bool
+pub CCompatConfig::optimize_scans: bool
+pub CCompatConfig::overshoot_deringing: bool
+pub CCompatConfig::progressive: bool
+pub CCompatConfig::quality: u8
+pub CCompatConfig::quant_table_idx: consts::QuantTableIdx
+pub CCompatConfig::restart_in_rows: u16
+pub CCompatConfig::restart_interval: u16
+pub CCompatConfig::smoothing: u8
+pub CCompatConfig::subsampling: Subsampling
+pub CCompatConfig::trellis: TrellisConfig
+pub CCompatConfig::xmp_data: core::option::Option<alloc::vec::Vec<u8>>
 pub QuantTableIdx::Ahumada = 7
 pub QuantTableIdx::Flat = 1
 pub QuantTableIdx::JpegAnnexK = 0
@@ -339,7 +358,6 @@ pub QuantTableIdx::Peterson = 8
 pub QuantTableIdx::PsnrHvsM = 4
 pub QuantTableIdx::Robidoux = 3
 pub QuantTableIdx::Watson = 6
-pub compat::ConfigError::UnsupportedQuantTable(consts::QuantTableIdx)
 pub consts::QuantTableIdx::Ahumada = 7
 pub consts::QuantTableIdx::Flat = 1
 pub consts::QuantTableIdx::JpegAnnexK = 0
@@ -377,6 +395,7 @@ pub trellis::BlockEobInfo::best_cost_skip: f32
 pub trellis::BlockEobInfo::has_nonzero_ac: bool
 pub trellis::BlockEobInfo::requires_eob: u8
 pub trellis::BlockEobInfo::zero_block_cost: f32
+pub struct CCompatConfig
 pub struct bitstream::BitWriter<W: core::io::write::Write>
 pub struct entropy::EntropyEncoder<'a, W: core::io::write::Write>
 pub struct entropy::ProgressiveEncoder<'a, W: core::io::write::Write>
@@ -398,8 +417,9 @@ pub type bitstream::VecBitWriter = bitstream::BitWriter<alloc::vec::Vec<u8>>
 pub type simd::ColorConvertFn = fn(&[u8], &mut [u8], &mut [u8], &mut [u8], usize)
 pub type simd::ForwardDctFn = fn(&[i16; 64], &mut [i16; 64])
 
-## trait impls (24 types)
+## trait impls (25 types)
 
+CCompatConfig: Clone, Debug
 DensityUnit: TrivialClone
 JpegColorSpace: TrivialClone
 Limits: TrivialClone

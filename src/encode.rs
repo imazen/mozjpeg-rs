@@ -5710,33 +5710,17 @@ impl Encoder {
 }
 
 // ============================================================================
-// C mozjpeg encoding (optional feature)
+// C mozjpeg differential-testing plumbing (crates/sys-config)
 // ============================================================================
 
-#[cfg(feature = "mozjpeg-sys-config")]
 impl Encoder {
-    /// Convert this encoder to a C mozjpeg encoder.
-    ///
-    /// Returns a [`CMozjpeg`](crate::CMozjpeg) that can encode images using
-    /// the C mozjpeg library with settings matching this Rust encoder.
-    ///
-    /// # Example
-    ///
-    /// ```no_run
-    /// use mozjpeg_rs::{Encoder, Preset};
-    ///
-    /// let pixels: Vec<u8> = vec![128; 64 * 64 * 3];
-    /// let encoder = Encoder::new(Preset::ProgressiveBalanced).quality(85);
-    ///
-    /// // Encode with C mozjpeg
-    /// let c_jpeg = encoder.to_c_mozjpeg().encode_rgb(&pixels, 64, 64)?;
-    ///
-    /// // Compare with Rust encoder
-    /// let rust_jpeg = encoder.encode_rgb(&pixels, 64, 64)?;
-    /// # Ok::<(), mozjpeg_rs::Error>(())
-    /// ```
-    pub fn to_c_mozjpeg(&self) -> crate::compat::CMozjpeg {
-        crate::compat::CMozjpeg {
+    /// Snapshot of the settings the C mozjpeg differential-testing layer
+    /// needs. This is internal plumbing for the unpublished
+    /// `crates/sys-config` crate (consumed by `CMozjpeg::from_encoder`), not
+    /// part of the public API, and may change at any time.
+    #[doc(hidden)]
+    pub fn c_compat_config(&self) -> CCompatConfig {
+        CCompatConfig {
             quality: self.quality,
             force_baseline: self.force_baseline,
             subsampling: self.subsampling,
@@ -5758,6 +5742,50 @@ impl Encoder {
             custom_markers: self.custom_markers.clone(),
         }
     }
+}
+
+/// Settings snapshot consumed by the unpublished `crates/sys-config` crate to
+/// configure C mozjpeg identically to this encoder. Internal plumbing behind
+/// [`Encoder::c_compat_config`]; not part of the public API.
+#[doc(hidden)]
+#[derive(Debug, Clone)]
+pub struct CCompatConfig {
+    /// Quality level (1-100).
+    pub quality: u8,
+    /// Force baseline-compatible output.
+    pub force_baseline: bool,
+    /// Chroma subsampling mode.
+    pub subsampling: Subsampling,
+    /// Stored color space (YCbCr or untransformed RGB).
+    pub color_space: JpegColorSpace,
+    /// Progressive mode.
+    pub progressive: bool,
+    /// Huffman table optimization.
+    pub optimize_huffman: bool,
+    /// Progressive scan optimization.
+    pub optimize_scans: bool,
+    /// Trellis quantization configuration.
+    pub trellis: TrellisConfig,
+    /// Overshoot deringing.
+    pub overshoot_deringing: bool,
+    /// Smoothing factor (0 = disabled).
+    pub smoothing: u8,
+    /// Restart interval in MCUs.
+    pub restart_interval: u16,
+    /// Restart interval in MCU rows.
+    pub restart_in_rows: u16,
+    /// Quantization table variant.
+    pub quant_table_idx: QuantTableIdx,
+    /// Whether a custom luma/chroma quant table is set (C mozjpeg can't mirror it).
+    pub has_custom_qtables: bool,
+    /// EXIF payload.
+    pub exif_data: Option<Vec<u8>>,
+    /// XMP payload.
+    pub xmp_data: Option<Vec<u8>>,
+    /// ICC profile payload.
+    pub icc_profile: Option<Vec<u8>>,
+    /// Custom APP markers.
+    pub custom_markers: Vec<(u8, Vec<u8>)>,
 }
 
 /// Unit tests for private encoder internals.

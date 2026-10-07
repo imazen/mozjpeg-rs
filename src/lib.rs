@@ -120,10 +120,11 @@
 //! # }
 //! ```
 
-// Forbid unsafe code when possible. Core library is 100% safe (archmage/safe_unaligned_simd).
-// When mozjpeg-sys-config feature is enabled, downgrade to deny to allow compat.rs FFI.
-#![cfg_attr(not(feature = "mozjpeg-sys-config"), forbid(unsafe_code))]
-#![cfg_attr(feature = "mozjpeg-sys-config", deny(unsafe_code))]
+// The crate is 100% safe Rust (archmage/safe_unaligned_simd). The C mozjpeg
+// FFI layer that used to live here (behind `mozjpeg-sys-config`) moved to the
+// unpublished `crates/sys-config` workspace crate, so the published crate
+// forbids unsafe unconditionally.
+#![forbid(unsafe_code)]
 #![warn(missing_docs)]
 
 // ============================================================================
@@ -234,10 +235,6 @@ pub(crate) mod types;
 mod encode;
 mod error;
 
-// Optional mozjpeg-sys configuration layer
-#[cfg(feature = "mozjpeg-sys-config")]
-pub mod compat;
-
 // Optional zencodec trait implementations
 #[cfg(feature = "zencodec")]
 pub mod codec;
@@ -294,6 +291,11 @@ pub mod imgref_ext;
 /// # }
 /// ```
 pub use encode::{Encode, Encoder, EncodingStream, StreamingEncoder};
+
+/// Internal settings snapshot for the unpublished `crates/sys-config` C
+/// mozjpeg differential-testing crate. Not part of the public API.
+#[doc(hidden)]
+pub use encode::CCompatConfig;
 
 /// Cooperative cancellation trait for long-running encoding operations.
 ///
@@ -562,41 +564,6 @@ pub use consts::QuantTableIdx;
 /// Used when providing custom quantization tables via
 /// [`Encoder::custom_luma_qtable()`] or [`Encoder::custom_chroma_qtable()`].
 pub use consts::DCTSIZE2;
-
-// ============================================================================
-// mozjpeg-sys compatibility (optional feature)
-// ============================================================================
-
-/// Warnings from configuring a C mozjpeg encoder.
-///
-/// Some settings cannot be applied to `jpeg_compress_struct` directly
-/// and must be handled separately after `jpeg_start_compress`.
-#[cfg(feature = "mozjpeg-sys-config")]
-pub use compat::ConfigWarnings;
-
-/// Error configuring a C mozjpeg encoder.
-#[cfg(feature = "mozjpeg-sys-config")]
-pub use compat::ConfigError;
-
-/// C mozjpeg encoder with settings from a Rust [`Encoder`].
-///
-/// Created via [`Encoder::to_c_mozjpeg()`]. Provides methods for encoding
-/// images using the C mozjpeg library.
-///
-/// # Example
-///
-/// ```no_run
-/// use mozjpeg_rs::{Encoder, Preset};
-///
-/// let pixels: Vec<u8> = vec![128; 64 * 64 * 3];
-/// let jpeg = Encoder::new(Preset::ProgressiveBalanced)
-///     .quality(85)
-///     .to_c_mozjpeg()
-///     .encode_rgb(&pixels, 64, 64)?;
-/// # Ok::<(), mozjpeg_rs::Error>(())
-/// ```
-#[cfg(feature = "mozjpeg-sys-config")]
-pub use compat::CMozjpeg;
 
 /// Trait for pixel types that can be encoded with [`Encoder::encode_imgref`].
 ///

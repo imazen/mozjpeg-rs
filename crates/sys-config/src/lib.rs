@@ -1,35 +1,35 @@
 //! C mozjpeg encoding layer.
 //!
 //! This module provides [`CMozjpeg`], which encodes images using the C mozjpeg
-//! library with settings matching our [`Encoder`](crate::Encoder) configuration.
+//! library with settings matching our [`Encoder`](mozjpeg_rs::Encoder) configuration.
 //!
-//! # Feature Flag
+//! # Status
 //!
-//! This module requires the `mozjpeg-sys-config` feature:
-//!
-//! ```toml
-//! [dependencies]
-//! mozjpeg-rs = { version = "0.3", features = ["mozjpeg-sys-config"] }
-//! ```
+//! This is an internal, unpublished workspace crate (`publish = false`). It
+//! is not part of the `mozjpeg-rs` public API; it exists to drive C mozjpeg
+//! from a Rust [`Encoder`](mozjpeg_rs::Encoder) for differential testing.
 //!
 //! # Example
 //!
 //! ```no_run
 //! use mozjpeg_rs::{Encoder, Preset};
+//! use sys_config::CMozjpeg;
 //!
 //! let pixels: Vec<u8> = vec![128; 64 * 64 * 3];
 //! let encoder = Encoder::new(Preset::ProgressiveBalanced).quality(85);
 //!
-//! // Encode with C mozjpeg using same settings as Rust encoder
-//! let c_jpeg = encoder.to_c_mozjpeg().encode_rgb(&pixels, 64, 64)
+//! // Encode with C mozjpeg using the same settings as the Rust encoder
+//! let c_jpeg = sys_config::CMozjpeg::from_encoder(&encoder)
+//!     .encode_rgb(&pixels, 64, 64)
 //!     .expect("C encoding failed");
 //! ```
 
+//! The crate performs C FFI, so unsafe is expected throughout.
 #![allow(unsafe_code)]
 
-use crate::consts::QuantTableIdx;
-use crate::error::{Error, Result};
-use crate::types::{JpegColorSpace, Subsampling, TrellisConfig};
+use mozjpeg_rs::QuantTableIdx;
+use mozjpeg_rs::{Error, Result};
+use mozjpeg_rs::{JpegColorSpace, Subsampling, TrellisConfig};
 
 /// Warnings from configuring a C mozjpeg encoder.
 ///
@@ -95,9 +95,9 @@ impl std::fmt::Display for ConfigError {
 
 impl std::error::Error for ConfigError {}
 
-/// C mozjpeg encoder with settings from a Rust [`Encoder`](crate::Encoder).
+/// C mozjpeg encoder with settings from a Rust [`Encoder`](mozjpeg_rs::Encoder).
 ///
-/// Created via [`Encoder::to_c_mozjpeg()`](crate::Encoder::to_c_mozjpeg).
+/// Created via [`CMozjpeg::from_encoder`].
 /// Provides methods to encode images using the C mozjpeg library.
 ///
 /// # Example
@@ -107,37 +107,63 @@ impl std::error::Error for ConfigError {}
 ///
 /// let pixels: Vec<u8> = vec![128; 64 * 64 * 3];
 ///
-/// // Create encoder and convert to C mozjpeg
-/// let c_encoder = Encoder::new(Preset::ProgressiveBalanced)
-///     .quality(85)
-///     .to_c_mozjpeg();
+/// // Create encoder and build the C mozjpeg configuration from it
+/// let encoder = Encoder::new(Preset::ProgressiveBalanced).quality(85);
+/// let c_encoder = sys_config::CMozjpeg::from_encoder(&encoder);
 ///
 /// // Encode using C mozjpeg
 /// let jpeg = c_encoder.encode_rgb(&pixels, 64, 64).unwrap();
 /// ```
 #[derive(Debug, Clone)]
 pub struct CMozjpeg {
-    pub(crate) quality: u8,
-    pub(crate) force_baseline: bool,
-    pub(crate) subsampling: Subsampling,
-    pub(crate) color_space: JpegColorSpace,
-    pub(crate) progressive: bool,
-    pub(crate) optimize_huffman: bool,
-    pub(crate) optimize_scans: bool,
-    pub(crate) trellis: TrellisConfig,
-    pub(crate) overshoot_deringing: bool,
-    pub(crate) smoothing: u8,
-    pub(crate) restart_interval: u16,
-    pub(crate) restart_in_rows: u16,
-    pub(crate) quant_table_idx: QuantTableIdx,
-    pub(crate) has_custom_qtables: bool,
-    pub(crate) exif_data: Option<Vec<u8>>,
-    pub(crate) xmp_data: Option<Vec<u8>>,
-    pub(crate) icc_profile: Option<Vec<u8>>,
-    pub(crate) custom_markers: Vec<(u8, Vec<u8>)>,
+    quality: u8,
+    force_baseline: bool,
+    subsampling: Subsampling,
+    color_space: JpegColorSpace,
+    progressive: bool,
+    optimize_huffman: bool,
+    optimize_scans: bool,
+    trellis: TrellisConfig,
+    overshoot_deringing: bool,
+    smoothing: u8,
+    restart_interval: u16,
+    restart_in_rows: u16,
+    quant_table_idx: QuantTableIdx,
+    has_custom_qtables: bool,
+    exif_data: Option<Vec<u8>>,
+    xmp_data: Option<Vec<u8>>,
+    icc_profile: Option<Vec<u8>>,
+    custom_markers: Vec<(u8, Vec<u8>)>,
 }
 
 impl CMozjpeg {
+    /// Build a C mozjpeg encoder mirroring a Rust [`Encoder`](mozjpeg_rs::Encoder)'s
+    /// settings. Replaces the former `Encoder::to_c_mozjpeg()` method, which
+    /// moved here when this layer left the published crate.
+    pub fn from_encoder(enc: &mozjpeg_rs::Encoder) -> Self {
+        let c = enc.c_compat_config();
+        Self {
+            quality: c.quality,
+            force_baseline: c.force_baseline,
+            subsampling: c.subsampling,
+            color_space: c.color_space,
+            progressive: c.progressive,
+            optimize_huffman: c.optimize_huffman,
+            optimize_scans: c.optimize_scans,
+            trellis: c.trellis,
+            overshoot_deringing: c.overshoot_deringing,
+            smoothing: c.smoothing,
+            restart_interval: c.restart_interval,
+            restart_in_rows: c.restart_in_rows,
+            quant_table_idx: c.quant_table_idx,
+            has_custom_qtables: c.has_custom_qtables,
+            exif_data: c.exif_data,
+            xmp_data: c.xmp_data,
+            icc_profile: c.icc_profile,
+            custom_markers: c.custom_markers,
+        }
+    }
+
     /// Configure a C mozjpeg `jpeg_compress_struct` with these settings.
     ///
     /// # Safety
@@ -535,8 +561,8 @@ impl CMozjpeg {
     /// let cb = vec![128u8; (width / 2) * (height / 2)];
     /// let cr = vec![128u8; (width / 2) * (height / 2)];
     ///
-    /// let jpeg = Encoder::new(Preset::BaselineBalanced)
-    ///     .to_c_mozjpeg()
+    /// let encoder = Encoder::new(Preset::BaselineBalanced);
+    /// let jpeg = sys_config::CMozjpeg::from_encoder(&encoder)
     ///     .encode_ycbcr_planar(&y, &cb, &cr, width as u32, height as u32)?;
     /// # Ok::<(), mozjpeg_rs::Error>(())
     /// ```
@@ -787,7 +813,19 @@ impl CMozjpeg {
 
 #[cfg(test)]
 mod tests {
-    use crate::{Encoder, Preset};
+    use super::CMozjpeg;
+    use mozjpeg_rs::{Encoder, Preset};
+
+    /// Test-only sugar for `CMozjpeg::from_encoder(&enc)`, mirroring the
+    /// old inherent `Encoder::to_c_mozjpeg()` so these tests read unchanged.
+    trait ToCMozjpeg {
+        fn to_c_mozjpeg(&self) -> CMozjpeg;
+    }
+    impl ToCMozjpeg for Encoder {
+        fn to_c_mozjpeg(&self) -> CMozjpeg {
+            CMozjpeg::from_encoder(self)
+        }
+    }
 
     #[test]
     fn test_c_mozjpeg_encode_rgb() {
@@ -821,7 +859,7 @@ mod tests {
     /// rejects by exiting the process.
     #[test]
     fn test_c_mozjpeg_gray_subsampling_rgb_input() {
-        use crate::{PixelDensity, Subsampling, TrellisConfig};
+        use mozjpeg_rs::{PixelDensity, Subsampling, TrellisConfig};
 
         let pixels: Vec<u8> = (0..48 * 40 * 3).map(|i| (i * 7 % 251) as u8).collect();
         // No trellis/deringing: settings where Rust and C are byte-exact.
@@ -842,7 +880,7 @@ mod tests {
     /// `JpegColorSpace::Rgb` maps to `jpeg_set_colorspace(JCS_RGB)`.
     #[test]
     fn test_c_mozjpeg_rgb_color_space() {
-        use crate::{Error, JpegColorSpace, Subsampling, TrellisConfig};
+        use mozjpeg_rs::{Error, JpegColorSpace, Subsampling, TrellisConfig};
 
         let pixels: Vec<u8> = (0..48 * 40 * 3).map(|i| (i * 7 % 251) as u8).collect();
         for progressive in [false, true] {
@@ -899,7 +937,7 @@ mod tests {
 
     #[test]
     fn test_c_mozjpeg_encode_ycbcr_planar_420() {
-        use crate::Subsampling;
+        use mozjpeg_rs::Subsampling;
 
         let width = 64usize;
         let height = 64usize;
@@ -929,7 +967,7 @@ mod tests {
 
     #[test]
     fn test_c_mozjpeg_encode_ycbcr_planar_444() {
-        use crate::Subsampling;
+        use mozjpeg_rs::Subsampling;
 
         let width = 64usize;
         let height = 64usize;

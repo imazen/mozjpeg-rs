@@ -6,7 +6,7 @@
 # impls omitted; re-export duplicates annotated `[also: path]`.
 # DO NOT EDIT BY HAND — commit regenerated changes with the code.
 #
-# files: mozjpeg-rs.txt 265 lines (supported surface) | mozjpeg-rs.features.txt 49 added (features: fast-yuv,imgref,mozjpeg-sys-config,png,simd,simd-intrinsics,zencodec) | mozjpeg-rs.internal.txt 383 lines (549 hidden + 0 excluded-feature)
+# files: mozjpeg-rs.txt 265 lines (supported surface) | mozjpeg-rs.features.txt 17 added (features: fast-yuv,imgref,png,simd,simd-intrinsics,zencodec) | mozjpeg-rs.internal.txt 404 lines (571 hidden + 0 excluded-feature)
 
 ## summary
 #

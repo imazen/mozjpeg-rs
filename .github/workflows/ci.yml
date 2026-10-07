@@ -97,12 +97,11 @@ jobs:
       - name: Run preset parity tests (vs mozjpeg crate)
         run: cargo test --test preset_parity
 
-      - name: Run mozjpeg-sys-config tests
-        # Filter is `compat::tests`, the module path. `compat_tests` (the old
-        # value) matched no test name, so this step passed without running
-        # anything. It covers compat::tests::test_c_mozjpeg_encode_rgb /
-        # _grayscale / _ycbcr_planar_444 / _ycbcr_planar_420 / test_rust_vs_c_parity.
-        run: cargo test --features mozjpeg-sys-config compat::tests
+      - name: Run C mozjpeg differential tests (crates/sys-config)
+        # The C-compat layer moved out of the published crate into the
+        # unpublished `sys-config` workspace crate. It builds vendored C via
+        # mozjpeg-sys (cmake/nasm), same as this job's earlier FFI steps.
+        run: cargo test -p sys-config
 
       - name: Run decoder round-trip validation
         run: cargo run --release --example decoder_roundtrip
@@ -221,8 +220,7 @@ jobs:
 
       - name: Build documentation
         # Exclude sys-local (requires local mozjpeg C source). Build with the
-        # feature-gated surfaces docs.rs shows so their rustdoc is checked too
-        # (mozjpeg-sys-config stays out — its C build needs cmake/nasm).
+        # feature-gated surfaces docs.rs shows so their rustdoc is checked too.
         run: cargo doc -p mozjpeg-rs --no-deps --features "zencodec simd-intrinsics png"
         env:
           RUSTDOCFLAGS: -D warnings
