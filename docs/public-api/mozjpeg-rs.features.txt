@@ -11,7 +11,7 @@
 #
 #   pub modules                                 2
 #   pub types (struct/enum/trait/alias)        12
-#   inherent methods                           13
+#   inherent methods                           15
 #   struct fields                               8
 #   enum variants                               8
 #   trait roster entries (type × trait)        17
@@ -20,13 +20,14 @@
 #
 # per-module pub lines:
 #   (root)                           18
-#   codec                             7
+#   codec                             9
 #   compat                           18
 
-## items (37 lines)
+## items (39 lines)
 
 pub mod codec
 pub fn codec::MozjpegEncoderConfig::new() -> Self
+pub fn codec::MozjpegEncoderConfig::with_color_space(self, JpegColorSpace) -> Self
 pub fn codec::MozjpegEncoderConfig::with_subsampling(self, Subsampling) -> Self
 pub mod compat
 pub compat::ConfigError::CustomQuantTablesNotSupported
@@ -61,6 +62,7 @@ pub struct MozjpegEncodeJob [also: codec]
 pub struct MozjpegEncoder [also: codec]
 pub struct MozjpegEncoderConfig [also: codec]
 pub fn codec::MozjpegEncoderConfig::new() -> Self
+pub fn codec::MozjpegEncoderConfig::with_color_space(self, JpegColorSpace) -> Self
 pub fn codec::MozjpegEncoderConfig::with_subsampling(self, Subsampling) -> Self
 
 ## trait impls (7 types)
