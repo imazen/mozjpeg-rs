@@ -3463,8 +3463,13 @@ impl Encoder {
 
         // DHT (Huffman tables) - written here for non-optimized modes,
         // or later after frequency counting for optimized modes.
-        // Exact trellis writes its C slot tables in the buffered arms below.
-        if !self.optimize_huffman && !self.use_exact_trellis() {
+        // Exact trellis writes its C slot tables in the buffered arms below,
+        // and exact-mode baseline always takes the buffered arm (for C's
+        // dummy-block synthesis), which writes its own DHT and DRI.
+        if !self.optimize_huffman
+            && !self.use_exact_trellis()
+            && !(self.exact_mode() && !self.progressive)
+        {
             if rgb {
                 marker_writer
                     .write_dht_multiple(&[(0, false, &dc_luma_huff), (0, true, &ac_luma_huff)])?;
@@ -3484,11 +3489,6 @@ impl Encoder {
                     (0, true, &ac_luma_huff),
                     (1, true, &ac_chroma_huff),
                 ])?;
-            }
-            // Direct path under exact emission semantics: C puts DRI after
-            // the DHT, right before SOS. Progressive arms emit per-scan.
-            if baseline_restart > 0 && self.exact_mode() && !self.progressive {
-                marker_writer.write_dri(baseline_restart as u16)?;
             }
         }
 
@@ -3742,6 +3742,9 @@ impl Encoder {
             let (scans, scan_dri_flags) = if self.optimize_scans {
                 // When optimize_scans is enabled, use the scan optimizer to find
                 // the best frequency split and Al levels, including SA refinement.
+                // DIVERGENCE from C (see DIVERGENCES.md): C searches only for
+                // YCbCr; under JCS_RGB it ignores optimize_scans and uses the
+                // all-purpose script. RGB here runs the search too.
                 self.optimize_progressive_scans(
                     3, // num_components
                     &y_blocks,

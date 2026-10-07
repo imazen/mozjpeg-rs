@@ -185,7 +185,10 @@ jobs:
         run: |
           cd ../mozjpeg
           mkdir -p build && cd build
-          cmake -DCMAKE_BUILD_TYPE=Release -DENABLE_SHARED=OFF -DENABLE_STATIC=ON -DCMAKE_POSITION_INDEPENDENT_CODE=ON ..
+          # The fork's CMake takes BUILD_SHARED_LIBS; ENABLE_SHARED/ENABLE_STATIC
+          # are ignored, and without static libs there is no cjpeg-static or
+          # libjpeg.a, so exact_trellis_parity skips every test.
+          cmake -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF -DENABLE_SHARED=OFF -DENABLE_STATIC=ON -DCMAKE_POSITION_INDEPENDENT_CODE=ON ..
           make -j$(nproc)
 
       - name: Install Rust
@@ -202,7 +205,9 @@ jobs:
           cargo test --test chroma_quality_test
 
       - name: Run byte-exact parity suite vs C oracle
-        run: cargo test --test exact_trellis_parity
+        run: |
+          test -x ../mozjpeg/build/cjpeg-static && test -f ../mozjpeg/build/libjpeg.a
+          cargo test --test exact_trellis_parity
 
   # Documentation build
   docs:

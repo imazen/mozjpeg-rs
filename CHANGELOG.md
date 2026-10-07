@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`DIVERGENCES.md`**: every known difference from C mozjpeg output: what
+  is byte-identical and which test pins it, C bugs fixed rather than
+  reproduced, and by-design differences (default JFIF density, progressive
+  with standard tables, `optimize_scans` under RGB, `Optimized`-mode edge
+  padding and smoothing, speed level vs upstream, presets).
+
 - **`JpegColorSpace` / `Encoder::color_space`** — store RGB/RGBA input
   without a color transform (`JpegColorSpace::Rgb`), for data whose
   channels are independent measurements (e.g. microscopy stain channels)
@@ -73,6 +79,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   return. The module remains `#[doc(hidden)]` unstable tooling surface.
 
 ### Fixed
+
+- **Undecodable files from `MozjpegExact` trellis with
+  `optimize_huffman(false)`** (a C mozjpeg bug the exact mode reproduced):
+  C emits Huffman tables gathered from component 0's single-component
+  trellis scans, which can lack codes the real interleaved scan needs
+  (4:2:0 dummy blocks and MCU-order DC deltas, or G/B sharing R's slot in
+  RGB). C then writes zero-length codes, e.g. at 37×29 4:2:0. mozjpeg-rs now
+  replaces such a table with the optimal table for the real scan, and stays
+  byte-identical to C wherever C's file is valid. Documented in the new
+  `DIVERGENCES.md`.
+- **Duplicate DHT/DRI in `MozjpegExact` baseline with the trellis off and
+  standard tables**: the color path wrote the Huffman tables (and restart
+  interval) twice. It is now byte-identical to C's `-notrellis` output.
+- **CI's byte-exact oracle suite never ran**: the imazen/mozjpeg fork's CMake
+  takes `BUILD_SHARED_LIBS`, not `ENABLE_SHARED`/`ENABLE_STATIC`, so
+  `cjpeg-static` and `libjpeg.a` were never built and every
+  `exact_trellis_parity` test took its skip path. CI now builds them
+  statically and fails if they're missing.
 
 - **`Subsampling::Gray` with color input** (#9): `encode_rgb`,
   `encode_rgba` and their variants panicked with "index out of bounds" in

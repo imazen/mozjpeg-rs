@@ -407,7 +407,10 @@ All SIMD code uses safe Rust intrinsics via archmage and safe_unaligned_simd —
 
 ## Differences from C mozjpeg
 
-mozjpeg-rs aims for compatibility with C mozjpeg but has some differences:
+mozjpeg-rs aims for compatibility with C mozjpeg but has some differences.
+[DIVERGENCES.md](DIVERGENCES.md) is the full list: what is byte-identical
+(and which test pins it), which C bugs are fixed rather than reproduced,
+and every by-design difference.
 
 | Feature | mozjpeg-rs | C mozjpeg |
 |---------|---------------|-----------|

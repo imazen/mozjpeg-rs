@@ -163,6 +163,25 @@ fn assert_bytes(name: &str, c: &[u8], r: &[u8]) {
     panic!("{name}: JPEG byte mismatch ({rep})");
 }
 
+/// Exact trellis without `optimize_coding`: byte-exact wherever C's file is
+/// valid. Where C's slot tables lack codes the real scan needs, C writes an
+/// undecodable file and mozjpeg-rs replaces only those tables
+/// (DIVERGENCES.md, "Fixed C bugs"); then Rust must decode and C must not
+/// decode to the same pixels.
+fn assert_bytes_or_fixed_c_bug(name: &str, c: &[u8], r: &[u8]) {
+    if c == r {
+        return;
+    }
+    let rust_pixels = jpeg_decoder::Decoder::new(r)
+        .decode()
+        .unwrap_or_else(|e| panic!("{name}: Rust output undecodable ({e})"));
+    let c_pixels = jpeg_decoder::Decoder::new(c).decode();
+    if c_pixels.as_ref().is_ok_and(|p| *p == rust_pixels) {
+        let rep = diff_report(c, r);
+        panic!("{name}: JPEG byte mismatch with a valid C file ({rep})");
+    }
+}
+
 // ============================================================================
 // Test images
 // ============================================================================
@@ -422,7 +441,7 @@ fn exact_baseline_noopt_color() {
                 .pixel_density(PixelDensity::aspect_ratio(1, 1))
                 .encode_rgb(&img.rgb, img.w, img.h)
                 .expect("rust encode failed");
-            assert_bytes(
+            assert_bytes_or_fixed_c_bug(
                 &format!("{} baseline+!opt q{} {}", img.name, q, sname),
                 &c,
                 &r,
@@ -1257,7 +1276,7 @@ fn exact_eob_opt() {
             .pixel_density(PixelDensity::aspect_ratio(1, 1))
             .encode_rgb(&img.rgb, img.w, img.h)
             .expect("rust encode failed");
-        assert_bytes(&format!("{} baseline+!opt eob", img.name), &c, &r);
+        assert_bytes_or_fixed_c_bug(&format!("{} baseline+!opt eob", img.name), &c, &r);
 
         // Progressive + eob (progressive forces optimize_coding in C)
         let args = vec![

@@ -28,6 +28,13 @@ If tests fail, find and fix the bug. Never:
 - Skip failing tests
 - Mark tests as `#[ignore]` to make CI green
 
+### Divergences from C go in DIVERGENCES.md
+
+Any intended difference from C mozjpeg output (including C bugs we fix rather
+than reproduce) gets an entry in `DIVERGENCES.md`, a
+`DIVERGENCE from C (see DIVERGENCES.md)` comment at the code site, and a test
+that pins it. A difference that isn't listed there is a parity bug.
+
 ### Resolved Issues
 
 **AC refinement correction bits tracking (FIXED Jan 2025):**
