@@ -811,13 +811,8 @@ impl QuantTable {
         let mut values = [0u16; DCTSIZE2];
         for i in 0..DCTSIZE2 {
             let mut temp = ((base[i] as u32) * scale_factor + 50) / 100;
-            // Clamp to valid range
-            if temp == 0 {
-                temp = 1;
-            }
-            if temp > 32767 {
-                temp = 32767;
-            }
+            // Clamp to the valid DQT range (1..=32767).
+            temp = temp.clamp(1, 32767);
             if force_baseline && temp > 255 {
                 temp = 255;
             }

@@ -187,8 +187,12 @@ jobs:
           # The fork's CMake takes BUILD_SHARED_LIBS; ENABLE_SHARED/ENABLE_STATIC
           # are ignored, and without static libs there is no cjpeg-static or
           # libjpeg.a, so exact_trellis_parity skips every test.
-          cmake -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF -DENABLE_SHARED=OFF -DENABLE_STATIC=ON -DCMAKE_POSITION_INDEPENDENT_CODE=ON ..
-          make -j$(nproc)
+          cmake -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF -DCMAKE_POSITION_INDEPENDENT_CODE=ON ..
+          # Build only what the oracle needs. A full `make` also builds
+          # djpeg-static, which fails to statically link libpng ("undefined
+          # reference to pow") when libpng-dev is installed — unrelated to the
+          # oracle, but it would fail the step.
+          make -j$(nproc) jpeg-static cjpeg-static
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable

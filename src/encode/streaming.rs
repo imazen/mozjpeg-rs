@@ -827,7 +827,8 @@ impl<W: Write> EncodingStream<W> {
                 let buffer_offset = self.lines_in_buffer as usize * self.width as usize;
                 let dst = &mut self.scanline_buffer
                     [buffer_offset..buffer_offset + lines_to_copy * self.width as usize];
-                for (g, px) in dst.iter_mut().zip(src.chunks_exact(3)) {
+                let (rgb_px, _) = src.as_chunks::<3>();
+                for (g, px) in dst.iter_mut().zip(rgb_px) {
                     *g = crate::color::rgb_to_gray(px[0], px[1], px[2]);
                 }
             }
