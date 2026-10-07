@@ -96,7 +96,7 @@ Reproduce with: `cargo run --release --example cid22_bench`
 ## Usage
 
 ```rust
-use mozjpeg_rs::{Encoder, Subsampling};
+use mozjpeg_rs::{Encoder, JpegColorSpace, Subsampling};
 
 // Signatures:
 //   fn quality(self, quality: u8) -> Encoder         // 1–100, higher = better quality (clamped)
@@ -137,6 +137,18 @@ let jpeg = Encoder::default()
 let jpeg = Encoder::default()
     .quality(85)
     .encode_rgba(&rgba_pixels, width, height)?;
+
+// Grayscale JPEG from color input (encodes the luma)
+let jpeg = Encoder::default()
+    .subsampling(Subsampling::Gray)
+    .encode_rgb(&pixels, width, height)?;
+
+// Keep R, G, B independent: no YCbCr transform, no subsampling
+// (e.g. microscopy stain channels). Larger files; libjpeg's JCS_RGB layout.
+let jpeg = Encoder::default()
+    .quality(90)
+    .color_space(JpegColorSpace::Rgb)
+    .encode_rgb(&pixels, width, height)?;
 
 // For BGRA input, swizzle to RGBA first with the `garb` crate:
 //   garb::bytes::bgra_to_rgba_inplace(&mut bgra_buf).unwrap();
@@ -328,7 +340,8 @@ All combinations of settings are supported and tested:
 | └─ optimize_scans | ❌ | ✅ | Per-scan Huffman tables |
 | **Other** | | | |
 | ├─ Deringing | ✅ | ✅ | Reduce overshoot artifacts |
-| ├─ Grayscale | ✅ | ✅ | Single-component encoding |
+| ├─ Grayscale | ✅ | ✅ | Single-component encoding (gray input, or color input with `Subsampling::Gray`) |
+| ├─ RGB color space | ✅ | ✅ | `JpegColorSpace::Rgb`: channels stored untransformed, 4:4:4 |
 | ├─ EOB optimization | ✅ | ✅ | Cross-block EOB runs (opt-in) |
 | └─ Smoothing | ✅ | ✅ | Noise reduction filter (for dithered images) |
 
@@ -394,7 +407,10 @@ All SIMD code uses safe Rust intrinsics via archmage and safe_unaligned_simd —
 
 ## Differences from C mozjpeg
 
-mozjpeg-rs aims for compatibility with C mozjpeg but has some differences:
+mozjpeg-rs aims for compatibility with C mozjpeg but has some differences.
+[DIVERGENCES.md](DIVERGENCES.md) is the full list: what is byte-identical
+(and which test pins it), which C bugs are fixed rather than reproduced,
+and every by-design difference.
 
 | Feature | mozjpeg-rs | C mozjpeg |
 |---------|---------------|-----------|

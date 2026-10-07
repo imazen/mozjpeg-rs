@@ -323,3 +323,328 @@ fn calculate_psnr(img1: &[u8], img2: &[u8]) -> f64 {
 
     10.0 * (255.0 * 255.0 / mse).log10()
 }
+
+// ============================================================================
+// Output color spaces vs C mozjpeg: RGB -> GRAYSCALE (#9) and JCS_RGB (#10)
+// ============================================================================
+
+/// C-side output color space for [`encode_c_colorspace`].
+#[derive(Clone, Copy, Debug)]
+enum COut {
+    /// `jpeg_set_colorspace(JCS_GRAYSCALE)` with RGB input (`rgb_gray_convert`)
+    Gray,
+    /// `jpeg_set_colorspace(JCS_RGB)`: no color transform, Adobe marker
+    Rgb,
+    /// The YCbCr default with 2x2 luma sampling
+    Ycc420,
+    /// The YCbCr default with 1x1 luma sampling
+    Ycc444,
+}
+
+/// Encoder settings shared by both sides of a color-space parity check.
+#[derive(Clone, Copy, Debug)]
+struct ColorSpaceCase {
+    progressive: bool,
+    optimize_coding: bool,
+    /// `TrellisMode::MozjpegExact` trellis (AC + DC) when set; none otherwise
+    exact_trellis: bool,
+    /// `TrellisMode::MozjpegExact` emission even with the trellis off (C's
+    /// `-notrellis`); implied by `exact_trellis`
+    exact_emission: bool,
+    /// Restart interval in MCUs (0 = none)
+    restart: u16,
+}
+
+const COLOR_SPACE_CASES: [ColorSpaceCase; 5] = [
+    ColorSpaceCase {
+        progressive: false,
+        optimize_coding: false,
+        exact_trellis: false,
+        exact_emission: false,
+        restart: 0,
+    },
+    ColorSpaceCase {
+        progressive: false,
+        optimize_coding: true,
+        exact_trellis: false,
+        exact_emission: false,
+        restart: 0,
+    },
+    ColorSpaceCase {
+        progressive: true,
+        optimize_coding: true,
+        exact_trellis: false,
+        exact_emission: false,
+        restart: 0,
+    },
+    ColorSpaceCase {
+        progressive: false,
+        optimize_coding: true,
+        exact_trellis: true,
+        exact_emission: true,
+        restart: 0,
+    },
+    ColorSpaceCase {
+        progressive: true,
+        optimize_coding: true,
+        exact_trellis: true,
+        exact_emission: true,
+        restart: 0,
+    },
+];
+
+/// Encode RGB input with C mozjpeg (crates.io mozjpeg-sys, upstream mozjpeg)
+/// into the given output color space.
+unsafe fn encode_c_colorspace(
+    rgb: &[u8],
+    width: u32,
+    height: u32,
+    quality: u8,
+    out: COut,
+    case: ColorSpaceCase,
+) -> Vec<u8> {
+    use mozjpeg_sys::*;
+
+    let mut outbuffer: *mut u8 = std::ptr::null_mut();
+    let mut outsize: std::ffi::c_ulong = 0;
+    let mut cinfo = std::mem::zeroed::<jpeg_compress_struct>();
+    let mut jerr = std::mem::zeroed::<jpeg_error_mgr>();
+    cinfo.common.err = jpeg_std_error(&mut jerr);
+    jpeg_CreateCompress(
+        &mut cinfo,
+        JPEG_LIB_VERSION as i32,
+        std::mem::size_of::<jpeg_compress_struct>(),
+    );
+    jpeg_mem_dest(&mut cinfo, &mut outbuffer, &mut outsize);
+
+    cinfo.image_width = width;
+    cinfo.image_height = height;
+    cinfo.input_components = 3;
+    cinfo.in_color_space = J_COLOR_SPACE::JCS_RGB;
+    jpeg_set_defaults(&mut cinfo);
+    // optimize_scans must be off before jpeg_simple_progression
+    jpeg_c_set_bool_param(&mut cinfo, J_BOOLEAN_PARAM::JBOOLEAN_OPTIMIZE_SCANS, 0);
+    jpeg_set_quality(&mut cinfo, quality as i32, 1);
+    match out {
+        COut::Gray => jpeg_set_colorspace(&mut cinfo, J_COLOR_SPACE::JCS_GRAYSCALE),
+        COut::Rgb => jpeg_set_colorspace(&mut cinfo, J_COLOR_SPACE::JCS_RGB),
+        COut::Ycc420 => {
+            (*cinfo.comp_info).h_samp_factor = 2;
+            (*cinfo.comp_info).v_samp_factor = 2;
+        }
+        COut::Ycc444 => {
+            (*cinfo.comp_info).h_samp_factor = 1;
+            (*cinfo.comp_info).v_samp_factor = 1;
+        }
+    }
+    cinfo.optimize_coding = case.optimize_coding as i32;
+    cinfo.restart_interval = case.restart as _;
+    // After jpeg_set_colorspace: the script depends on jpeg_color_space
+    if case.progressive {
+        jpeg_simple_progression(&mut cinfo);
+    } else {
+        cinfo.num_scans = 0;
+        cinfo.scan_info = std::ptr::null();
+    }
+    let trellis = case.exact_trellis as i32;
+    jpeg_c_set_bool_param(&mut cinfo, J_BOOLEAN_PARAM::JBOOLEAN_TRELLIS_QUANT, trellis);
+    jpeg_c_set_bool_param(
+        &mut cinfo,
+        J_BOOLEAN_PARAM::JBOOLEAN_TRELLIS_QUANT_DC,
+        trellis,
+    );
+    jpeg_c_set_bool_param(&mut cinfo, J_BOOLEAN_PARAM::JBOOLEAN_OVERSHOOT_DERINGING, 0);
+
+    jpeg_start_compress(&mut cinfo, 1);
+    let row_stride = width as usize * 3;
+    while cinfo.next_scanline < cinfo.image_height {
+        let row_ptr = rgb.as_ptr().add(cinfo.next_scanline as usize * row_stride);
+        jpeg_write_scanlines(&mut cinfo, &row_ptr as *const *const u8, 1);
+    }
+    jpeg_finish_compress(&mut cinfo);
+    jpeg_destroy_compress(&mut cinfo);
+
+    let result = std::slice::from_raw_parts(outbuffer, outsize as usize).to_vec();
+    libc::free(outbuffer as *mut std::ffi::c_void);
+    result
+}
+
+/// The Rust encoder configured like [`encode_c_colorspace`].
+fn rust_colorspace_encoder(quality: u8, out: COut, case: ColorSpaceCase) -> mozjpeg_rs::Encoder {
+    use mozjpeg_rs::{
+        Encoder, JpegColorSpace, PixelDensity, Subsampling, TrellisConfig, TrellisMode,
+    };
+
+    // Upstream mozjpeg (what mozjpeg-sys vendors) has no
+    // trellis_speed_level: speed level 0 is its unlimited search.
+    let exact = TrellisMode::MozjpegExact { speed_level: 0 };
+    let trellis = if case.exact_trellis {
+        TrellisConfig::default().mode(exact)
+    } else if case.exact_emission {
+        TrellisConfig::disabled().mode(exact)
+    } else {
+        TrellisConfig::disabled()
+    };
+    let encoder = Encoder::baseline_optimized()
+        .quality(quality)
+        .progressive(case.progressive)
+        .optimize_huffman(case.optimize_coding)
+        .optimize_scans(false)
+        .trellis(trellis)
+        .overshoot_deringing(false)
+        .force_baseline(true)
+        .restart_interval(case.restart)
+        // C's JFIF default (aspect ratio 1:1); RGB writes no JFIF at all
+        .pixel_density(PixelDensity::aspect_ratio(1, 1));
+    match out {
+        COut::Gray => encoder.subsampling(Subsampling::Gray),
+        COut::Rgb => encoder.color_space(JpegColorSpace::Rgb),
+        COut::Ycc420 => encoder.subsampling(Subsampling::S420),
+        COut::Ycc444 => encoder.subsampling(Subsampling::S444),
+    }
+}
+
+/// Deterministic test image: gradients, a full-range sawtooth and noise, so
+/// each channel carries different content (and high-entropy blocks).
+fn colorspace_test_image(width: u32, height: u32) -> Vec<u8> {
+    let (w, h) = (width as usize, height as usize);
+    let mut state = 0x9e37_79b9u32;
+    let mut rgb = Vec::with_capacity(w * h * 3);
+    for y in 0..h {
+        for x in 0..w {
+            state ^= state << 13;
+            state ^= state >> 17;
+            state ^= state << 5;
+            rgb.push(((x * 255 / w) as u8).wrapping_add((state & 15) as u8));
+            rgb.push((y * 255 / h) as u8);
+            rgb.push(((x + y) * 3 % 256) as u8);
+        }
+    }
+    rgb
+}
+
+fn assert_colorspace_parity_with_c(out: COut) {
+    for &(width, height) in &[(37u32, 29u32), (64, 48), (96, 80)] {
+        let rgb = colorspace_test_image(width, height);
+        for quality in [50u8, 85, 95] {
+            for case in COLOR_SPACE_CASES {
+                let rust = rust_colorspace_encoder(quality, out, case)
+                    .encode_rgb(&rgb, width, height)
+                    .unwrap();
+                let c = unsafe { encode_c_colorspace(&rgb, width, height, quality, out, case) };
+                assert!(
+                    rust == c,
+                    "{out:?} {width}x{height} Q{quality} {case:?}: Rust {} bytes != C {} bytes",
+                    rust.len(),
+                    c.len()
+                );
+            }
+        }
+    }
+}
+
+/// `Subsampling::Gray` with RGB input is C's RGB -> JCS_GRAYSCALE encode,
+/// byte for byte (GitHub #9: this used to panic or emit a corrupt file).
+#[test]
+fn test_gray_from_rgb_matches_c_grayscale() {
+    assert_colorspace_parity_with_c(COut::Gray);
+}
+
+/// `JpegColorSpace::Rgb` is C's `jpeg_set_colorspace(JCS_RGB)` byte for
+/// byte: markers, shared tables, the all-purpose progressive script and the
+/// exact trellis passes (GitHub #10).
+#[test]
+fn test_rgb_color_space_matches_c_jcs_rgb() {
+    assert_colorspace_parity_with_c(COut::Rgb);
+}
+
+/// `TrellisMode::MozjpegExact` with the trellis off and standard Huffman
+/// tables (C's `-notrellis` without `optimize_coding`) is byte-identical to
+/// C. The color baseline path used to write the DHT (and DRI) twice: once
+/// in the up-front header block and again in the buffered exact-mode arm.
+#[test]
+fn test_exact_mode_notrellis_standard_tables_match_c() {
+    let case = |restart| ColorSpaceCase {
+        progressive: false,
+        optimize_coding: false,
+        exact_trellis: false,
+        exact_emission: true,
+        restart,
+    };
+    for out in [COut::Ycc420, COut::Ycc444, COut::Rgb, COut::Gray] {
+        for &(width, height) in &[(37u32, 29u32), (64, 48)] {
+            let rgb = colorspace_test_image(width, height);
+            for quality in [75u8, 90] {
+                for restart in [0u16, 3] {
+                    let rust = rust_colorspace_encoder(quality, out, case(restart))
+                        .encode_rgb(&rgb, width, height)
+                        .unwrap();
+                    let c = unsafe {
+                        encode_c_colorspace(&rgb, width, height, quality, out, case(restart))
+                    };
+                    assert!(
+                        rust == c,
+                        "{out:?} {width}x{height} Q{quality} restart={restart}: \
+                         Rust {} bytes != C {} bytes",
+                        rust.len(),
+                        c.len()
+                    );
+                }
+            }
+        }
+    }
+}
+
+/// Exact trellis without `optimize_coding`: C emits Huffman tables gathered
+/// from component 0's single-component trellis scans, which can lack codes
+/// the real interleaved scan needs (dummy blocks and MCU-order DC deltas
+/// under 4:2:0; G and B sharing R's slot under JCS_RGB). C then writes an
+/// undecodable file. Rust replaces such a table with one that covers the
+/// scan (DIVERGENCES.md), and must otherwise stay byte-identical to C.
+#[test]
+fn test_exact_trellis_standard_tables_always_decodable() {
+    let case = |restart| ColorSpaceCase {
+        progressive: false,
+        optimize_coding: false,
+        exact_trellis: true,
+        exact_emission: true,
+        restart,
+    };
+    let (mut identical, mut c_broken) = (0, 0);
+    for out in [COut::Ycc420, COut::Ycc444, COut::Rgb, COut::Gray] {
+        for &(width, height) in &[(13u32, 7u32), (37, 29), (64, 48), (96, 80)] {
+            let rgb = colorspace_test_image(width, height);
+            for quality in [50u8, 85, 95] {
+                for restart in [0u16, 5] {
+                    let ctx = format!("{out:?} {width}x{height} Q{quality} restart={restart}");
+                    let rust = rust_colorspace_encoder(quality, out, case(restart))
+                        .encode_rgb(&rgb, width, height)
+                        .unwrap();
+                    let c = unsafe {
+                        encode_c_colorspace(&rgb, width, height, quality, out, case(restart))
+                    };
+                    let rust_pixels = jpeg_decoder::Decoder::new(&rust[..])
+                        .decode()
+                        .unwrap_or_else(|e| panic!("{ctx}: Rust output undecodable: {e}"));
+                    if rust == c {
+                        identical += 1;
+                        continue;
+                    }
+                    // Only the tables may differ, so a correct decode of C's
+                    // file would equal Rust's. C's must fail or decode wrong.
+                    let c_pixels = jpeg_decoder::Decoder::new(&c[..]).decode();
+                    assert!(
+                        c_pixels.as_ref().map_or(true, |p| *p != rust_pixels),
+                        "{ctx}: Rust differs from a C file that decodes correctly"
+                    );
+                    c_broken += 1;
+                }
+            }
+        }
+    }
+    // Both outcomes must be exercised for the test to mean anything.
+    assert!(
+        identical > 0 && c_broken > 0,
+        "identical={identical} c_broken={c_broken}"
+    );
+}

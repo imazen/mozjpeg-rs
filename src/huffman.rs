@@ -361,6 +361,14 @@ impl FrequencyCounter {
         self.counts[symbol as usize] += 1;
     }
 
+    /// Add another counter's frequencies to this one, so components that
+    /// share a table slot get a table built from their joint statistics.
+    pub fn merge(&mut self, other: &FrequencyCounter) {
+        for (a, b) in self.counts.iter_mut().zip(other.counts.iter()) {
+            *a += *b;
+        }
+    }
+
     /// Generate an optimal Huffman table from the collected frequencies.
     pub fn generate_table(&mut self) -> Result<HuffTable> {
         generate_optimal_table(&mut self.counts)

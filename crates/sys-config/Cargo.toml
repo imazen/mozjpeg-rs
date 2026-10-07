@@ -1,0 +1,20 @@
+[package]
+name = "sys-config"
+version = "0.1.0"
+edition = "2024"
+description = "Configure and drive C mozjpeg (via mozjpeg-sys) from mozjpeg-rs Encoder settings, for differential testing"
+publish = false  # Internal test/dev infrastructure only — not part of the mozjpeg-rs public API
+
+[lib]
+# `compat` keeps the historical module path for anyone grepping; the crate is `sys-config`.
+name = "sys_config"
+
+[dependencies]
+# The pure-Rust encoder whose settings this layer mirrors into C mozjpeg.
+mozjpeg-rs = { path = "../.." }
+# C mozjpeg (vendored, built with cmake/nasm) — the reference implementation.
+mozjpeg-sys = "2.2.3"
+libc = "0.2.183"
+
+[dev-dependencies]
+jpeg-decoder = "0.3.2"

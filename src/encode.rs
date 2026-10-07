@@ -42,7 +42,10 @@ use crate::error::{Error, Result};
 use crate::huffman::DerivedTable;
 use crate::huffman::FrequencyCounter;
 use crate::marker::MarkerWriter;
-use crate::progressive::{generate_baseline_scan, generate_mozjpeg_max_compression_scans};
+use crate::progressive::{
+    generate_baseline_scan, generate_mozjpeg_max_compression_generic_scans,
+    generate_mozjpeg_max_compression_scans,
+};
 use crate::quant::{RecipQuantTable, create_quant_tables, quantize_block_recip};
 use crate::sample;
 use crate::scan_optimize::{ScanSearchConfig, ScanSelector, generate_search_scans};
@@ -55,16 +58,16 @@ use crate::trellis_exact::{
     ComponentGrid, ExactComponent, RestartSpec, StdHuffTables, fill_main_pass_dummies,
     run_exact_trellis,
 };
-use crate::types::{Limits, PixelDensity, Preset, Subsampling, TrellisConfig};
+use crate::types::{JpegColorSpace, Limits, PixelDensity, Preset, Subsampling, TrellisConfig};
 
 pub(crate) mod helpers;
 mod streaming;
 
 pub(crate) use helpers::{
-    create_components, create_std_ac_chroma_table, create_std_ac_luma_table,
+    MAX_DIMENSION, create_components, create_std_ac_chroma_table, create_std_ac_luma_table,
     create_std_dc_chroma_table, create_std_dc_luma_table, create_ycbcr_components,
-    natural_to_zigzag, run_dc_trellis_by_row, try_alloc_vec, try_alloc_vec_array, write_dht_marker,
-    write_sos_marker,
+    natural_to_zigzag, run_dc_trellis_by_row, try_alloc_vec, try_alloc_vec_array,
+    validate_dimensions, write_dht_marker, write_sos_marker,
 };
 pub use streaming::{EncodingStream, StreamingEncoder};
 
@@ -199,6 +202,8 @@ pub struct Encoder {
     progressive: bool,
     /// Chroma subsampling mode
     subsampling: Subsampling,
+    /// Color space color input is stored in (YCbCr or untransformed RGB)
+    color_space: JpegColorSpace,
     /// Quantization table variant
     quant_table_idx: QuantTableIdx,
     /// Custom luminance quantization table (overrides quant_table_idx if set)
@@ -363,6 +368,7 @@ impl Encoder {
             quality: 75,
             progressive: false,
             subsampling: Subsampling::S420,
+            color_space: JpegColorSpace::YCbCr,
             quant_table_idx: QuantTableIdx::ImageMagick,
             chroma_quality: None,
             custom_luma_qtable: None,
@@ -427,6 +433,7 @@ impl Encoder {
             quality: 75,
             progressive: true,
             subsampling: Subsampling::S420,
+            color_space: JpegColorSpace::YCbCr,
             quant_table_idx: QuantTableIdx::ImageMagick,
             chroma_quality: None,
             custom_luma_qtable: None,
@@ -492,6 +499,7 @@ impl Encoder {
             quality: 75,
             progressive: true,
             subsampling: Subsampling::S420,
+            color_space: JpegColorSpace::YCbCr,
             quant_table_idx: QuantTableIdx::ImageMagick,
             chroma_quality: None,
             custom_luma_qtable: None,
@@ -553,6 +561,7 @@ impl Encoder {
             quality: 75,
             progressive: false,
             subsampling: Subsampling::S420,
+            color_space: JpegColorSpace::YCbCr,
             quant_table_idx: QuantTableIdx::ImageMagick,
             chroma_quality: None,
             custom_luma_qtable: None,
@@ -628,6 +637,40 @@ impl Encoder {
     pub fn subsampling(mut self, mode: Subsampling) -> Self {
         self.subsampling = mode;
         self.subsampling_explicit = true;
+        self
+    }
+
+    /// Set the color space color input is stored in.
+    ///
+    /// [`JpegColorSpace::YCbCr`] (default) converts to YCbCr and applies
+    /// [`subsampling`](Self::subsampling). [`JpegColorSpace::Rgb`] stores
+    /// R, G and B without a color transform — always 4:4:4, every channel
+    /// quantized with the luma table — for data whose channels must stay
+    /// independent. In RGB mode the `subsampling` setting (other than
+    /// [`Subsampling::Gray`], which is rejected as contradictory),
+    /// `chroma_quality` and [`custom_chroma_qtable`](Self::custom_chroma_qtable)
+    /// have no effect.
+    ///
+    /// Applies to [`encode_rgb`](Self::encode_rgb),
+    /// [`encode_rgba`](Self::encode_rgba) and their variants. Grayscale input
+    /// is always encoded as grayscale, and the pre-converted
+    /// [`encode_ycbcr_planar`](Self::encode_ycbcr_planar) input cannot be
+    /// stored as RGB (encoding returns [`Error::UnsupportedFeature`]).
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use mozjpeg_rs::{Encoder, JpegColorSpace, Preset};
+    ///
+    /// let pixels = vec![0u8; 16 * 16 * 3];
+    /// let jpeg = Encoder::new(Preset::default())
+    ///     .quality(90)
+    ///     .color_space(JpegColorSpace::Rgb)
+    ///     .encode_rgb(&pixels, 16, 16)?;
+    /// # Ok::<(), mozjpeg_rs::Error>(())
+    /// ```
+    pub fn color_space(mut self, color_space: JpegColorSpace) -> Self {
+        self.color_space = color_space;
         self
     }
 
@@ -1096,8 +1139,13 @@ impl Encoder {
         let height = height as usize;
         let pixels = width * height;
 
-        // Calculate chroma dimensions based on subsampling
-        let (h_samp, v_samp) = self.subsampling.luma_factors();
+        // Calculate chroma dimensions based on subsampling (RGB output is
+        // always 4:4:4)
+        let (h_samp, v_samp) = if self.color_space == JpegColorSpace::Rgb {
+            (1, 1)
+        } else {
+            self.subsampling.luma_factors()
+        };
         let chroma_width = (width + h_samp as usize - 1) / h_samp as usize;
         let chroma_height = (height + v_samp as usize - 1) / v_samp as usize;
         let chroma_pixels = chroma_width * chroma_height;
@@ -1295,9 +1343,7 @@ impl Encoder {
     /// JPEG-encoded data as a `Vec<u8>`.
     pub fn encode_rgb(&self, rgb_data: &[u8], width: u32, height: u32) -> Result<Vec<u8>> {
         // Validate dimensions: must be non-zero
-        if width == 0 || height == 0 {
-            return Err(Error::InvalidDimensions { width, height });
-        }
+        validate_dimensions(width, height)?;
 
         // Check all resource limits
         self.check_limits(width, height, false)?;
@@ -1346,9 +1392,7 @@ impl Encoder {
     /// JPEG-encoded data as a `Vec<u8>`.
     pub fn encode_gray(&self, gray_data: &[u8], width: u32, height: u32) -> Result<Vec<u8>> {
         // Validate dimensions: must be non-zero
-        if width == 0 || height == 0 {
-            return Err(Error::InvalidDimensions { width, height });
-        }
+        validate_dimensions(width, height)?;
 
         // Check all resource limits
         self.check_limits(width, height, true)?;
@@ -1559,9 +1603,7 @@ impl Encoder {
         stop: &dyn enough::Stop,
     ) -> Result<Vec<u8>> {
         // Validate dimensions
-        if width == 0 || height == 0 {
-            return Err(Error::InvalidDimensions { width, height });
-        }
+        validate_dimensions(width, height)?;
 
         // Check all resource limits
         self.check_limits(width, height, false)?;
@@ -1628,9 +1670,7 @@ impl Encoder {
         stop: &dyn enough::Stop,
     ) -> Result<Vec<u8>> {
         // Validate dimensions
-        if width == 0 || height == 0 {
-            return Err(Error::InvalidDimensions { width, height });
-        }
+        validate_dimensions(width, height)?;
 
         // Check all resource limits
         self.check_limits(width, height, true)?;
@@ -1689,9 +1729,7 @@ impl Encoder {
     /// # Returns
     /// JPEG-encoded data as a `Vec<u8>`.
     pub fn encode_rgba(&self, rgba_data: &[u8], width: u32, height: u32) -> Result<Vec<u8>> {
-        if width == 0 || height == 0 {
-            return Err(Error::InvalidDimensions { width, height });
-        }
+        validate_dimensions(width, height)?;
         self.check_limits(width, height, false)?;
 
         let expected_len = (width as usize)
@@ -1721,9 +1759,7 @@ impl Encoder {
         height: u32,
         stop: &dyn enough::Stop,
     ) -> Result<Vec<u8>> {
-        if width == 0 || height == 0 {
-            return Err(Error::InvalidDimensions { width, height });
-        }
+        validate_dimensions(width, height)?;
         self.check_limits(width, height, false)?;
 
         let expected_len = (width as usize)
@@ -2529,12 +2565,14 @@ impl Encoder {
     /// - 4:4:4: chroma_width = width, chroma_height = height
     /// - 4:2:2: chroma_width = ceil(width/2), chroma_height = height
     /// - 4:2:0: chroma_width = ceil(width/2), chroma_height = ceil(height/2)
+    /// - [`Subsampling::Gray`]: only `y` is encoded; `cb` and `cr` are not read
     ///
     /// # Returns
     /// JPEG-encoded data as a `Vec<u8>`.
     ///
     /// # Errors
-    /// Returns an error if plane sizes don't match expected dimensions.
+    /// Returns an error if plane sizes don't match expected dimensions, or
+    /// [`Error::UnsupportedFeature`] with [`JpegColorSpace::Rgb`].
     pub fn encode_ycbcr_planar(
         &self,
         y: &[u8],
@@ -2619,6 +2657,7 @@ impl Encoder {
     /// - 4:4:4: chroma_width = width, chroma_height = height
     /// - 4:2:2: chroma_width = ceil(width/2), chroma_height = height
     /// - 4:2:0: chroma_width = ceil(width/2), chroma_height = ceil(height/2)
+    /// - [`Subsampling::Gray`]: only `y` is encoded; `cb` and `cr` are not read
     ///
     /// # Returns
     /// JPEG-encoded data as a `Vec<u8>`.
@@ -2627,6 +2666,7 @@ impl Encoder {
     /// Returns an error if:
     /// - Strides are less than the required width
     /// - Plane sizes don't match stride × height
+    /// - The encoder is set to [`JpegColorSpace::Rgb`] (planar input is YCbCr)
     #[allow(clippy::too_many_arguments)]
     pub fn encode_ycbcr_planar_strided(
         &self,
@@ -2670,16 +2710,11 @@ impl Encoder {
         height: u32,
         output: W,
     ) -> Result<()> {
+        // Validate dimensions (against the SOF 2-byte field limit) before
+        // widening to usize for the geometry math below.
+        validate_dimensions(width, height)?;
         let width = width as usize;
         let height = height as usize;
-
-        // Validate dimensions
-        if width == 0 || height == 0 {
-            return Err(Error::InvalidDimensions {
-                width: width as u32,
-                height: height as u32,
-            });
-        }
 
         // Validate Y stride
         if y_stride < width {
@@ -2687,6 +2722,47 @@ impl Encoder {
                 h: y_stride as u8,
                 v: width as u8,
             });
+        }
+
+        if self.color_space == JpegColorSpace::Rgb {
+            return Err(Error::UnsupportedFeature(
+                "planar input is YCbCr; JpegColorSpace::Rgb needs RGB input",
+            ));
+        }
+
+        // Grayscale output keeps only the luma plane (C mozjpeg's YCbCr ->
+        // JCS_GRAYSCALE `grayscale_convert`); `cb` and `cr` are not read.
+        if self.subsampling == Subsampling::Gray {
+            let y_size = y_stride
+                .checked_mul(height)
+                .ok_or(Error::InvalidDimensions {
+                    width: width as u32,
+                    height: height as u32,
+                })?;
+            if y.len() < y_size {
+                return Err(Error::BufferSizeMismatch {
+                    expected: y_size,
+                    actual: y.len(),
+                });
+            }
+            let packed;
+            let y_plane = if y_stride == width {
+                &y[..width * height]
+            } else {
+                let mut buf = try_alloc_vec(0u8, width * height)?;
+                for (dst, src) in buf.chunks_exact_mut(width).zip(y.chunks(y_stride)) {
+                    dst.copy_from_slice(&src[..width]);
+                }
+                packed = buf;
+                &packed[..]
+            };
+            return self.encode_gray_to_writer_impl(
+                y_plane,
+                width as u32,
+                height as u32,
+                output,
+                &enough::Unstoppable,
+            );
         }
 
         let (luma_h, luma_v) = self.subsampling.luma_factors();
@@ -2834,6 +2910,13 @@ impl Encoder {
             height: height as u32,
         })?;
 
+        if self.color_space == JpegColorSpace::Rgb {
+            return self.encode_color_as_rgb(rgb_data, 3, width, height, output, stop);
+        }
+        if self.subsampling == Subsampling::Gray {
+            return self.encode_color_as_gray(rgb_data, 3, width, height, output, stop);
+        }
+
         let mut y_plane = try_alloc_vec(0u8, num_pixels)?;
         let mut cb_plane = try_alloc_vec(0u8, num_pixels)?;
         let mut cr_plane = try_alloc_vec(0u8, num_pixels)?;
@@ -2892,6 +2975,13 @@ impl Encoder {
             height: height as u32,
         })?;
 
+        if self.color_space == JpegColorSpace::Rgb {
+            return self.encode_color_as_rgb(rgba_data, 4, width, height, output, stop);
+        }
+        if self.subsampling == Subsampling::Gray {
+            return self.encode_color_as_gray(rgba_data, 4, width, height, output, stop);
+        }
+
         let mut y_plane = try_alloc_vec(0u8, num_pixels)?;
         let mut cb_plane = try_alloc_vec(0u8, num_pixels)?;
         let mut cr_plane = try_alloc_vec(0u8, num_pixels)?;
@@ -2909,6 +2999,73 @@ impl Encoder {
         )
     }
 
+    /// [`Subsampling::Gray`] with color input: compute only the luma plane
+    /// (C mozjpeg's `rgb_gray_convert`, i.e. the exact Y of its YCbCr
+    /// conversion) and encode it as a single-component JPEG.
+    ///
+    /// `bytes_per_pixel` is 3 for RGB or 4 for RGBA/RGBX (the 4th byte is
+    /// ignored).
+    fn encode_color_as_gray<W: Write>(
+        &self,
+        pixels: &[u8],
+        bytes_per_pixel: usize,
+        width: usize,
+        height: usize,
+        output: W,
+        stop: &dyn enough::Stop,
+    ) -> Result<()> {
+        let num_pixels = width.checked_mul(height).ok_or(Error::InvalidDimensions {
+            width: width as u32,
+            height: height as u32,
+        })?;
+        let mut gray = try_alloc_vec(0u8, num_pixels)?;
+        if bytes_per_pixel == 3 {
+            crate::color::convert_rgb_to_gray(pixels, &mut gray, width, height);
+        } else {
+            for (g, px) in gray.iter_mut().zip(pixels.chunks_exact(bytes_per_pixel)) {
+                *g = crate::color::rgb_to_gray(px[0], px[1], px[2]);
+            }
+        }
+        self.encode_gray_to_writer_impl(&gray, width as u32, height as u32, output, stop)
+    }
+
+    /// [`JpegColorSpace::Rgb`]: split the channels into planes without any
+    /// color transform (C mozjpeg's `rgb_rgb_convert`) and run them through
+    /// the three-component pipeline in the Y/Cb/Cr slots.
+    ///
+    /// `bytes_per_pixel` is 3 for RGB or 4 for RGBA/RGBX (the 4th byte is
+    /// ignored).
+    fn encode_color_as_rgb<W: Write>(
+        &self,
+        pixels: &[u8],
+        bytes_per_pixel: usize,
+        width: usize,
+        height: usize,
+        output: W,
+        stop: &dyn enough::Stop,
+    ) -> Result<()> {
+        if self.subsampling == Subsampling::Gray {
+            return Err(Error::UnsupportedFeature(
+                "JpegColorSpace::Rgb cannot be combined with Subsampling::Gray",
+            ));
+        }
+        let num_pixels = width.checked_mul(height).ok_or(Error::InvalidDimensions {
+            width: width as u32,
+            height: height as u32,
+        })?;
+        let mut r_plane = try_alloc_vec(0u8, num_pixels)?;
+        let mut g_plane = try_alloc_vec(0u8, num_pixels)?;
+        let mut b_plane = try_alloc_vec(0u8, num_pixels)?;
+        for (i, px) in pixels.chunks_exact(bytes_per_pixel).enumerate() {
+            r_plane[i] = px[0];
+            g_plane[i] = px[1];
+            b_plane[i] = px[2];
+        }
+        self.encode_ycbcr_planes_to_writer(
+            &r_plane, &g_plane, &b_plane, width, height, output, stop,
+        )
+    }
+
     /// Internal helper: downsample, MCU-align, and encode Y/Cb/Cr planes.
     #[allow(clippy::too_many_arguments)]
     fn encode_ycbcr_planes_to_writer<W: Write>(
@@ -2922,8 +3079,14 @@ impl Encoder {
         stop: &dyn enough::Stop,
     ) -> Result<()> {
         // C's deferred `-quality` rule can override the sampling when no
-        // explicit `-sample` equivalent was given (exact mode only).
-        let sampling = self.c_sampling();
+        // explicit `-sample` equivalent was given (exact mode only). RGB
+        // output is never subsampled (`jpeg_set_colorspace(JCS_RGB)` sets
+        // 1x1 for every component).
+        let sampling = if self.color_space == JpegColorSpace::Rgb {
+            Subsampling::S444
+        } else {
+            self.c_sampling()
+        };
         let (luma_h, luma_v) = sampling.luma_factors();
         let (mut chroma_width, mut chroma_height) =
             sample::subsampled_dimensions(width, height, luma_h as usize, luma_v as usize);
@@ -3120,7 +3283,11 @@ impl Encoder {
     /// Internal helper: Encode MCU-aligned YCbCr planes to JPEG.
     ///
     /// This is the shared encoding logic used by both `encode_rgb_to_writer`
-    /// and `encode_ycbcr_planar_to_writer`.
+    /// and `encode_ycbcr_planar_to_writer`. Under [`JpegColorSpace::Rgb`] the
+    /// three planes are R, G and B (4:4:4) and, as in C's `JCS_RGB`, every
+    /// component uses quantization table 0 and Huffman slot 0. The Cb/Cr
+    /// ("chroma") tables below then hold the same content as the luma ones,
+    /// and optimized tables are built from the joint statistics.
     #[allow(clippy::too_many_arguments)]
     fn encode_ycbcr_mcu_to_writer<W: Write>(
         &self,
@@ -3139,7 +3306,16 @@ impl Encoder {
         output: W,
         stop: &dyn enough::Stop,
     ) -> Result<()> {
+        // Every entry point routes Subsampling::Gray to the single-component
+        // path; reaching here with it would write a 1-component SOF over
+        // 3-component scans.
+        if sampling == Subsampling::Gray {
+            return Err(Error::InternalError(
+                "grayscale output reached the 3-component pipeline",
+            ));
+        }
         let (luma_h, luma_v) = sampling.luma_factors();
+        let rgb = self.color_space == JpegColorSpace::Rgb;
 
         // Step 4: Create quantization tables
         let (luma_qtable, chroma_qtable) = {
@@ -3157,7 +3333,10 @@ impl Encoder {
             } else {
                 default_luma
             };
-            let chroma = if let Some(ref custom) = self.custom_chroma_qtable {
+            let chroma = if rgb {
+                // JCS_RGB: every component uses quant table 0.
+                luma
+            } else if let Some(ref custom) = self.custom_chroma_qtable {
                 crate::quant::create_quant_table(custom, chroma_q, self.force_baseline)
             } else {
                 default_chroma
@@ -3165,19 +3344,36 @@ impl Encoder {
             (luma, chroma)
         };
 
-        // Step 5: Create Huffman tables (standard tables)
+        // Step 5: Create Huffman tables (standard tables). C codes every
+        // JCS_RGB component with slot 0, so in RGB mode the tables used for
+        // G and B are the luma ones (also trellis's rate model for them).
         let dc_luma_huff = create_std_dc_luma_table();
-        let dc_chroma_huff = create_std_dc_chroma_table();
         let ac_luma_huff = create_std_ac_luma_table();
-        let ac_chroma_huff = create_std_ac_chroma_table();
+        let (dc_chroma_huff, ac_chroma_huff) = if rgb {
+            (dc_luma_huff.clone(), ac_luma_huff.clone())
+        } else {
+            (create_std_dc_chroma_table(), create_std_ac_chroma_table())
+        };
 
         let dc_luma_derived = DerivedTable::from_huff_table(&dc_luma_huff, true)?;
         let dc_chroma_derived = DerivedTable::from_huff_table(&dc_chroma_huff, true)?;
         let ac_luma_derived = DerivedTable::from_huff_table(&ac_luma_huff, false)?;
         let ac_chroma_derived = DerivedTable::from_huff_table(&ac_chroma_huff, false)?;
 
+        // Huffman slot of components 1 and 2 (Cb/Cr, or G/B sharing R's).
+        let chroma_slot: usize = if rgb { 0 } else { 1 };
+
         // Step 6: Set up components
-        let components = create_ycbcr_components(sampling);
+        let mut components = create_ycbcr_components(sampling);
+        if rgb {
+            // jpeg_set_colorspace(JCS_RGB): SET_COMP(ci, 'R'/'G'/'B', 1,1, 0, 0,0)
+            for (comp, id) in components.iter_mut().zip(*b"RGB") {
+                comp.component_id = id;
+                comp.quant_tbl_no = 0;
+                comp.dc_tbl_no = 0;
+                comp.ac_tbl_no = 0;
+            }
+        }
 
         // Step 7: Write JPEG file
         let mut marker_writer = MarkerWriter::new(output);
@@ -3185,12 +3381,18 @@ impl Encoder {
         // SOI
         marker_writer.write_soi()?;
 
-        // APP0 (JFIF) with pixel density
-        marker_writer.write_jfif_app0(
-            self.pixel_density.unit as u8,
-            self.pixel_density.x,
-            self.pixel_density.y,
-        )?;
+        if rgb {
+            // JFIF requires YCbCr; RGB is flagged with Adobe APP14
+            // transform 0 instead (C's write_Adobe_marker for JCS_RGB).
+            marker_writer.write_adobe_app14(0)?;
+        } else {
+            // APP0 (JFIF) with pixel density
+            marker_writer.write_jfif_app0(
+                self.pixel_density.unit as u8,
+                self.pixel_density.x,
+                self.pixel_density.y,
+            )?;
+        }
 
         // APP1 (EXIF) - if present
         if let Some(ref exif) = self.exif_data {
@@ -3215,8 +3417,14 @@ impl Encoder {
         // DQT (quantization tables in zigzag order) - combined into single marker
         let luma_qtable_zz = natural_to_zigzag(&luma_qtable.values);
         let chroma_qtable_zz = natural_to_zigzag(&chroma_qtable.values);
-        marker_writer
-            .write_dqt_multiple(&[(0, &luma_qtable_zz, false), (1, &chroma_qtable_zz, false)])?;
+        if rgb {
+            marker_writer.write_dqt(0, &luma_qtable_zz, false)?;
+        } else {
+            marker_writer.write_dqt_multiple(&[
+                (0, &luma_qtable_zz, false),
+                (1, &chroma_qtable_zz, false),
+            ])?;
+        }
 
         // SOF
         marker_writer.write_sof(
@@ -3238,9 +3446,17 @@ impl Encoder {
 
         // DHT (Huffman tables) - written here for non-optimized modes,
         // or later after frequency counting for optimized modes.
-        // Exact trellis writes its C slot tables in the buffered arms below.
-        if !self.optimize_huffman && !self.use_exact_trellis() {
-            if self.exact_mode() {
+        // Exact trellis writes its C slot tables in the buffered arms below,
+        // and exact-mode baseline always takes the buffered arm (for C's
+        // dummy-block synthesis), which writes its own DHT and DRI.
+        if !self.optimize_huffman
+            && !self.use_exact_trellis()
+            && !(self.exact_mode() && !self.progressive)
+        {
+            if rgb {
+                marker_writer
+                    .write_dht_multiple(&[(0, false, &dc_luma_huff), (0, true, &ac_luma_huff)])?;
+            } else if self.exact_mode() {
                 // C emit_multi_dht order: dc then ac per scan component.
                 marker_writer.write_dht_multiple(&[
                     (0, false, &dc_luma_huff),
@@ -3256,11 +3472,6 @@ impl Encoder {
                     (0, true, &ac_luma_huff),
                     (1, true, &ac_chroma_huff),
                 ])?;
-            }
-            // Direct path under exact emission semantics: C puts DRI after
-            // the DHT, right before SOS. Progressive arms emit per-scan.
-            if baseline_restart > 0 && self.exact_mode() && !self.progressive {
-                marker_writer.write_dri(baseline_restart as u16)?;
             }
         }
 
@@ -3397,8 +3608,8 @@ impl Encoder {
                             raw: cb_raw,
                             grid: c_grid,
                             qtbl: &chroma_qtable.values,
-                            dc_tbl_no: 1,
-                            ac_tbl_no: 1,
+                            dc_tbl_no: chroma_slot,
+                            ac_tbl_no: chroma_slot,
                             blocks_per_mcu: 1,
                         },
                         ExactComponent {
@@ -3406,8 +3617,8 @@ impl Encoder {
                             raw: cr_raw,
                             grid: c_grid,
                             qtbl: &chroma_qtable.values,
-                            dc_tbl_no: 1,
-                            ac_tbl_no: 1,
+                            dc_tbl_no: chroma_slot,
+                            ac_tbl_no: chroma_slot,
                             blocks_per_mcu: 1,
                         },
                     ];
@@ -3514,6 +3725,9 @@ impl Encoder {
             let (scans, scan_dri_flags) = if self.optimize_scans {
                 // When optimize_scans is enabled, use the scan optimizer to find
                 // the best frequency split and Al levels, including SA refinement.
+                // DIVERGENCE from C (see DIVERGENCES.md): C searches only for
+                // YCbCr; under JCS_RGB it ignores optimize_scans and uses the
+                // all-purpose script. RGB here runs the search too.
                 self.optimize_progressive_scans(
                     3, // num_components
                     &y_blocks,
@@ -3540,7 +3754,14 @@ impl Encoder {
                 // - DC with no successive approximation (Al=0)
                 // - 8/9 frequency split for luma with successive approximation
                 // - No successive approximation for chroma
-                (generate_mozjpeg_max_compression_scans(3), None)
+                // C uses that script only for YCbCr; JCS_RGB gets the
+                // all-purpose script with luma-style SA on every channel.
+                let script = if rgb {
+                    generate_mozjpeg_max_compression_generic_scans(3)
+                } else {
+                    generate_mozjpeg_max_compression_scans(3)
+                };
+                (script, None)
             };
 
             // Build Huffman tables and encode scans
@@ -3587,12 +3808,20 @@ impl Encoder {
                 }
 
                 // Generate and write DC tables upfront
-                let opt_dc_luma_huff = dc_luma_freq.generate_table()?;
-                let opt_dc_chroma_huff = dc_chroma_freq.generate_table()?;
-                marker_writer.write_dht_multiple(&[
-                    (0, false, &opt_dc_luma_huff),
-                    (1, false, &opt_dc_chroma_huff),
-                ])?;
+                let (opt_dc_luma_huff, opt_dc_chroma_huff);
+                if rgb {
+                    dc_luma_freq.merge(&dc_chroma_freq);
+                    opt_dc_luma_huff = dc_luma_freq.generate_table()?;
+                    opt_dc_chroma_huff = opt_dc_luma_huff.clone();
+                    marker_writer.write_dht_multiple(&[(0, false, &opt_dc_luma_huff)])?;
+                } else {
+                    opt_dc_luma_huff = dc_luma_freq.generate_table()?;
+                    opt_dc_chroma_huff = dc_chroma_freq.generate_table()?;
+                    marker_writer.write_dht_multiple(&[
+                        (0, false, &opt_dc_luma_huff),
+                        (1, false, &opt_dc_chroma_huff),
+                    ])?;
+                }
 
                 let opt_dc_luma = DerivedTable::from_huff_table(&opt_dc_luma_huff, true)?;
                 let opt_dc_chroma = DerivedTable::from_huff_table(&opt_dc_chroma_huff, true)?;
@@ -3669,7 +3898,7 @@ impl Encoder {
 
                         // Build optimal table and write DHT
                         let ac_huff = ac_freq.generate_table()?;
-                        let table_idx = if comp_idx == 0 { 0 } else { 1 };
+                        let table_idx = if comp_idx == 0 { 0 } else { chroma_slot as u8 };
                         write_dht_marker(&mut inner, table_idx, true, &ac_huff)?;
 
                         // C's emit_dri runs inside write_scan_header: after
@@ -3751,11 +3980,11 @@ impl Encoder {
                 let (sc_dc_luma_h, sc_dc_chroma_h, sc_ac_luma_h, sc_ac_chroma_h);
                 if let Some(ref t) = exact_tables {
                     sc_dc_luma_h = t.dc_huff[0].clone().unwrap_or_else(|| dc_luma_huff.clone());
-                    sc_dc_chroma_h = t.dc_huff[1]
+                    sc_dc_chroma_h = t.dc_huff[chroma_slot]
                         .clone()
                         .unwrap_or_else(|| dc_chroma_huff.clone());
                     sc_ac_luma_h = t.ac_huff[0].clone().unwrap_or_else(|| ac_luma_huff.clone());
-                    sc_ac_chroma_h = t.ac_huff[1]
+                    sc_ac_chroma_h = t.ac_huff[chroma_slot]
                         .clone()
                         .unwrap_or_else(|| ac_chroma_huff.clone());
                 } else {
@@ -3809,7 +4038,7 @@ impl Encoder {
                         let needs_dc = scan.ss == 0 && scan.ah == 0;
                         let mut tables = Vec::new();
                         for &ci in &scan.component_index[..scan.comps_in_scan as usize] {
-                            let no = if ci == 0 { 0 } else { 1 };
+                            let no = if ci == 0 { 0 } else { chroma_slot };
                             if needs_dc && !sent_dc[no] {
                                 tables.push((
                                     no as u8,
@@ -4020,8 +4249,8 @@ impl Encoder {
                             raw: cb_raw,
                             grid: c_grid,
                             qtbl: &chroma_qtable.values,
-                            dc_tbl_no: 1,
-                            ac_tbl_no: 1,
+                            dc_tbl_no: chroma_slot,
+                            ac_tbl_no: chroma_slot,
                             blocks_per_mcu: 1,
                         },
                         ExactComponent {
@@ -4029,8 +4258,8 @@ impl Encoder {
                             raw: cr_raw,
                             grid: c_grid,
                             qtbl: &chroma_qtable.values,
-                            dc_tbl_no: 1,
-                            ac_tbl_no: 1,
+                            dc_tbl_no: chroma_slot,
+                            ac_tbl_no: chroma_slot,
                             blocks_per_mcu: 1,
                         },
                     ];
@@ -4120,13 +4349,13 @@ impl Encoder {
                 opt_dc_luma_huff = tables.dc_huff[0]
                     .clone()
                     .unwrap_or_else(|| dc_luma_huff.clone());
-                opt_dc_chroma_huff = tables.dc_huff[1]
+                opt_dc_chroma_huff = tables.dc_huff[chroma_slot]
                     .clone()
                     .unwrap_or_else(|| dc_chroma_huff.clone());
                 opt_ac_luma_huff = tables.ac_huff[0]
                     .clone()
                     .unwrap_or_else(|| ac_luma_huff.clone());
-                opt_ac_chroma_huff = tables.ac_huff[1]
+                opt_ac_chroma_huff = tables.ac_huff[chroma_slot]
                     .clone()
                     .unwrap_or_else(|| ac_chroma_huff.clone());
             } else if self.optimize_huffman {
@@ -4175,11 +4404,20 @@ impl Encoder {
                     }
                 }
 
-                // Generate optimized Huffman tables
-                opt_dc_luma_huff = dc_luma_freq.generate_table()?;
-                opt_dc_chroma_huff = dc_chroma_freq.generate_table()?;
-                opt_ac_luma_huff = ac_luma_freq.generate_table()?;
-                opt_ac_chroma_huff = ac_chroma_freq.generate_table()?;
+                // Generate optimized Huffman tables (one joint pair for RGB)
+                if rgb {
+                    dc_luma_freq.merge(&dc_chroma_freq);
+                    ac_luma_freq.merge(&ac_chroma_freq);
+                    opt_dc_luma_huff = dc_luma_freq.generate_table()?;
+                    opt_ac_luma_huff = ac_luma_freq.generate_table()?;
+                    opt_dc_chroma_huff = opt_dc_luma_huff.clone();
+                    opt_ac_chroma_huff = opt_ac_luma_huff.clone();
+                } else {
+                    opt_dc_luma_huff = dc_luma_freq.generate_table()?;
+                    opt_dc_chroma_huff = dc_chroma_freq.generate_table()?;
+                    opt_ac_luma_huff = ac_luma_freq.generate_table()?;
+                    opt_ac_chroma_huff = ac_chroma_freq.generate_table()?;
+                }
             } else {
                 // !optimize_huffman without exact mode: standard tables.
                 opt_dc_luma_huff = dc_luma_huff.clone();
@@ -4196,7 +4434,12 @@ impl Encoder {
             // Write DHT with optimized tables - combined into single marker.
             // Exact mode uses C emit_multi_dht's per-component order
             // (dc,ac per comp); optimized mode keeps the grouped order.
-            if self.exact_mode() {
+            if rgb {
+                marker_writer.write_dht_multiple(&[
+                    (0, false, &opt_dc_luma_huff),
+                    (0, true, &opt_ac_luma_huff),
+                ])?;
+            } else if self.exact_mode() {
                 marker_writer.write_dht_multiple(&[
                     (0, false, &opt_dc_luma_huff),
                     (0, true, &opt_ac_luma_huff),
@@ -5450,36 +5693,21 @@ impl Encoder {
 }
 
 // ============================================================================
-// C mozjpeg encoding (optional feature)
+// C mozjpeg differential-testing plumbing (crates/sys-config)
 // ============================================================================
 
-#[cfg(feature = "mozjpeg-sys-config")]
 impl Encoder {
-    /// Convert this encoder to a C mozjpeg encoder.
-    ///
-    /// Returns a [`CMozjpeg`](crate::CMozjpeg) that can encode images using
-    /// the C mozjpeg library with settings matching this Rust encoder.
-    ///
-    /// # Example
-    ///
-    /// ```no_run
-    /// use mozjpeg_rs::{Encoder, Preset};
-    ///
-    /// let pixels: Vec<u8> = vec![128; 64 * 64 * 3];
-    /// let encoder = Encoder::new(Preset::ProgressiveBalanced).quality(85);
-    ///
-    /// // Encode with C mozjpeg
-    /// let c_jpeg = encoder.to_c_mozjpeg().encode_rgb(&pixels, 64, 64)?;
-    ///
-    /// // Compare with Rust encoder
-    /// let rust_jpeg = encoder.encode_rgb(&pixels, 64, 64)?;
-    /// # Ok::<(), mozjpeg_rs::Error>(())
-    /// ```
-    pub fn to_c_mozjpeg(&self) -> crate::compat::CMozjpeg {
-        crate::compat::CMozjpeg {
+    /// Snapshot of the settings the C mozjpeg differential-testing layer
+    /// needs. This is internal plumbing for the unpublished
+    /// `crates/sys-config` crate (consumed by `CMozjpeg::from_encoder`), not
+    /// part of the public API, and may change at any time.
+    #[doc(hidden)]
+    pub fn c_compat_config(&self) -> CCompatConfig {
+        CCompatConfig {
             quality: self.quality,
             force_baseline: self.force_baseline,
             subsampling: self.subsampling,
+            color_space: self.color_space,
             progressive: self.progressive,
             optimize_huffman: self.optimize_huffman,
             optimize_scans: self.optimize_scans,
@@ -5497,6 +5725,50 @@ impl Encoder {
             custom_markers: self.custom_markers.clone(),
         }
     }
+}
+
+/// Settings snapshot consumed by the unpublished `crates/sys-config` crate to
+/// configure C mozjpeg identically to this encoder. Internal plumbing behind
+/// [`Encoder::c_compat_config`]; not part of the public API.
+#[doc(hidden)]
+#[derive(Debug, Clone)]
+pub struct CCompatConfig {
+    /// Quality level (1-100).
+    pub quality: u8,
+    /// Force baseline-compatible output.
+    pub force_baseline: bool,
+    /// Chroma subsampling mode.
+    pub subsampling: Subsampling,
+    /// Stored color space (YCbCr or untransformed RGB).
+    pub color_space: JpegColorSpace,
+    /// Progressive mode.
+    pub progressive: bool,
+    /// Huffman table optimization.
+    pub optimize_huffman: bool,
+    /// Progressive scan optimization.
+    pub optimize_scans: bool,
+    /// Trellis quantization configuration.
+    pub trellis: TrellisConfig,
+    /// Overshoot deringing.
+    pub overshoot_deringing: bool,
+    /// Smoothing factor (0 = disabled).
+    pub smoothing: u8,
+    /// Restart interval in MCUs.
+    pub restart_interval: u16,
+    /// Restart interval in MCU rows.
+    pub restart_in_rows: u16,
+    /// Quantization table variant.
+    pub quant_table_idx: QuantTableIdx,
+    /// Whether a custom luma/chroma quant table is set (C mozjpeg can't mirror it).
+    pub has_custom_qtables: bool,
+    /// EXIF payload.
+    pub exif_data: Option<Vec<u8>>,
+    /// XMP payload.
+    pub xmp_data: Option<Vec<u8>>,
+    /// ICC profile payload.
+    pub icc_profile: Option<Vec<u8>>,
+    /// Custom APP markers.
+    pub custom_markers: Vec<(u8, Vec<u8>)>,
 }
 
 /// Unit tests for private encoder internals.

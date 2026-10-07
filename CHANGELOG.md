@@ -9,6 +9,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`DIVERGENCES.md`**: every known difference from C mozjpeg output: what
+  is byte-identical and which test pins it, C bugs fixed rather than
+  reproduced, and by-design differences (default JFIF density, progressive
+  with standard tables, `optimize_scans` under RGB, `Optimized`-mode edge
+  padding and smoothing, speed level vs upstream, presets).
+
+- **`JpegColorSpace` / `Encoder::color_space`** — store RGB/RGBA input
+  without a color transform (`JpegColorSpace::Rgb`), for data whose
+  channels are independent measurements (e.g. microscopy stain channels)
+  and must not bleed into each other through YCbCr conversion and chroma
+  subsampling (#10). Matches C mozjpeg's `jpeg_set_colorspace(JCS_RGB)`:
+  component IDs `'R','G','B'`, always 4:4:4, every component on
+  quantization table 0 and Huffman slot 0 (optimized tables are built from
+  the joint statistics), an Adobe APP14 marker with transform 0 in place
+  of the JFIF APP0, and C's all-purpose progressive script (successive
+  approximation on every channel). Output is byte-identical to upstream C
+  mozjpeg for baseline and progressive, optimized and standard Huffman
+  tables, and `TrellisMode::MozjpegExact { speed_level: 0 }`
+  (`tests/ffi_validation.rs`). Also available as
+  `MozjpegEncoderConfig::with_color_space` (zencodec) and through
+  `Encoder::to_c_mozjpeg()`. `Subsampling::Gray` with RGB, and planar
+  YCbCr input, are rejected with `Error::UnsupportedFeature`.
+
 - **`TrellisMode`** and **`TrellisMode::MozjpegExact`** — a public opt-in
   trellis-quantization mode that reproduces the patched C mozjpeg
   encoder's output byte-exactly. Select it with
@@ -57,6 +80,50 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Dimensions above 65535 were silently truncated.** `encode_rgb`,
+  `encode_rgba`, `encode_gray`, the strided and planar entry points, and the
+  streaming encoder cast width/height into the SOF marker's 2-byte fields
+  without a range check, so e.g. 65537×1 produced a valid-looking 1×1 header
+  and returned `Ok`. They now return `Error::InvalidDimensions`. The
+  `imgref` path computed its buffer size with `u32` arithmetic that could
+  overflow for large-but-in-range dimensions; it now validates and uses
+  checked `usize` math.
+- **Streaming accepted the wrong number of scanlines.** `EncodingStream` did
+  not track rows against the declared height: writing fewer rows than the
+  height still produced `Ok` with a truncated image, and writing more
+  encoded past the SOF height. It now returns the new
+  `Error::ScanlineCountMismatch` when more rows are written than the image
+  has, or when `finish()` is reached with too few.
+- **Undecodable files from `MozjpegExact` trellis with
+  `optimize_huffman(false)`** (a C mozjpeg bug the exact mode reproduced):
+  C emits Huffman tables gathered from component 0's single-component
+  trellis scans, which can lack codes the real interleaved scan needs
+  (4:2:0 dummy blocks and MCU-order DC deltas, or G/B sharing R's slot in
+  RGB). C then writes zero-length codes, e.g. at 37×29 4:2:0. mozjpeg-rs now
+  replaces such a table with the optimal table for the real scan, and stays
+  byte-identical to C wherever C's file is valid. Documented in the new
+  `DIVERGENCES.md`.
+- **Duplicate DHT/DRI in `MozjpegExact` baseline with the trellis off and
+  standard tables**: the color path wrote the Huffman tables (and restart
+  interval) twice. It is now byte-identical to C's `-notrellis` output.
+- **CI's byte-exact oracle suite never ran**: the imazen/mozjpeg fork's CMake
+  takes `BUILD_SHARED_LIBS`, not `ENABLE_SHARED`/`ENABLE_STATIC`, so
+  `cjpeg-static` and `libjpeg.a` were never built and every
+  `exact_trellis_parity` test took its skip path. CI now builds them
+  statically and fails if they're missing.
+
+- **`Subsampling::Gray` with color input** (#9): `encode_rgb`,
+  `encode_rgba` and their variants panicked with "index out of bounds" in
+  the SOS writer for progressive presets, and baseline presets silently
+  wrote a 1-component frame header over 3-component scan data (an
+  undecodable file). Color input with `Subsampling::Gray` now encodes its
+  luma (C's `rgb_gray_convert`) as a grayscale JPEG — byte-identical to
+  C mozjpeg's RGB -> `JCS_GRAYSCALE` encode. `encode_ycbcr_planar` with
+  `Subsampling::Gray` encodes the Y plane, `StreamingEncoder::start_rgb`
+  honors `Subsampling::Gray` instead of writing 4:4:4 YCbCr, and
+  `CMozjpeg` no longer makes libjpeg exit the process ("Unsupported color
+  conversion request").
+
 - **`CMozjpeg` EXIF marker** (`mozjpeg-sys-config`): the C-compat path
   wrote the raw TIFF payload as APP1 without the required `Exif\0\0`
   identifier, producing EXIF segments no decoder recognizes. Both
@@ -95,6 +162,19 @@ adding a limit costs a major bump.
 Confirmed by `cargo semver-checks --baseline-version 0.9.2` — two major checks
 failed, both `*_marked_non_exhaustive`, on three items (0ef2cd2):
 
+- **The C mozjpeg compatibility layer left the published crate.** Removed:
+  the `mozjpeg-sys-config` feature, `Encoder::to_c_mozjpeg()`, and
+  `compat::{CMozjpeg, ConfigError, ConfigWarnings}` (and their top-level
+  re-exports). It moved verbatim to a new unpublished workspace crate,
+  `crates/sys-config` (`publish = false`), reachable as
+  `sys_config::CMozjpeg::from_encoder(&encoder)`. The layer existed only for
+  differential testing against C mozjpeg — no published crate that depends on
+  `mozjpeg-rs` enabled the feature — and keeping it out means the published
+  crate is `#![forbid(unsafe_code)]` with no C/FFI in it at all (the one
+  `unsafe`-bearing module is gone). `Encoder` gains a `#[doc(hidden)]`
+  `c_compat_config()` accessor that the new crate consumes; it is internal
+  plumbing, not public API. Verified with `cargo test -p sys-config`.
+
 - `struct_marked_non_exhaustive`: **`Limits`** (`src/types.rs`) is now
   `#[non_exhaustive]`. Struct literals and `..Default::default()` no longer
   construct it from outside the crate. Migration: use `Limits::default()` (or
@@ -102,12 +182,13 @@ failed, both `*_marked_non_exhaustive`, on three items (0ef2cd2):
   `Limits::default().max_width(8192).max_exif_bytes(65_536)`. Every field stays
   `pub`, readable, and assignable on an owned value; only the literal form goes
   away. Adding a cap is non-breaking from here on.
-- `struct_marked_non_exhaustive`: **`ConfigWarnings`** (`src/compat.rs`,
-  `mozjpeg-sys-config` feature) is now `#[non_exhaustive]`. It is an output
-  type; build one with `ConfigWarnings::default()` and assign fields.
-- `enum_marked_non_exhaustive`: **`ConfigError`** (`src/compat.rs`,
-  `mozjpeg-sys-config` feature) is now `#[non_exhaustive]`. `match` on it must
-  carry a `_` arm. New variants are non-breaking from here on.
+- `struct_marked_non_exhaustive`: **`ConfigWarnings`** was made
+  `#[non_exhaustive]` earlier in this cycle, but is now removed from the
+  published crate entirely (see the compat-layer move above); it lives in
+  `crates/sys-config`. No longer part of the public surface.
+- `enum_marked_non_exhaustive`: **`ConfigError`** was made `#[non_exhaustive]`
+  earlier in this cycle, but is likewise now removed from the published crate
+  (moved to `crates/sys-config`). No longer part of the public surface.
 
 Not affected: `Error` (`src/error.rs`) was already `#[non_exhaustive]`, so the
 two new variants below are additive. The input-shaped config structs callers

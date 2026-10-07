@@ -19,7 +19,7 @@ use zencodec::{ImageFormat, Metadata, ResourceLimits, StopToken, UnsupportedOper
 use zenpixels::{PixelDescriptor, PixelSlice};
 
 use crate::error::Error;
-use crate::types::{Preset, Subsampling};
+use crate::types::{JpegColorSpace, Preset, Subsampling};
 
 // ============================================================================
 // Capabilities
@@ -75,6 +75,7 @@ pub struct MozjpegEncoderConfig {
     quality: u8,
     effort: i32,
     subsampling: Subsampling,
+    color_space: JpegColorSpace,
     /// Original generic quality value passed to `with_generic_quality()`.
     generic_quality_input: Option<f32>,
 }
@@ -87,6 +88,7 @@ impl MozjpegEncoderConfig {
             quality: 85,
             effort: 2,
             subsampling: Subsampling::S420,
+            color_space: JpegColorSpace::YCbCr,
             generic_quality_input: None,
         }
     }
@@ -95,6 +97,14 @@ impl MozjpegEncoderConfig {
     #[must_use]
     pub fn with_subsampling(mut self, subsampling: Subsampling) -> Self {
         self.subsampling = subsampling;
+        self
+    }
+
+    /// Set the color space color input is stored in. See
+    /// [`crate::Encoder::color_space`].
+    #[must_use]
+    pub fn with_color_space(mut self, color_space: JpegColorSpace) -> Self {
+        self.color_space = color_space;
         self
     }
 
@@ -109,6 +119,7 @@ impl MozjpegEncoderConfig {
         crate::Encoder::new(preset)
             .quality(self.quality)
             .subsampling(self.subsampling)
+            .color_space(self.color_space)
     }
 }
 
@@ -660,6 +671,46 @@ mod tests {
         let output = config.job().encoder().unwrap().encode(slice).unwrap();
         assert!(!output.data().is_empty());
         assert_eq!(&output.data()[..2], &[0xFF, 0xD8]);
+    }
+
+    /// Component IDs from the frame header (SOF0/SOF1/SOF2).
+    fn sof_component_ids(jpeg: &[u8]) -> Vec<u8> {
+        let mut i = 2;
+        while i + 4 <= jpeg.len() {
+            assert_eq!(jpeg[i], 0xFF, "marker expected at {i}");
+            let marker = jpeg[i + 1];
+            let len = u16::from_be_bytes([jpeg[i + 2], jpeg[i + 3]]) as usize;
+            if matches!(marker, 0xC0..=0xC2) {
+                let n = jpeg[i + 9] as usize;
+                return (0..n).map(|c| jpeg[i + 10 + 3 * c]).collect();
+            }
+            i += 2 + len;
+        }
+        panic!("no SOF marker");
+    }
+
+    #[test]
+    fn gray_subsampling_with_rgb_input_encodes_grayscale() {
+        // Issue #9 through the zencodec surface: every effort level.
+        let pixels = test_pixels_rgb(16, 16);
+        for effort in 0..=3 {
+            let config = MozjpegEncoderConfig::new()
+                .with_generic_effort(effort)
+                .with_subsampling(Subsampling::Gray);
+            let slice =
+                PixelSlice::new(&pixels, 16, 16, 16 * 3, PixelDescriptor::RGB8_SRGB).unwrap();
+            let output = config.job().encoder().unwrap().encode(slice).unwrap();
+            assert_eq!(sof_component_ids(output.data()), [1], "effort {effort}");
+        }
+    }
+
+    #[test]
+    fn rgb_color_space_encode() {
+        let pixels = test_pixels_rgb(16, 16);
+        let config = MozjpegEncoderConfig::new().with_color_space(JpegColorSpace::Rgb);
+        let slice = PixelSlice::new(&pixels, 16, 16, 16 * 3, PixelDescriptor::RGB8_SRGB).unwrap();
+        let output = config.job().encoder().unwrap().encode(slice).unwrap();
+        assert_eq!(sof_component_ids(output.data()), *b"RGB");
     }
 
     #[test]

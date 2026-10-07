@@ -6,7 +6,9 @@
 - All SIMD uses `archmage 0.5` with `#[arcane]` macro for safe target_feature dispatch
 - Memory operations use `safe_unaligned_simd 0.2.4` for unaligned loads/stores
 - Zero performance loss vs unsafe intrinsics (archmage token caching eliminates dispatch overhead)
-- Only FFI modules (compat.rs, test_encoder.rs) opt-in to unsafe for C mozjpeg interop
+- The published crate is now 100% safe (`#![forbid(unsafe_code)]`). C mozjpeg
+  FFI lives only in the unpublished `crates/sys-config` workspace crate; the
+  root crate's `test_encoder.rs` is `#![forbid]`-clean too
 
 ## Development Guidelines
 
@@ -27,6 +29,13 @@ If tests fail, find and fix the bug. Never:
 - Increase allowed difference thresholds
 - Skip failing tests
 - Mark tests as `#[ignore]` to make CI green
+
+### Divergences from C go in DIVERGENCES.md
+
+Any intended difference from C mozjpeg output (including C bugs we fix rather
+than reproduce) gets an entry in `DIVERGENCES.md`, a
+`DIVERGENCE from C (see DIVERGENCES.md)` comment at the code site, and a test
+that pins it. A difference that isn't listed there is a parity bug.
 
 ### Resolved Issues
 
@@ -472,6 +481,11 @@ more deviation from the original than simple replication.
 ### Validation Approach
 - Validate equivalence **layer by layer**, not just end-to-end
 - Use `mozjpeg-sys` from crates.io for basic FFI validation
+- Use `sys-config` (in `crates/`) to drive C mozjpeg (crates.io `mozjpeg-sys`)
+  from an `Encoder` for whole-image differential tests
+  (`CMozjpeg::from_encoder`). This is where the former `mozjpeg-sys-config`
+  feature / `Encoder::to_c_mozjpeg()` moved; it is `publish = false` and not
+  part of the public API. Run with `cargo test -p sys-config`.
 - Use `sys-local` (in `crates/`) for granular internal function testing
   - Builds from local `../mozjpeg` C source with test exports
   - C code has been instrumented with `mozjpeg_test_*` functions
@@ -667,6 +681,8 @@ mozjpeg-rs/                  # Repository root IS the main crate
 ├── examples/
 │   └── pareto_benchmark.rs     # Benchmark vs C mozjpeg
 ├── crates/
+│   ├── sys-config/             # C mozjpeg via mozjpeg-sys, configured from an
+│   │   └── src/lib.rs          #   Encoder (CMozjpeg::from_encoder); publish=false
 │   └── sys-local/              # Local FFI bindings (builds from ../mozjpeg)
 │       ├── build.rs            # CMake integration
 │       ├── tests/
@@ -765,14 +781,6 @@ GitHub Actions workflow runs on push/PR:
   **Note:** The encoder defaults to exact C parity (`fast_color(false)`).
   Use `.fast_color(true)` for ~40% faster color conversion when exact parity isn't needed.
 
-- **`mozjpeg-sys-config`** - Encode using C mozjpeg with Rust `Encoder` settings.
-  Adds `Encoder::to_c_mozjpeg()` which returns a `CMozjpeg` encoder.
-  Uses `mozjpeg-sys` from crates.io.
-
-  ```rust
-  let jpeg = encoder.to_c_mozjpeg().encode_rgb(&pixels, w, h)?;
-  ```
-
 - **`simd-intrinsics`** - Hand-written AVX2/NEON intrinsics for ~15% better DCT performance.
   Without this, uses `multiversion` autovectorization (safe, ~87% of intrinsics perf).
 
@@ -832,7 +840,7 @@ cargo test -p mozjpeg-rs --lib
 # Integration tests using mozjpeg-sys from crates.io
 cargo test --test ffi_validation
 cargo test --test preset_parity
-cargo test --features mozjpeg-sys-config c_mozjpeg
+cargo test -p sys-config
 
 # Decoder round-trip tests
 cargo test --test decoder_roundtrip

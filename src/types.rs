@@ -552,6 +552,35 @@ impl ColorSpace {
     }
 }
 
+/// Color space the encoder stores color (RGB/RGBA) input in.
+///
+/// Selected with [`Encoder::color_space`](crate::Encoder::color_space). This
+/// is C mozjpeg's `jpeg_color_space` (`jpeg_set_colorspace`). Grayscale
+/// output is selected with [`Subsampling::Gray`] instead.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[non_exhaustive]
+pub enum JpegColorSpace {
+    /// Convert to YCbCr (the default). Chroma subsampling and the separate
+    /// chroma quantization table apply; the file carries a JFIF APP0 marker.
+    #[default]
+    YCbCr,
+    /// Store the R, G and B channels without any color transform.
+    ///
+    /// Each channel is DCT-coded on its own with the same (luma)
+    /// quantization table and no subsampling, so quantization error never
+    /// moves between channels. Use this when the channels are independent
+    /// measurements rather than a color picture (e.g. stain or fluorescence
+    /// channels in microscopy). Expect files several times larger than
+    /// YCbCr at the same quality.
+    ///
+    /// Matches libjpeg's `JCS_RGB`: component IDs `'R'`, `'G'`, `'B'` and an
+    /// Adobe APP14 marker with transform 0 instead of the JFIF APP0, so
+    /// standard decoders return the channels unchanged. Because there is no
+    /// JFIF marker, [`pixel_density`](crate::Encoder::pixel_density) is not
+    /// written.
+    Rgb,
+}
+
 // =============================================================================
 // Compression Profile
 // =============================================================================
@@ -607,7 +636,9 @@ pub enum Subsampling {
     S420,
     /// 4:4:0 - Vertical subsampling only
     S440,
-    /// Grayscale (1 component)
+    /// Grayscale (1 component). Color input is converted to luma
+    /// (Y = 0.299 R + 0.587 G + 0.114 B, as C mozjpeg's `rgb_gray_convert`)
+    /// and written as a single-component JPEG.
     Gray,
 }
 
@@ -780,13 +811,8 @@ impl QuantTable {
         let mut values = [0u16; DCTSIZE2];
         for i in 0..DCTSIZE2 {
             let mut temp = ((base[i] as u32) * scale_factor + 50) / 100;
-            // Clamp to valid range
-            if temp == 0 {
-                temp = 1;
-            }
-            if temp > 32767 {
-                temp = 32767;
-            }
+            // Clamp to the valid DQT range (1..=32767).
+            temp = temp.clamp(1, 32767);
             if force_baseline && temp > 255 {
                 temp = 255;
             }

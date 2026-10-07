@@ -9,7 +9,8 @@ pub type Result<T> = std::result::Result<T, Error>;
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum Error {
-    /// Invalid image dimensions (zero width or height)
+    /// Invalid image dimensions: zero, or larger than a JPEG SOF marker's
+    /// 2-byte width/height field can hold (65535).
     InvalidDimensions {
         /// Image width
         width: u32,
@@ -125,6 +126,17 @@ pub enum Error {
         /// Minimum required stride in bytes
         minimum: usize,
     },
+    /// The number of scanlines streamed did not match the image height
+    /// declared at [`start_rgb`](crate::StreamingEncoder::start_rgb) /
+    /// [`start_gray`](crate::StreamingEncoder::start_gray) time: too few rows
+    /// by the time [`finish`](crate::EncodingStream::finish) was called, or
+    /// more rows written than the image has.
+    ScanlineCountMismatch {
+        /// Image height (rows expected)
+        expected: u32,
+        /// Rows actually received
+        received: u32,
+    },
 }
 
 impl fmt::Display for Error {
@@ -233,6 +245,13 @@ impl fmt::Display for Error {
                     f,
                     "Invalid stride: {} bytes is less than minimum {} bytes",
                     stride, minimum
+                )
+            }
+            Error::ScanlineCountMismatch { expected, received } => {
+                write!(
+                    f,
+                    "Scanline count mismatch: image height is {} rows but {} were streamed",
+                    expected, received
                 )
             }
         }

@@ -16,7 +16,7 @@ use crate::types::{ComponentInfo, Limits, PixelDensity, QuantTable, Subsampling}
 
 use super::{
     Encode, create_std_ac_chroma_table, create_std_ac_luma_table, create_std_dc_chroma_table,
-    create_std_dc_luma_table, try_alloc_vec,
+    create_std_dc_luma_table, try_alloc_vec, validate_dimensions,
 };
 
 /// Streaming JPEG encoder configuration.
@@ -147,6 +147,10 @@ impl StreamingEncoder {
     }
 
     /// Set chroma subsampling mode.
+    ///
+    /// [`Subsampling::Gray`] makes [`start_rgb`](Self::start_rgb) write a
+    /// grayscale JPEG: each RGB scanline is reduced to its luma as it is
+    /// buffered.
     pub fn subsampling(mut self, mode: Subsampling) -> Self {
         self.subsampling = mode;
         self
@@ -496,6 +500,11 @@ pub struct EncodingStream<W: Write> {
     writer: MarkerWriter<W>,
     /// Image width
     width: u32,
+    /// Image height declared in the SOF; the stream must receive exactly this
+    /// many scanlines before `finish()`.
+    height: u32,
+    /// Scanlines received so far via `write_scanlines`.
+    rows_received: u32,
     /// Number of color components (1 for gray, 3 for RGB/YCbCr)
     num_components: u8,
     /// Bytes per input pixel
@@ -556,13 +565,19 @@ impl<W: Write> EncodingStream<W> {
         config: StreamingEncoder,
         width: u32,
         height: u32,
-        num_components: u8,
+        input_components: u8,
         writer: W,
     ) -> Result<Self> {
-        // Validate dimensions
-        if width == 0 || height == 0 {
-            return Err(Error::InvalidDimensions { width, height });
-        }
+        // Validate dimensions (zero, or past the SOF 2-byte field limit)
+        validate_dimensions(width, height)?;
+
+        // Subsampling::Gray with RGB input writes a grayscale JPEG; scanlines
+        // are reduced to luma as they are buffered.
+        let num_components = if config.subsampling == Subsampling::Gray {
+            1
+        } else {
+            input_components
+        };
 
         // Check all resource limits. Ordered exactly as on the batch path:
         // after the zero-dimension check, before any allocation, marker write,
@@ -740,8 +755,10 @@ impl<W: Write> EncodingStream<W> {
         Ok(Self {
             writer: marker_writer,
             width,
+            height,
+            rows_received: 0,
             num_components,
-            bytes_per_pixel: num_components,
+            bytes_per_pixel: input_components,
             subsampling: config.subsampling,
             mcu_height,
             mcu_width,
@@ -781,6 +798,16 @@ impl<W: Write> EncodingStream<W> {
             });
         }
 
+        // Reject more scanlines than the declared image height; encoding them
+        // would push MCU rows past the SOF height and desync the stream.
+        if self.rows_received + lines_in_data as u32 > self.height {
+            return Err(Error::ScanlineCountMismatch {
+                expected: self.height,
+                received: self.rows_received + lines_in_data as u32,
+            });
+        }
+        self.rows_received += lines_in_data as u32;
+
         let mut data_offset = 0;
         let mut lines_remaining = lines_in_data as u32;
 
@@ -790,10 +817,21 @@ impl<W: Write> EncodingStream<W> {
                 (self.mcu_height - self.lines_in_buffer).min(lines_remaining) as usize;
 
             // Copy lines to buffer
-            let buffer_offset = self.lines_in_buffer as usize * bytes_per_line;
             let src_bytes = lines_to_copy * bytes_per_line;
-            self.scanline_buffer[buffer_offset..buffer_offset + src_bytes]
-                .copy_from_slice(&data[data_offset..data_offset + src_bytes]);
+            let src = &data[data_offset..data_offset + src_bytes];
+            if self.bytes_per_pixel == self.num_components {
+                let buffer_offset = self.lines_in_buffer as usize * bytes_per_line;
+                self.scanline_buffer[buffer_offset..buffer_offset + src_bytes].copy_from_slice(src);
+            } else {
+                // RGB input, grayscale output: keep only luma.
+                let buffer_offset = self.lines_in_buffer as usize * self.width as usize;
+                let dst = &mut self.scanline_buffer
+                    [buffer_offset..buffer_offset + lines_to_copy * self.width as usize];
+                let (rgb_px, _) = src.as_chunks::<3>();
+                for (g, px) in dst.iter_mut().zip(rgb_px) {
+                    *g = crate::color::rgb_to_gray(px[0], px[1], px[2]);
+                }
+            }
 
             self.lines_in_buffer += lines_to_copy as u32;
             data_offset += src_bytes;
@@ -1202,10 +1240,20 @@ impl<W: Write> EncodingStream<W> {
     /// This must be called after all scanlines have been written.
     /// Consumes the stream and returns the underlying writer.
     pub fn finish(mut self) -> Result<W> {
+        // Every declared scanline must have been written, or the SOF height
+        // overpromises what the entropy stream contains.
+        if self.rows_received != self.height {
+            return Err(Error::ScanlineCountMismatch {
+                expected: self.height,
+                received: self.rows_received,
+            });
+        }
+
         // Encode any remaining lines in the buffer (partial MCU row)
         if self.lines_in_buffer > 0 {
-            // Pad the buffer with the last line
-            let bytes_per_line = self.width as usize * self.bytes_per_pixel as usize;
+            // Pad the buffer with the last line (buffered lines hold
+            // `num_components` bytes per pixel, not the input's)
+            let bytes_per_line = self.width as usize * self.num_components as usize;
             let last_line_start = (self.lines_in_buffer as usize - 1) * bytes_per_line;
             let last_line =
                 self.scanline_buffer[last_line_start..last_line_start + bytes_per_line].to_vec();

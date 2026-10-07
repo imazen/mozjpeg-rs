@@ -112,6 +112,26 @@ impl<W: Write> MarkerWriter<W> {
         Ok(())
     }
 
+    /// Write an Adobe APP14 marker (jcmarker.c `emit_adobe_app14`).
+    ///
+    /// libjpeg writes it in place of the JFIF APP0 for color spaces JFIF
+    /// cannot express. Decoders read `transform` 0 on a 3-component frame as
+    /// "no color transform" (RGB), 1 as YCbCr, 2 as YCCK.
+    pub fn write_adobe_app14(&mut self, transform: u8) -> std::io::Result<()> {
+        self.emit_marker(JPEG_APP0 + 14)?;
+        // Length: 2 (length) + 5 (identifier) + 2 (version) + 2 (flags0) +
+        //         2 (flags1) + 1 (transform) = 14
+        self.emit_2bytes(14)?;
+        for &b in b"Adobe" {
+            self.emit_byte(b)?;
+        }
+        self.emit_2bytes(100)?; // Version
+        self.emit_2bytes(0)?; // Flags0
+        self.emit_2bytes(0)?; // Flags1
+        self.emit_byte(transform)?;
+        Ok(())
+    }
+
     /// Write Define Quantization Table marker for a single table.
     ///
     /// For better compression, prefer `write_dqt_multiple` to combine tables.
@@ -602,6 +622,22 @@ mod tests {
         assert_eq!(output[3], 16);
         // Check JFIF identifier
         assert_eq!(&output[4..9], b"JFIF\0");
+    }
+
+    #[test]
+    fn test_write_adobe_app14() {
+        let mut output = Vec::new();
+        let mut writer = MarkerWriter::new(&mut output);
+        writer.write_adobe_app14(0).unwrap();
+
+        // Byte-for-byte what C mozjpeg's emit_adobe_app14 writes for JCS_RGB
+        assert_eq!(
+            output,
+            [
+                0xFF, 0xEE, 0x00, 0x0E, b'A', b'd', b'o', b'b', b'e', 0x00, 0x64, 0x00, 0x00, 0x00,
+                0x00, 0x00
+            ]
+        );
     }
 
     #[test]

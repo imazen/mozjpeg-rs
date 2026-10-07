@@ -97,12 +97,11 @@ jobs:
       - name: Run preset parity tests (vs mozjpeg crate)
         run: cargo test --test preset_parity
 
-      - name: Run mozjpeg-sys-config tests
-        # Filter is `compat::tests`, the module path. `compat_tests` (the old
-        # value) matched no test name, so this step passed without running
-        # anything. It covers compat::tests::test_c_mozjpeg_encode_rgb /
-        # _grayscale / _ycbcr_planar_444 / _ycbcr_planar_420 / test_rust_vs_c_parity.
-        run: cargo test --features mozjpeg-sys-config compat::tests
+      - name: Run C mozjpeg differential tests (crates/sys-config)
+        # The C-compat layer moved out of the published crate into the
+        # unpublished `sys-config` workspace crate. It builds vendored C via
+        # mozjpeg-sys (cmake/nasm), same as this job's earlier FFI steps.
+        run: cargo test -p sys-config
 
       - name: Run decoder round-trip validation
         run: cargo run --release --example decoder_roundtrip
@@ -185,8 +184,15 @@ jobs:
         run: |
           cd ../mozjpeg
           mkdir -p build && cd build
-          cmake -DCMAKE_BUILD_TYPE=Release -DENABLE_SHARED=OFF -DENABLE_STATIC=ON -DCMAKE_POSITION_INDEPENDENT_CODE=ON ..
-          make -j$(nproc)
+          # The fork's CMake takes BUILD_SHARED_LIBS; ENABLE_SHARED/ENABLE_STATIC
+          # are ignored, and without static libs there is no cjpeg-static or
+          # libjpeg.a, so exact_trellis_parity skips every test.
+          cmake -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF -DCMAKE_POSITION_INDEPENDENT_CODE=ON ..
+          # Build only what the oracle needs. A full `make` also builds
+          # djpeg-static, which fails to statically link libpng ("undefined
+          # reference to pow") when libpng-dev is installed — unrelated to the
+          # oracle, but it would fail the step.
+          make -j$(nproc) jpeg-static cjpeg-static
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -202,7 +208,9 @@ jobs:
           cargo test --test chroma_quality_test
 
       - name: Run byte-exact parity suite vs C oracle
-        run: cargo test --test exact_trellis_parity
+        run: |
+          test -x ../mozjpeg/build/cjpeg-static && test -f ../mozjpeg/build/libjpeg.a
+          cargo test --test exact_trellis_parity
 
   # Documentation build
   docs:
@@ -216,8 +224,7 @@ jobs:
 
       - name: Build documentation
         # Exclude sys-local (requires local mozjpeg C source). Build with the
-        # feature-gated surfaces docs.rs shows so their rustdoc is checked too
-        # (mozjpeg-sys-config stays out — its C build needs cmake/nasm).
+        # feature-gated surfaces docs.rs shows so their rustdoc is checked too.
         run: cargo doc -p mozjpeg-rs --no-deps --features "zencodec simd-intrinsics png"
         env:
           RUSTDOCFLAGS: -D warnings

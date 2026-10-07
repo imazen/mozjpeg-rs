@@ -23,8 +23,8 @@
 //! # Ok::<(), mozjpeg_rs::Error>(())
 //! ```
 
-use crate::encode::{Encoder, try_alloc_vec};
-use crate::error::Result;
+use crate::encode::{Encoder, try_alloc_vec, validate_dimensions};
+use crate::error::{Error, Result};
 use imgref::ImgRef;
 use rgb::{Gray, RGB, RGBA};
 
@@ -160,12 +160,28 @@ impl Encoder {
     /// # Ok::<(), mozjpeg_rs::Error>(())
     /// ```
     pub fn encode_imgref<P: EncodeablePixel>(&self, img: ImgRef<'_, P>) -> Result<Vec<u8>> {
-        let width = img.width() as u32;
-        let height = img.height() as u32;
+        // Reject out-of-range dimensions in `usize` first: casting a `usize`
+        // wider than `MAX_DIMENSION` to `u32` could otherwise truncate past
+        // the check, and the buffer-size math below must not overflow.
+        let (w, h) = (img.width(), img.height());
+        if w == 0
+            || h == 0
+            || w > crate::encode::MAX_DIMENSION as usize
+            || h > crate::encode::MAX_DIMENSION as usize
+        {
+            return Err(Error::InvalidDimensions {
+                width: w.min(u32::MAX as usize) as u32,
+                height: h.min(u32::MAX as usize) as u32,
+            });
+        }
+        let width = w as u32;
+        let height = h as u32;
+        validate_dimensions(width, height)?;
+        let num_pixels = w.checked_mul(h).ok_or(Error::AllocationFailed)?;
 
         if P::IS_GRAYSCALE {
             // Grayscale path - extract gray values
-            let mut gray_data = try_alloc_vec(0u8, (width * height) as usize)?;
+            let mut gray_data = try_alloc_vec(0u8, num_pixels)?;
             for (y, row) in img.rows().enumerate() {
                 for (x, pixel) in row.iter().enumerate() {
                     gray_data[y * width as usize + x] = pixel.to_gray();
@@ -174,7 +190,8 @@ impl Encoder {
             self.encode_gray(&gray_data, width, height)
         } else {
             // Color path - extract RGB values
-            let mut rgb_data = try_alloc_vec(0u8, (width * height * 3) as usize)?;
+            let rgb_len = num_pixels.checked_mul(3).ok_or(Error::AllocationFailed)?;
+            let mut rgb_data = try_alloc_vec(0u8, rgb_len)?;
             for (y, row) in img.rows().enumerate() {
                 for (x, pixel) in row.iter().enumerate() {
                     let (r, g, b) = pixel.to_rgb();

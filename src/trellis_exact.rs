@@ -962,6 +962,27 @@ fn gather_main_scan_into_slots(
     dc_huff: &mut [Option<HuffTable>; 4],
     ac_huff: &mut [Option<HuffTable>; 4],
 ) -> Result<()> {
+    let (mut dc_freq, mut ac_freq) = count_main_scan(comps, restart_interval);
+    let (used_dc, used_ac) = used_slots(comps);
+    for t in 0..4 {
+        if used_dc[t] {
+            dc_huff[t] = Some(gen_optimal_table_c(&mut dc_freq[t].counts));
+        }
+        if used_ac[t] {
+            ac_huff[t] = Some(gen_optimal_table_c(&mut ac_freq[t].counts));
+        }
+    }
+    Ok(())
+}
+
+/// Per-slot symbol counts of the real interleaved baseline scan over the
+/// final coefficients: every MCU in scan order, including right-edge and
+/// bottom dummy blocks. DC prediction chains per component across the
+/// whole scan; `restart_interval` resets count MCUs of the real scan.
+fn count_main_scan(
+    comps: &[ExactComponent<'_>],
+    restart_interval: usize,
+) -> ([FrequencyCounter; 4], [FrequencyCounter; 4]) {
     let mut dc_freq: [FrequencyCounter; 4] = std::array::from_fn(|_| FrequencyCounter::new());
     let mut ac_freq: [FrequencyCounter; 4] = std::array::from_fn(|_| FrequencyCounter::new());
 
@@ -988,22 +1009,71 @@ fn gather_main_scan_into_slots(
             mcu_count += 1;
         }
     }
+    (dc_freq, ac_freq)
+}
 
+/// Which DC and AC Huffman slots the components reference.
+fn used_slots(comps: &[ExactComponent<'_>]) -> ([bool; 4], [bool; 4]) {
     let mut used_dc = [false; 4];
     let mut used_ac = [false; 4];
     for comp in comps {
         used_dc[comp.dc_tbl_no] = true;
         used_ac[comp.ac_tbl_no] = true;
     }
+    (used_dc, used_ac)
+}
+
+/// Whether `table` has a code for every symbol `freq` counts.
+fn covers(table: &HuffTable, freq: &FrequencyCounter) -> bool {
+    let n: usize = table.bits[1..=16].iter().map(|&b| b as usize).sum();
+    let mut coded = [false; 256];
+    for &sym in &table.huffval[..n] {
+        coded[sym as usize] = true;
+    }
+    freq.counts[..256]
+        .iter()
+        .zip(coded)
+        .all(|(&count, has_code)| count == 0 || has_code)
+}
+
+/// DIVERGENCE from C (see DIVERGENCES.md): with `optimize_coding = FALSE`
+/// C emits the slot tables its trellis passes gathered from component 0's
+/// single-component scans. The real scan can need symbols those tables
+/// never saw — dummy blocks and MCU-order DC differences under
+/// subsampling, or G/B sharing R's slot under JCS_RGB — and C then writes
+/// codes of length 0, an undecodable file. Replace any slot table that
+/// cannot code the real scan with the optimal table for that scan (what
+/// `optimize_coding = TRUE` would emit for it). Output C can decode is
+/// left byte-identical.
+fn cover_main_scan(
+    comps: &[ExactComponent<'_>],
+    restart_interval: usize,
+    std: &StdHuffTables<'_>,
+    dc_huff: &mut [Option<HuffTable>; 4],
+    ac_huff: &mut [Option<HuffTable>; 4],
+) {
+    let (mut dc_freq, mut ac_freq) = count_main_scan(comps, restart_interval);
+    let (used_dc, used_ac) = used_slots(comps);
     for t in 0..4 {
         if used_dc[t] {
-            dc_huff[t] = Some(gen_optimal_table_c(&mut dc_freq[t].counts));
+            let table =
+                dc_huff[t]
+                    .as_ref()
+                    .unwrap_or(if t == 0 { std.dc_luma } else { std.dc_chroma });
+            if !covers(table, &dc_freq[t]) {
+                dc_huff[t] = Some(gen_optimal_table_c(&mut dc_freq[t].counts));
+            }
         }
         if used_ac[t] {
-            ac_huff[t] = Some(gen_optimal_table_c(&mut ac_freq[t].counts));
+            let table =
+                ac_huff[t]
+                    .as_ref()
+                    .unwrap_or(if t == 0 { std.ac_luma } else { std.ac_chroma });
+            if !covers(table, &ac_freq[t]) {
+                ac_huff[t] = Some(gen_optimal_table_c(&mut ac_freq[t].counts));
+            }
         }
     }
-    Ok(())
 }
 
 /// Run the exact C trellis pass sequence over all components.
@@ -1146,6 +1216,14 @@ pub(crate) fn run_exact_trellis(
             &mut dc_huff,
             &mut ac_huff,
         )?;
+    } else if !optimize_coding {
+        cover_main_scan(
+            comps,
+            restart.for_scan(comps[0].grid.mcu_cols),
+            std,
+            &mut dc_huff,
+            &mut ac_huff,
+        );
     }
 
     Ok(ExactTablesOut { dc_huff, ac_huff })

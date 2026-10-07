@@ -1899,3 +1899,616 @@ fn test_encode_rgba_with_stop() {
     let result = encoder.encode_rgba_with_stop(&rgba, 64, 64, &AlreadyCancelled);
     assert!(result.is_err());
 }
+
+// ============================================================================
+// Shared helpers for the color-space tests below
+// ============================================================================
+
+const ALL_PRESETS: [mozjpeg_rs::Preset; 4] = [
+    mozjpeg_rs::Preset::BaselineFastest,
+    mozjpeg_rs::Preset::BaselineBalanced,
+    mozjpeg_rs::Preset::ProgressiveBalanced,
+    mozjpeg_rs::Preset::ProgressiveSmallest,
+];
+
+/// Deterministic RGB image whose three channels carry different content.
+fn three_channel_image(width: u32, height: u32) -> Vec<u8> {
+    let (w, h) = (width as usize, height as usize);
+    let mut state = 0x2545_f491u32;
+    let mut rgb = Vec::with_capacity(w * h * 3);
+    for y in 0..h {
+        for x in 0..w {
+            state ^= state << 13;
+            state ^= state >> 17;
+            state ^= state << 5;
+            rgb.push(((x * 255 / w.max(1)) as u8).wrapping_add((state & 7) as u8));
+            rgb.push((y * 255 / h.max(1)) as u8);
+            rgb.push((((x + y) * 9) % 256) as u8);
+        }
+    }
+    rgb
+}
+
+/// C mozjpeg's `rgb_gray_convert`: Y = 0.299 R + 0.587 G + 0.114 B in 16-bit
+/// fixed point with rounding — the Y of its YCbCr conversion.
+fn c_luma(rgb: &[u8]) -> Vec<u8> {
+    rgb.chunks_exact(3)
+        .map(|p| {
+            ((19595 * p[0] as u32 + 38470 * p[1] as u32 + 7471 * p[2] as u32 + 32768) >> 16) as u8
+        })
+        .collect()
+}
+
+/// Walk the header and return every `(marker, payload)` segment before SOS
+/// (payload excludes the length bytes), plus each SOS header payload.
+fn header_segments(jpeg: &[u8]) -> Vec<(u8, &[u8])> {
+    assert_eq!(&jpeg[0..2], &[0xFF, 0xD8], "missing SOI");
+    let mut out = Vec::new();
+    let mut pos = 2;
+    while pos + 4 <= jpeg.len() {
+        assert_eq!(jpeg[pos], 0xFF, "expected marker at {pos}");
+        let marker = jpeg[pos + 1];
+        if marker == 0xD9 {
+            break;
+        }
+        let len = u16::from_be_bytes([jpeg[pos + 2], jpeg[pos + 3]]) as usize;
+        out.push((marker, &jpeg[pos + 4..pos + 2 + len]));
+        pos += 2 + len;
+        if marker == 0xDA {
+            // Skip entropy-coded data to the next marker (not RSTn / stuffing).
+            while pos + 1 < jpeg.len()
+                && !(jpeg[pos] == 0xFF
+                    && jpeg[pos + 1] != 0
+                    && !(0xD0..=0xD7).contains(&jpeg[pos + 1]))
+            {
+                pos += 1;
+            }
+        }
+    }
+    out
+}
+
+/// Frame components as `(id, h, v, tq)` from the SOF segment.
+fn sof_components(jpeg: &[u8]) -> Vec<(u8, u8, u8, u8)> {
+    let (_, sof) = header_segments(jpeg)
+        .into_iter()
+        .find(|(m, _)| matches!(m, 0xC0..=0xC2))
+        .expect("no SOF");
+    (0..sof[5] as usize)
+        .map(|c| {
+            let s = &sof[6 + 3 * c..9 + 3 * c];
+            (s[0], s[1] >> 4, s[1] & 0x0F, s[2])
+        })
+        .collect()
+}
+
+// ============================================================================
+// Subsampling::Gray with color input (GitHub #9)
+// ============================================================================
+
+/// The exact reproduction from GitHub #9: progressive presets panicked with
+/// "index out of bounds" in the SOS writer.
+#[test]
+fn test_issue9_gray_subsampling_progressive_no_panic() {
+    let px = vec![128u8; 8 * 8 * 3];
+    for preset in [
+        mozjpeg_rs::Preset::ProgressiveBalanced,
+        mozjpeg_rs::Preset::ProgressiveSmallest,
+    ] {
+        let jpeg = Encoder::new(preset)
+            .quality(75)
+            .subsampling(Subsampling::Gray)
+            .trellis(TrellisConfig::default())
+            .encode_rgb(&px, 8, 8)
+            .unwrap();
+        let mut decoder = jpeg_decoder::Decoder::new(&jpeg[..]);
+        let pixels = decoder.decode().unwrap();
+        let info = decoder.info().unwrap();
+        assert_eq!(info.pixel_format, jpeg_decoder::PixelFormat::L8);
+        assert_eq!(pixels.len(), 64);
+    }
+}
+
+/// Color input with `Subsampling::Gray` is a grayscale encode of its luma:
+/// byte-identical to `encode_gray` of C's RGB->gray conversion, for every
+/// preset and color entry point. Baseline presets used to write a
+/// 1-component SOF over 3-component scan data (undecodable), progressive
+/// presets panicked.
+#[test]
+fn test_gray_subsampling_with_color_input_encodes_luma() {
+    for &(width, height) in &[(8u32, 8u32), (13, 7), (37, 29), (64, 48)] {
+        let rgb = three_channel_image(width, height);
+        let luma = c_luma(&rgb);
+        let rgba: Vec<u8> = rgb
+            .chunks_exact(3)
+            .flat_map(|p| [p[0], p[1], p[2], 0x7F])
+            .collect();
+        let stride = width as usize * 3 + 5;
+        let mut padded = vec![0xAAu8; stride * height as usize];
+        for (dst, src) in padded
+            .chunks_mut(stride)
+            .zip(rgb.chunks(width as usize * 3))
+        {
+            dst[..src.len()].copy_from_slice(src);
+        }
+
+        for preset in ALL_PRESETS {
+            let encoder = Encoder::new(preset)
+                .quality(80)
+                .subsampling(Subsampling::Gray);
+            let expected = encoder.encode_gray(&luma, width, height).unwrap();
+            let ctx = format!("{preset:?} {width}x{height}");
+
+            assert_eq!(
+                encoder.encode_rgb(&rgb, width, height).unwrap(),
+                expected,
+                "rgb {ctx}"
+            );
+            assert_eq!(
+                encoder.encode_rgba(&rgba, width, height).unwrap(),
+                expected,
+                "rgba {ctx}"
+            );
+            assert_eq!(
+                encoder
+                    .encode_rgb_strided(&padded, width, height, stride)
+                    .unwrap(),
+                expected,
+                "strided {ctx}"
+            );
+
+            assert_eq!(sof_components(&expected), [(1, 1, 1, 0)], "{ctx}");
+            let mut decoder = jpeg_decoder::Decoder::new(&expected[..]);
+            let decoded = decoder.decode().unwrap();
+            assert_eq!(
+                decoder.info().unwrap().pixel_format,
+                jpeg_decoder::PixelFormat::L8
+            );
+            assert_eq!(decoded.len(), luma.len(), "{ctx}");
+        }
+    }
+}
+
+/// `encode_ycbcr_planar` with `Subsampling::Gray` encodes the Y plane (C's
+/// YCbCr -> JCS_GRAYSCALE); the chroma planes are not read.
+#[test]
+fn test_gray_subsampling_ycbcr_planar_uses_luma_plane() {
+    let (width, height) = (37u32, 29u32);
+    let y = c_luma(&three_channel_image(width, height));
+    for preset in ALL_PRESETS {
+        let encoder = Encoder::new(preset).subsampling(Subsampling::Gray);
+        let expected = encoder.encode_gray(&y, width, height).unwrap();
+        assert_eq!(
+            encoder
+                .encode_ycbcr_planar(&y, &[], &[], width, height)
+                .unwrap(),
+            expected,
+            "{preset:?}"
+        );
+
+        let stride = width as usize + 3;
+        let mut padded = vec![0u8; stride * height as usize];
+        for (dst, src) in padded.chunks_mut(stride).zip(y.chunks(width as usize)) {
+            dst[..src.len()].copy_from_slice(src);
+        }
+        assert_eq!(
+            encoder
+                .encode_ycbcr_planar_strided(&padded, stride, &[], 0, &[], 0, width, height)
+                .unwrap(),
+            expected,
+            "{preset:?} strided"
+        );
+    }
+}
+
+/// The streaming encoder honors `Subsampling::Gray` for RGB scanlines too
+/// (it used to ignore it and write a 4:4:4 YCbCr file).
+#[test]
+fn test_streaming_gray_subsampling_with_rgb_input() {
+    // Height not a multiple of 8 and writes that straddle MCU rows exercise
+    // both the buffered conversion and finish()'s last-row padding.
+    let (width, height) = (37u32, 29u32);
+    let rgb = three_channel_image(width, height);
+    let luma = c_luma(&rgb);
+
+    let mut from_rgb = Vec::new();
+    let mut stream = StreamingEncoder::baseline_fastest()
+        .quality(80)
+        .subsampling(Subsampling::Gray)
+        .start_rgb(width, height, &mut from_rgb)
+        .unwrap();
+    for rows in rgb.chunks(5 * width as usize * 3) {
+        stream.write_scanlines(rows).unwrap();
+    }
+    stream.finish().unwrap();
+
+    let expected = StreamingEncoder::baseline_fastest()
+        .quality(80)
+        .subsampling(Subsampling::Gray)
+        .encode_gray(&luma, width, height)
+        .unwrap();
+    assert_eq!(from_rgb, expected);
+    assert_eq!(sof_components(&from_rgb), [(1, 1, 1, 0)]);
+    let decoded = jpeg_decoder::Decoder::new(&from_rgb[..]).decode().unwrap();
+    assert_eq!(decoded.len(), luma.len());
+}
+
+// ============================================================================
+// JpegColorSpace::Rgb (GitHub #10)
+// ============================================================================
+
+/// RGB output is flagged the way libjpeg's JCS_RGB is: component IDs 'R','G',
+/// 'B', all 1x1 on quant table 0 (whatever `subsampling` says), one DQT, all
+/// Huffman tables in slot 0, an Adobe APP14 with transform 0 and no JFIF.
+#[test]
+fn test_rgb_color_space_markers() {
+    use mozjpeg_rs::JpegColorSpace;
+
+    let (width, height) = (37u32, 29u32);
+    let rgb = three_channel_image(width, height);
+    for preset in ALL_PRESETS {
+        let jpeg = Encoder::new(preset)
+            .color_space(JpegColorSpace::Rgb)
+            .encode_rgb(&rgb, width, height)
+            .unwrap();
+        let segments = header_segments(&jpeg);
+
+        assert_eq!(
+            sof_components(&jpeg),
+            [(b'R', 1, 1, 0), (b'G', 1, 1, 0), (b'B', 1, 1, 0)],
+            "{preset:?}"
+        );
+        assert!(
+            !segments.iter().any(|(m, _)| *m == 0xE0),
+            "{preset:?}: JFIF APP0 must not be written for RGB"
+        );
+        let adobe: Vec<_> = segments.iter().filter(|(m, _)| *m == 0xEE).collect();
+        assert_eq!(adobe.len(), 1, "{preset:?}");
+        assert_eq!(
+            adobe[0].1, b"Adobe\x00\x64\x00\x00\x00\x00\x00",
+            "{preset:?}"
+        );
+
+        // One 8-bit table 0: Pq/Tq byte + 64 entries
+        let dqt: Vec<_> = segments.iter().filter(|(m, _)| *m == 0xDB).collect();
+        assert_eq!(dqt.len(), 1, "{preset:?}");
+        assert_eq!(dqt[0].1.len(), 65, "{preset:?}");
+        assert_eq!(dqt[0].1[0], 0x00, "{preset:?}");
+
+        for (_, dht) in segments.iter().filter(|(m, _)| *m == 0xC4) {
+            let mut p = 0;
+            while p < dht.len() {
+                assert_eq!(dht[p] & 0x0F, 0, "{preset:?}: Huffman table outside slot 0");
+                let count: usize = dht[p + 1..p + 17].iter().map(|&n| n as usize).sum();
+                p += 17 + count;
+            }
+        }
+        for (_, sos) in segments.iter().filter(|(m, _)| *m == 0xDA) {
+            for c in 0..sos[0] as usize {
+                assert_eq!(
+                    sos[2 + 2 * c],
+                    0x00,
+                    "{preset:?}: scan table selector not 0"
+                );
+            }
+        }
+    }
+}
+
+/// The point of RGB mode: no color transform and no subsampling, so a channel
+/// never picks up another channel's quantization error. Constant G and B
+/// planes must decode exactly constant while R carries detail.
+#[test]
+fn test_rgb_color_space_keeps_channels_independent() {
+    use mozjpeg_rs::{JpegColorSpace, TrellisMode};
+
+    let (width, height) = (48u32, 40u32);
+    let pattern = three_channel_image(width, height);
+    let rgb: Vec<u8> = pattern
+        .chunks_exact(3)
+        .flat_map(|p| [p[0], 0, 255])
+        .collect();
+
+    let mut encoders: Vec<(String, Encoder)> = ALL_PRESETS
+        .iter()
+        .map(|&p| (format!("{p:?}"), Encoder::new(p).quality(85)))
+        .collect();
+    for progressive in [false, true] {
+        encoders.push((
+            format!("MozjpegExact progressive={progressive}"),
+            Encoder::new(mozjpeg_rs::Preset::BaselineBalanced)
+                .progressive(progressive)
+                .trellis(TrellisConfig::default().mode(TrellisMode::mozjpeg_exact())),
+        ));
+    }
+
+    for (name, encoder) in encoders {
+        let jpeg = encoder
+            .clone()
+            .color_space(JpegColorSpace::Rgb)
+            .encode_rgb(&rgb, width, height)
+            .unwrap();
+        let mut decoder = jpeg_decoder::Decoder::new(&jpeg[..]);
+        let decoded = decoder.decode().unwrap();
+        assert_eq!(
+            decoder.info().unwrap().pixel_format,
+            jpeg_decoder::PixelFormat::RGB24
+        );
+        assert!(
+            decoded.chunks(3).all(|p| p[1] == 0 && p[2] == 255),
+            "{name}: G/B leaked"
+        );
+        let r_psnr = calculate_psnr(
+            &rgb.iter().step_by(3).copied().collect::<Vec<_>>(),
+            &decoded.iter().step_by(3).copied().collect::<Vec<_>>(),
+        );
+        assert!(r_psnr > 30.0, "{name}: R PSNR {r_psnr:.1} dB");
+
+        // The same input through YCbCr 4:4:4 does leak R's detail into G/B,
+        // so the assertion above is a real distinction.
+        let ycc = encoder
+            .subsampling(Subsampling::S444)
+            .encode_rgb(&rgb, width, height)
+            .unwrap();
+        let ycc_decoded = jpeg_decoder::Decoder::new(&ycc[..]).decode().unwrap();
+        assert!(
+            !ycc_decoded.chunks(3).all(|p| p[1] == 0 && p[2] == 255),
+            "{name}"
+        );
+    }
+}
+
+/// jpeg-decoder and zune-jpeg both recognize the file as RGB and agree on
+/// the pixels (up to IDCT rounding).
+#[test]
+fn test_rgb_color_space_decoders_agree() {
+    use mozjpeg_rs::JpegColorSpace;
+    use zune_jpeg::zune_core::bytestream::ZCursor;
+
+    let (width, height) = (37u32, 29u32);
+    let rgb = three_channel_image(width, height);
+    for preset in ALL_PRESETS {
+        let jpeg = Encoder::new(preset)
+            .quality(90)
+            .color_space(JpegColorSpace::Rgb)
+            .encode_rgb(&rgb, width, height)
+            .unwrap();
+        let a = jpeg_decoder::Decoder::new(&jpeg[..]).decode().unwrap();
+        let mut zune = zune_jpeg::JpegDecoder::new(ZCursor::new(&jpeg[..]));
+        let b = zune.decode().unwrap();
+        assert_eq!(
+            zune.input_colorspace(),
+            Some(zune_jpeg::zune_core::colorspace::ColorSpace::RGB),
+            "{preset:?}"
+        );
+        assert_eq!(a.len(), b.len());
+        let max_diff = a.iter().zip(&b).map(|(x, y)| x.abs_diff(*y)).max().unwrap();
+        assert!(max_diff <= 1, "{preset:?}: decoders differ by {max_diff}");
+    }
+}
+
+/// In RGB mode chroma settings have nothing to act on: every subsampling
+/// mode, `chroma_quality` and a custom chroma table give the same bytes.
+/// RGBA and strided input match RGB.
+#[test]
+fn test_rgb_color_space_ignores_chroma_settings() {
+    use mozjpeg_rs::JpegColorSpace;
+
+    let (width, height) = (37u32, 29u32);
+    let rgb = three_channel_image(width, height);
+    let rgba: Vec<u8> = rgb
+        .chunks_exact(3)
+        .flat_map(|p| [p[0], p[1], p[2], 0])
+        .collect();
+    for preset in ALL_PRESETS {
+        let base = Encoder::new(preset)
+            .quality(80)
+            .color_space(JpegColorSpace::Rgb);
+        let expected = base.encode_rgb(&rgb, width, height).unwrap();
+        for subsampling in [
+            Subsampling::S444,
+            Subsampling::S422,
+            Subsampling::S420,
+            Subsampling::S440,
+        ] {
+            let jpeg = base
+                .clone()
+                .subsampling(subsampling)
+                .encode_rgb(&rgb, width, height)
+                .unwrap();
+            assert_eq!(jpeg, expected, "{preset:?} {subsampling:?}");
+        }
+        let jpeg = base
+            .clone()
+            .chroma_quality(Some(20))
+            .encode_rgb(&rgb, width, height)
+            .unwrap();
+        assert_eq!(jpeg, expected, "{preset:?} chroma_quality");
+        let jpeg = base
+            .clone()
+            .custom_chroma_qtable([99; 64])
+            .encode_rgb(&rgb, width, height)
+            .unwrap();
+        assert_eq!(jpeg, expected, "{preset:?} custom_chroma_qtable");
+        assert_eq!(
+            base.encode_rgba(&rgba, width, height).unwrap(),
+            expected,
+            "{preset:?} rgba"
+        );
+    }
+}
+
+/// Without optimize_scans, progressive RGB uses C's all-purpose script:
+/// interleaved DC, then luma-style successive approximation for every
+/// channel (13 scans) instead of the YCbCr script's luma-only SA.
+#[test]
+fn test_rgb_color_space_progressive_script() {
+    use mozjpeg_rs::JpegColorSpace;
+
+    let rgb = three_channel_image(32, 32);
+    let jpeg = Encoder::new(mozjpeg_rs::Preset::ProgressiveBalanced)
+        .color_space(JpegColorSpace::Rgb)
+        .encode_rgb(&rgb, 32, 32)
+        .unwrap();
+    // (components, Ss, Se, Ah, Al) per scan
+    let scans: Vec<(Vec<u8>, u8, u8, u8, u8)> = header_segments(&jpeg)
+        .into_iter()
+        .filter(|(m, _)| *m == 0xDA)
+        .map(|(_, s)| {
+            let n = s[0] as usize;
+            let comps = (0..n).map(|c| s[1 + 2 * c]).collect();
+            let tail = &s[1 + 2 * n..];
+            (comps, tail[0], tail[1], tail[2] >> 4, tail[2] & 0x0F)
+        })
+        .collect();
+    let mut expected = vec![(b"RGB".to_vec(), 0, 0, 0, 0)];
+    for (ss, se, ah, al) in [(1, 8, 0, 2), (9, 63, 0, 2), (1, 63, 2, 1), (1, 63, 1, 0)] {
+        for c in *b"RGB" {
+            expected.push((vec![c], ss, se, ah, al));
+        }
+    }
+    assert_eq!(scans, expected);
+}
+
+/// Contradictory or impossible requests are errors, not silent fallbacks.
+#[test]
+fn test_rgb_color_space_rejected_combinations() {
+    use mozjpeg_rs::{Error, JpegColorSpace};
+
+    let rgb = three_channel_image(16, 16);
+    let encoder = Encoder::default().color_space(JpegColorSpace::Rgb);
+
+    // Grayscale output and RGB output at once
+    let result = encoder
+        .clone()
+        .subsampling(Subsampling::Gray)
+        .encode_rgb(&rgb, 16, 16);
+    assert!(
+        matches!(result, Err(Error::UnsupportedFeature(_))),
+        "{result:?}"
+    );
+
+    // Planar input is already YCbCr
+    let plane = vec![128u8; 16 * 16];
+    let result = encoder.encode_ycbcr_planar(&plane, &plane, &plane, 16, 16);
+    assert!(
+        matches!(result, Err(Error::UnsupportedFeature(_))),
+        "{result:?}"
+    );
+}
+
+/// Grayscale input stays grayscale; metadata still goes in, after the Adobe
+/// marker (C's write_file_header order).
+#[test]
+fn test_rgb_color_space_gray_input_and_metadata() {
+    use mozjpeg_rs::JpegColorSpace;
+
+    let gray: Vec<u8> = (0..32 * 32).map(|i| (i * 7 % 256) as u8).collect();
+    let encoder = Encoder::default().quality(80);
+    assert_eq!(
+        encoder
+            .clone()
+            .color_space(JpegColorSpace::Rgb)
+            .encode_gray(&gray, 32, 32)
+            .unwrap(),
+        encoder.encode_gray(&gray, 32, 32).unwrap()
+    );
+
+    let exif = b"MM\x00\x2a\x00\x00\x00\x08\x00\x00".to_vec();
+    let icc = vec![0x42u8; 300];
+    let jpeg = Encoder::default()
+        .color_space(JpegColorSpace::Rgb)
+        .exif_data(exif)
+        .icc_profile(icc)
+        .encode_rgb(&three_channel_image(32, 32), 32, 32)
+        .unwrap();
+    let apps: Vec<u8> = app_segments(&jpeg).iter().map(|(n, _)| *n).collect();
+    assert_eq!(apps, [14, 1, 2]);
+}
+
+// ============================================================================
+// Input validation hardening (dimensions, streaming row counts)
+// ============================================================================
+
+/// Dimensions past the JPEG SOF 2-byte field (65535) must be rejected, not
+/// silently truncated into the `u16` header (65537 -> a 1-px header).
+#[test]
+fn test_dimension_over_65535_rejected() {
+    use mozjpeg_rs::Error;
+    let enc = Encoder::new(mozjpeg_rs::Preset::BaselineFastest);
+    // Buffer length is checked after the dimension gate, so a tiny buffer is
+    // fine — we assert on the error variant, and that nothing is encoded.
+    for (w, h) in [(65_536u32, 1u32), (1, 65_536), (70_000, 70_000)] {
+        assert!(
+            matches!(
+                enc.encode_rgb(&[], w, h),
+                Err(Error::InvalidDimensions { .. })
+            ),
+            "rgb {w}x{h}"
+        );
+        assert!(
+            matches!(
+                enc.encode_gray(&[], w, h),
+                Err(Error::InvalidDimensions { .. })
+            ),
+            "gray {w}x{h}"
+        );
+    }
+    // 65535 is the largest valid value: it must pass the dimension gate and
+    // fail only on the buffer-length check (proving the gate let it through).
+    assert!(matches!(
+        enc.encode_gray(&[0u8; 4], 65_535, 1),
+        Err(Error::BufferSizeMismatch { .. })
+    ));
+}
+
+/// Streaming must receive exactly the declared number of scanlines: too few
+/// by `finish()` is an error, and writing more than the height is an error.
+#[test]
+fn test_streaming_scanline_count_enforced() {
+    use mozjpeg_rs::Error;
+    let (w, h) = (16u32, 32u32);
+    let row = vec![90u8; (w * 3) as usize];
+
+    // Too few rows: finish() rejects.
+    let mut out = Vec::new();
+    let mut s = StreamingEncoder::baseline_fastest()
+        .start_rgb(w, h, &mut out)
+        .unwrap();
+    for _ in 0..16 {
+        s.write_scanlines(&row).unwrap();
+    }
+    assert!(matches!(
+        s.finish(),
+        Err(Error::ScanlineCountMismatch {
+            expected: 32,
+            received: 16
+        })
+    ));
+
+    // Too many rows: write_scanlines rejects as soon as the total exceeds h.
+    let mut out = Vec::new();
+    let mut s = StreamingEncoder::baseline_fastest()
+        .start_rgb(w, h, &mut out)
+        .unwrap();
+    for _ in 0..32 {
+        s.write_scanlines(&row).unwrap();
+    }
+    assert!(matches!(
+        s.write_scanlines(&row),
+        Err(Error::ScanlineCountMismatch { expected: 32, .. })
+    ));
+
+    // Exactly h rows still succeeds and decodes to the full height.
+    let mut out = Vec::new();
+    let mut s = StreamingEncoder::baseline_fastest()
+        .start_rgb(w, h, &mut out)
+        .unwrap();
+    for _ in 0..32 {
+        s.write_scanlines(&row).unwrap();
+    }
+    s.finish().unwrap();
+    let mut d = jpeg_decoder::Decoder::new(&out[..]);
+    d.decode().unwrap();
+    assert_eq!(d.info().unwrap().height, 32);
+}
