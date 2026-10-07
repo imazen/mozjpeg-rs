@@ -384,9 +384,12 @@ impl CMozjpeg {
 
             // Write custom markers
             for (marker_type, data) in &self.custom_markers {
+                // `marker_type` is an APPn number (0..=15); the JPEG marker
+                // code is 0xE0 + n. Writing the bare number emitted markers
+                // like 0xE3 as 0x03.
                 jpeg_write_marker(
                     &mut cinfo,
-                    *marker_type as i32,
+                    0xE0 + *marker_type as i32,
                     data.as_ptr(),
                     data.len() as u32,
                 );
@@ -727,40 +730,80 @@ impl CMozjpeg {
                 self.write_icc_profile(&mut cinfo, icc);
             }
             for (marker_type, data) in &self.custom_markers {
+                // See note above: APPn number -> 0xE0 + n marker code.
                 jpeg_write_marker(
                     &mut cinfo,
-                    *marker_type as i32,
+                    0xE0 + *marker_type as i32,
                     data.as_ptr(),
                     data.len() as u32,
                 );
             }
 
-            // Write raw data in MCU rows
-            // For raw_data_in, we must provide data in units of max_v_samp_factor * DCTSIZE rows
+            // Write raw data in MCU rows. `jpeg_write_raw_data` bypasses the
+            // downsampler and reads, for each component, `width_in_blocks * 8`
+            // samples per row and `height_in_blocks * 8` rows (libjpeg.txt,
+            // "Raw (downsampled) image data"). The caller must pad to those
+            // multiples of 8. Passing the tightly-packed `width`/`chroma_width`
+            // rows directly made libjpeg read past the end of each row for any
+            // dimension not already a multiple of 8 — a heap over-read.
+            //
+            // Build MCU-aligned copies of all three planes once, replicating
+            // the last column and row into the padding, then hand libjpeg
+            // pointers into those. One row per block row; the number of block
+            // rows is rounded up to a whole iMCU so the final call has its full
+            // `max_v_samp_factor * 8` luma rows.
             let mcu_rows = cinfo.max_v_samp_factor as usize * DCTSIZE as usize;
+            let round8 = |n: usize| n.div_ceil(DCTSIZE as usize) * DCTSIZE as usize;
+            let imcu_rows = (height as usize).div_ceil(mcu_rows);
 
-            // Allocate row pointer arrays
+            // Padded plane: `rows` rows of `stride` samples, edge-replicated.
+            let pad_plane = |src: &[u8], w: usize, h: usize, stride: usize, rows: usize| {
+                let mut out = vec![0u8; stride * rows];
+                for r in 0..rows {
+                    let sr = r.min(h - 1);
+                    let dst = &mut out[r * stride..r * stride + stride];
+                    dst[..w].copy_from_slice(&src[sr * w..sr * w + w]);
+                    // Replicate the last real column into the padding columns.
+                    if w < stride {
+                        let last = src[sr * w + w - 1];
+                        dst[w..].fill(last);
+                    }
+                }
+                out
+            };
+
+            let y_stride = round8(width as usize);
+            let y_total_rows = imcu_rows * mcu_rows;
+            let padded_y = pad_plane(y, width as usize, height as usize, y_stride, y_total_rows);
+
+            // Chroma has v_samp_factor 1, so it consumes 8 rows per iMCU row.
+            let c_stride = round8(chroma_width);
+            let c_total_rows = imcu_rows * DCTSIZE as usize;
+            let padded_cb = pad_plane(cb, chroma_width, chroma_height, c_stride, c_total_rows);
+            let padded_cr = pad_plane(cr, chroma_width, chroma_height, c_stride, c_total_rows);
+
             let mut y_rows: Vec<*const u8> = vec![ptr::null(); mcu_rows];
             let mut cb_rows: Vec<*const u8> = vec![ptr::null(); mcu_rows];
             let mut cr_rows: Vec<*const u8> = vec![ptr::null(); mcu_rows];
 
             let mut row = 0usize;
             while row < height as usize {
-                // Set up Y row pointers
+                // Luma: this iMCU row's `mcu_rows` rows, all in the padded plane.
                 for i in 0..mcu_rows {
-                    let src_row = (row + i).min(height as usize - 1);
-                    y_rows[i] = y.as_ptr().add(src_row * width as usize);
+                    y_rows[i] = padded_y.as_ptr().add((row + i) * y_stride);
                 }
 
-                // Set up Cb/Cr row pointers (subsampled)
+                // Chroma: 8 rows starting at this iMCU row's chroma origin.
+                // libjpeg reads only the first `v_samp_factor * 8` = 8; the
+                // remaining slots are filled with the last valid row so no
+                // pointer is dangling.
                 let chroma_row = row / v_factor;
                 for i in 0..mcu_rows {
-                    let src_row = (chroma_row + i / v_factor).min(chroma_height - 1);
-                    cb_rows[i] = cb.as_ptr().add(src_row * chroma_width);
-                    cr_rows[i] = cr.as_ptr().add(src_row * chroma_width);
+                    let cidx = (chroma_row + i).min(c_total_rows - 1);
+                    cb_rows[i] = padded_cb.as_ptr().add(cidx * c_stride);
+                    cr_rows[i] = padded_cr.as_ptr().add(cidx * c_stride);
                 }
 
-                // Build component pointer array for this batch
                 let comp_ptrs: [*const *const u8; 3] =
                     [y_rows.as_ptr(), cb_rows.as_ptr(), cr_rows.as_ptr()];
 
@@ -1029,5 +1072,97 @@ mod tests {
                 .expect("marker payload not found")
         };
         assert!(find(b"Exif\0\0") < find(xmp));
+    }
+
+    fn decode(jpeg: &[u8]) -> (Vec<u8>, usize, usize) {
+        let mut d = jpeg_decoder::Decoder::new(jpeg);
+        let px = d.decode().expect("decode failed");
+        let info = d.info().unwrap();
+        (px, info.width as usize, info.height as usize)
+    }
+
+    /// Non-MCU-aligned planar input must encode into a valid, decodable JPEG.
+    /// The raw-data path used to point libjpeg at tightly-packed rows, so for
+    /// a width not a multiple of 8 libjpeg over-read past each row's end.
+    #[test]
+    fn test_c_planar_non_mcu_aligned_is_valid() {
+        use mozjpeg_rs::Subsampling;
+        for sub in [
+            Subsampling::S444,
+            Subsampling::S422,
+            Subsampling::S420,
+            Subsampling::S440,
+        ] {
+            for &(w, h) in &[(17usize, 17usize), (37, 29), (1, 1), (8, 9)] {
+                let (hf, vf) = match sub {
+                    Subsampling::S444 => (1, 1),
+                    Subsampling::S422 => (2, 1),
+                    Subsampling::S420 => (2, 2),
+                    Subsampling::S440 => (1, 2),
+                    Subsampling::Gray => unreachable!(),
+                };
+                let cw = w.div_ceil(hf);
+                let ch = h.div_ceil(vf);
+                let y: Vec<u8> = (0..w * h).map(|i| (i * 7 % 256) as u8).collect();
+                let cb = vec![110u8; cw * ch];
+                let cr = vec![150u8; cw * ch];
+                let jpeg = Encoder::new(Preset::BaselineBalanced)
+                    .quality(85)
+                    .subsampling(sub)
+                    .to_c_mozjpeg()
+                    .encode_ycbcr_planar(&y, &cb, &cr, w as u32, h as u32)
+                    .expect("C planar encode failed");
+                let (_px, dw, dh) = decode(&jpeg);
+                assert_eq!((dw, dh), (w, h), "{sub:?} {w}x{h}");
+            }
+        }
+    }
+
+    /// Each chroma row must map to a distinct source row. The raw-data path
+    /// indexed chroma as `chroma_row + i / v_factor`, duplicating every
+    /// 4:2:0 / 4:4:0 chroma row and dropping half. A per-row chroma gradient
+    /// makes that visible; the C oracle must agree with the Rust planar
+    /// encoder (same algorithm, so decoded pixels match within rounding).
+    #[test]
+    fn test_c_planar_chroma_rows_not_duplicated() {
+        use mozjpeg_rs::Subsampling;
+        let (w, h) = (16usize, 16usize);
+        let (cw, ch) = (8usize, 8usize); // 4:2:0
+        let y = vec![128u8; w * h];
+        // Distinct Cb per chroma row; Cr flat.
+        let cb: Vec<u8> = (0..ch).flat_map(|r| vec![40 + 12 * r as u8; cw]).collect();
+        let cr = vec![128u8; cw * ch];
+        let enc = Encoder::new(Preset::BaselineBalanced)
+            .quality(100)
+            .subsampling(Subsampling::S420)
+            .overshoot_deringing(false);
+        let c = enc
+            .to_c_mozjpeg()
+            .encode_ycbcr_planar(&y, &cb, &cr, w as u32, h as u32)
+            .unwrap();
+        let rust = enc
+            .encode_ycbcr_planar(&y, &cb, &cr, w as u32, h as u32)
+            .unwrap();
+        let (cpx, ..) = decode(&c);
+        let (rpx, ..) = decode(&rust);
+        // The C oracle and the Rust encoder run the same algorithm; decoded
+        // pixels must agree within JPEG rounding. Pre-fix, C's duplicated
+        // chroma rows diverged by tens of levels.
+        let maxdiff = cpx
+            .iter()
+            .zip(&rpx)
+            .map(|(a, b)| (*a as i32 - *b as i32).abs())
+            .max()
+            .unwrap();
+        assert!(maxdiff <= 2, "C vs Rust planar decoded maxdiff={maxdiff}");
+        // And the blue channel must actually vary down the rows (not constant
+        // from duplicated chroma): compare row 0 vs row 10.
+        let blue = |row: usize| cpx[(row * w + 4) * 3 + 2];
+        assert!(
+            blue(10).abs_diff(blue(0)) > 10,
+            "chroma gradient collapsed: blue row0={} row10={}",
+            blue(0),
+            blue(10)
+        );
     }
 }

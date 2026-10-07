@@ -64,10 +64,10 @@ pub(crate) mod helpers;
 mod streaming;
 
 pub(crate) use helpers::{
-    create_components, create_std_ac_chroma_table, create_std_ac_luma_table,
+    MAX_DIMENSION, create_components, create_std_ac_chroma_table, create_std_ac_luma_table,
     create_std_dc_chroma_table, create_std_dc_luma_table, create_ycbcr_components,
-    natural_to_zigzag, run_dc_trellis_by_row, try_alloc_vec, try_alloc_vec_array, write_dht_marker,
-    write_sos_marker,
+    natural_to_zigzag, run_dc_trellis_by_row, try_alloc_vec, try_alloc_vec_array,
+    validate_dimensions, write_dht_marker, write_sos_marker,
 };
 pub use streaming::{EncodingStream, StreamingEncoder};
 
@@ -1343,9 +1343,7 @@ impl Encoder {
     /// JPEG-encoded data as a `Vec<u8>`.
     pub fn encode_rgb(&self, rgb_data: &[u8], width: u32, height: u32) -> Result<Vec<u8>> {
         // Validate dimensions: must be non-zero
-        if width == 0 || height == 0 {
-            return Err(Error::InvalidDimensions { width, height });
-        }
+        validate_dimensions(width, height)?;
 
         // Check all resource limits
         self.check_limits(width, height, false)?;
@@ -1394,9 +1392,7 @@ impl Encoder {
     /// JPEG-encoded data as a `Vec<u8>`.
     pub fn encode_gray(&self, gray_data: &[u8], width: u32, height: u32) -> Result<Vec<u8>> {
         // Validate dimensions: must be non-zero
-        if width == 0 || height == 0 {
-            return Err(Error::InvalidDimensions { width, height });
-        }
+        validate_dimensions(width, height)?;
 
         // Check all resource limits
         self.check_limits(width, height, true)?;
@@ -1607,9 +1603,7 @@ impl Encoder {
         stop: &dyn enough::Stop,
     ) -> Result<Vec<u8>> {
         // Validate dimensions
-        if width == 0 || height == 0 {
-            return Err(Error::InvalidDimensions { width, height });
-        }
+        validate_dimensions(width, height)?;
 
         // Check all resource limits
         self.check_limits(width, height, false)?;
@@ -1676,9 +1670,7 @@ impl Encoder {
         stop: &dyn enough::Stop,
     ) -> Result<Vec<u8>> {
         // Validate dimensions
-        if width == 0 || height == 0 {
-            return Err(Error::InvalidDimensions { width, height });
-        }
+        validate_dimensions(width, height)?;
 
         // Check all resource limits
         self.check_limits(width, height, true)?;
@@ -1737,9 +1729,7 @@ impl Encoder {
     /// # Returns
     /// JPEG-encoded data as a `Vec<u8>`.
     pub fn encode_rgba(&self, rgba_data: &[u8], width: u32, height: u32) -> Result<Vec<u8>> {
-        if width == 0 || height == 0 {
-            return Err(Error::InvalidDimensions { width, height });
-        }
+        validate_dimensions(width, height)?;
         self.check_limits(width, height, false)?;
 
         let expected_len = (width as usize)
@@ -1769,9 +1759,7 @@ impl Encoder {
         height: u32,
         stop: &dyn enough::Stop,
     ) -> Result<Vec<u8>> {
-        if width == 0 || height == 0 {
-            return Err(Error::InvalidDimensions { width, height });
-        }
+        validate_dimensions(width, height)?;
         self.check_limits(width, height, false)?;
 
         let expected_len = (width as usize)
@@ -2722,16 +2710,11 @@ impl Encoder {
         height: u32,
         output: W,
     ) -> Result<()> {
+        // Validate dimensions (against the SOF 2-byte field limit) before
+        // widening to usize for the geometry math below.
+        validate_dimensions(width, height)?;
         let width = width as usize;
         let height = height as usize;
-
-        // Validate dimensions
-        if width == 0 || height == 0 {
-            return Err(Error::InvalidDimensions {
-                width: width as u32,
-                height: height as u32,
-            });
-        }
 
         // Validate Y stride
         if y_stride < width {

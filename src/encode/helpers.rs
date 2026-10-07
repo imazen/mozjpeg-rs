@@ -10,10 +10,33 @@ use crate::consts::{
     DC_CHROMINANCE_BITS, DC_CHROMINANCE_VALUES, DC_LUMINANCE_BITS, DC_LUMINANCE_VALUES, DCTSIZE2,
     JPEG_DHT, JPEG_NATURAL_ORDER, JPEG_SOS,
 };
-use crate::error::Result;
+use crate::error::{Error, Result};
 use crate::huffman::{DerivedTable, HuffTable};
 use crate::trellis::dc_trellis_optimize_indexed;
 use crate::types::{ComponentInfo, ScanInfo, Subsampling};
+
+// ============================================================================
+// Dimension validation
+// ============================================================================
+
+/// Largest width or height that fits a JPEG SOF marker (2-byte fields).
+///
+/// C mozjpeg/libjpeg refuses anything over `JPEG_MAX_DIMENSION` (65500); the
+/// format itself allows up to 65535, and this encoder emits up to that.
+pub(crate) const MAX_DIMENSION: u32 = 65535;
+
+/// Reject dimensions that cannot be encoded: zero, or larger than a SOF
+/// marker's 2-byte width/height field can hold. Without the upper bound a
+/// value above 65535 is silently truncated into the `u16` SOF field (e.g.
+/// 65537 becomes 1), producing a header that misdescribes the image instead
+/// of an error.
+#[inline]
+pub(crate) fn validate_dimensions(width: u32, height: u32) -> Result<()> {
+    if width == 0 || height == 0 || width > MAX_DIMENSION || height > MAX_DIMENSION {
+        return Err(Error::InvalidDimensions { width, height });
+    }
+    Ok(())
+}
 
 // ============================================================================
 // Allocation Helpers

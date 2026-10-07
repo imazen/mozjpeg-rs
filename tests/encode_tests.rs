@@ -2425,3 +2425,90 @@ fn test_rgb_color_space_gray_input_and_metadata() {
     let apps: Vec<u8> = app_segments(&jpeg).iter().map(|(n, _)| *n).collect();
     assert_eq!(apps, [14, 1, 2]);
 }
+
+// ============================================================================
+// Input validation hardening (dimensions, streaming row counts)
+// ============================================================================
+
+/// Dimensions past the JPEG SOF 2-byte field (65535) must be rejected, not
+/// silently truncated into the `u16` header (65537 -> a 1-px header).
+#[test]
+fn test_dimension_over_65535_rejected() {
+    use mozjpeg_rs::Error;
+    let enc = Encoder::new(mozjpeg_rs::Preset::BaselineFastest);
+    // Buffer length is checked after the dimension gate, so a tiny buffer is
+    // fine — we assert on the error variant, and that nothing is encoded.
+    for (w, h) in [(65_536u32, 1u32), (1, 65_536), (70_000, 70_000)] {
+        assert!(
+            matches!(
+                enc.encode_rgb(&[], w, h),
+                Err(Error::InvalidDimensions { .. })
+            ),
+            "rgb {w}x{h}"
+        );
+        assert!(
+            matches!(
+                enc.encode_gray(&[], w, h),
+                Err(Error::InvalidDimensions { .. })
+            ),
+            "gray {w}x{h}"
+        );
+    }
+    // 65535 is the largest valid value: it must pass the dimension gate and
+    // fail only on the buffer-length check (proving the gate let it through).
+    assert!(matches!(
+        enc.encode_gray(&[0u8; 4], 65_535, 1),
+        Err(Error::BufferSizeMismatch { .. })
+    ));
+}
+
+/// Streaming must receive exactly the declared number of scanlines: too few
+/// by `finish()` is an error, and writing more than the height is an error.
+#[test]
+fn test_streaming_scanline_count_enforced() {
+    use mozjpeg_rs::Error;
+    let (w, h) = (16u32, 32u32);
+    let row = vec![90u8; (w * 3) as usize];
+
+    // Too few rows: finish() rejects.
+    let mut out = Vec::new();
+    let mut s = StreamingEncoder::baseline_fastest()
+        .start_rgb(w, h, &mut out)
+        .unwrap();
+    for _ in 0..16 {
+        s.write_scanlines(&row).unwrap();
+    }
+    assert!(matches!(
+        s.finish(),
+        Err(Error::ScanlineCountMismatch {
+            expected: 32,
+            received: 16
+        })
+    ));
+
+    // Too many rows: write_scanlines rejects as soon as the total exceeds h.
+    let mut out = Vec::new();
+    let mut s = StreamingEncoder::baseline_fastest()
+        .start_rgb(w, h, &mut out)
+        .unwrap();
+    for _ in 0..32 {
+        s.write_scanlines(&row).unwrap();
+    }
+    assert!(matches!(
+        s.write_scanlines(&row),
+        Err(Error::ScanlineCountMismatch { expected: 32, .. })
+    ));
+
+    // Exactly h rows still succeeds and decodes to the full height.
+    let mut out = Vec::new();
+    let mut s = StreamingEncoder::baseline_fastest()
+        .start_rgb(w, h, &mut out)
+        .unwrap();
+    for _ in 0..32 {
+        s.write_scanlines(&row).unwrap();
+    }
+    s.finish().unwrap();
+    let mut d = jpeg_decoder::Decoder::new(&out[..]);
+    d.decode().unwrap();
+    assert_eq!(d.info().unwrap().height, 32);
+}

@@ -80,6 +80,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Dimensions above 65535 were silently truncated.** `encode_rgb`,
+  `encode_rgba`, `encode_gray`, the strided and planar entry points, and the
+  streaming encoder cast width/height into the SOF marker's 2-byte fields
+  without a range check, so e.g. 65537×1 produced a valid-looking 1×1 header
+  and returned `Ok`. They now return `Error::InvalidDimensions`. The
+  `imgref` path computed its buffer size with `u32` arithmetic that could
+  overflow for large-but-in-range dimensions; it now validates and uses
+  checked `usize` math.
+- **Streaming accepted the wrong number of scanlines.** `EncodingStream` did
+  not track rows against the declared height: writing fewer rows than the
+  height still produced `Ok` with a truncated image, and writing more
+  encoded past the SOF height. It now returns the new
+  `Error::ScanlineCountMismatch` when more rows are written than the image
+  has, or when `finish()` is reached with too few.
 - **Undecodable files from `MozjpegExact` trellis with
   `optimize_huffman(false)`** (a C mozjpeg bug the exact mode reproduced):
   C emits Huffman tables gathered from component 0's single-component

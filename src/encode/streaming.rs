@@ -16,7 +16,7 @@ use crate::types::{ComponentInfo, Limits, PixelDensity, QuantTable, Subsampling}
 
 use super::{
     Encode, create_std_ac_chroma_table, create_std_ac_luma_table, create_std_dc_chroma_table,
-    create_std_dc_luma_table, try_alloc_vec,
+    create_std_dc_luma_table, try_alloc_vec, validate_dimensions,
 };
 
 /// Streaming JPEG encoder configuration.
@@ -500,6 +500,11 @@ pub struct EncodingStream<W: Write> {
     writer: MarkerWriter<W>,
     /// Image width
     width: u32,
+    /// Image height declared in the SOF; the stream must receive exactly this
+    /// many scanlines before `finish()`.
+    height: u32,
+    /// Scanlines received so far via `write_scanlines`.
+    rows_received: u32,
     /// Number of color components (1 for gray, 3 for RGB/YCbCr)
     num_components: u8,
     /// Bytes per input pixel
@@ -563,10 +568,8 @@ impl<W: Write> EncodingStream<W> {
         input_components: u8,
         writer: W,
     ) -> Result<Self> {
-        // Validate dimensions
-        if width == 0 || height == 0 {
-            return Err(Error::InvalidDimensions { width, height });
-        }
+        // Validate dimensions (zero, or past the SOF 2-byte field limit)
+        validate_dimensions(width, height)?;
 
         // Subsampling::Gray with RGB input writes a grayscale JPEG; scanlines
         // are reduced to luma as they are buffered.
@@ -752,6 +755,8 @@ impl<W: Write> EncodingStream<W> {
         Ok(Self {
             writer: marker_writer,
             width,
+            height,
+            rows_received: 0,
             num_components,
             bytes_per_pixel: input_components,
             subsampling: config.subsampling,
@@ -792,6 +797,16 @@ impl<W: Write> EncodingStream<W> {
                 actual: data.len(),
             });
         }
+
+        // Reject more scanlines than the declared image height; encoding them
+        // would push MCU rows past the SOF height and desync the stream.
+        if self.rows_received + lines_in_data as u32 > self.height {
+            return Err(Error::ScanlineCountMismatch {
+                expected: self.height,
+                received: self.rows_received + lines_in_data as u32,
+            });
+        }
+        self.rows_received += lines_in_data as u32;
 
         let mut data_offset = 0;
         let mut lines_remaining = lines_in_data as u32;
@@ -1224,6 +1239,15 @@ impl<W: Write> EncodingStream<W> {
     /// This must be called after all scanlines have been written.
     /// Consumes the stream and returns the underlying writer.
     pub fn finish(mut self) -> Result<W> {
+        // Every declared scanline must have been written, or the SOF height
+        // overpromises what the entropy stream contains.
+        if self.rows_received != self.height {
+            return Err(Error::ScanlineCountMismatch {
+                expected: self.height,
+                received: self.rows_received,
+            });
+        }
+
         // Encode any remaining lines in the buffer (partial MCU row)
         if self.lines_in_buffer > 0 {
             // Pad the buffer with the last line (buffered lines hold

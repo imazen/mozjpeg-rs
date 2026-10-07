@@ -6,7 +6,7 @@
 # impls omitted; re-export duplicates annotated `[also: path]`.
 # DO NOT EDIT BY HAND — commit regenerated changes with the code.
 #
-# files: mozjpeg-rs.txt 265 lines (supported surface) | mozjpeg-rs.features.txt 17 added (features: fast-yuv,imgref,png,simd,simd-intrinsics,zencodec) | mozjpeg-rs.internal.txt 404 lines (571 hidden + 0 excluded-feature)
+# files: mozjpeg-rs.txt 268 lines (supported surface) | mozjpeg-rs.features.txt 17 added (features: fast-yuv,imgref,png,simd,simd-intrinsics,zencodec) | mozjpeg-rs.internal.txt 404 lines (571 hidden + 0 excluded-feature)
 
 ## summary
 #
@@ -15,18 +15,18 @@
 #   pub consts/statics                         27
 #   free functions                              8
 #   inherent methods                           92
-#   struct fields                              56
-#   enum variants                              44
+#   struct fields                              58
+#   enum variants                              45
 #   re-exports                                  4
 #   trait roster entries (type × trait)        78
 #   auto-trait-complete types                  13
 #   auto-trait exceptions                       1
 #
 # per-module pub lines:
-#   (root)                          247
+#   (root)                          250
 #   imgref_ext                        4
 
-## items (244 lines)
+## items (247 lines)
 
 pub mod mozjpeg_rs
 pub use DCTSIZE2
@@ -92,6 +92,9 @@ pub Error::MarkerDataTooLarge::size: usize
 pub Error::PixelCountExceeded
 pub Error::PixelCountExceeded::limit: u64
 pub Error::PixelCountExceeded::pixel_count: u64
+pub Error::ScanlineCountMismatch
+pub Error::ScanlineCountMismatch::expected: u32
+pub Error::ScanlineCountMismatch::received: u32
 pub Error::TimedOut
 pub Error::UnsupportedColorSpace
 pub Error::UnsupportedFeature(&'static str)
