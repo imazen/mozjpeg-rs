@@ -354,7 +354,7 @@ pub use error::Result;
 /// | [`S422`](Subsampling::S422) | 4:2:2 | Horizontal subsampling |
 /// | [`S420`](Subsampling::S420) | 4:2:0 | Both directions (most common) |
 /// | [`S440`](Subsampling::S440) | 4:4:0 | Vertical subsampling only |
-/// | [`Gray`](Subsampling::Gray) | N/A | Grayscale (1 component) |
+/// | [`Gray`](Subsampling::Gray) | N/A | Grayscale (1 component); color input is encoded as its luma |
 ///
 /// # Example
 ///
@@ -376,6 +376,25 @@ pub use error::Result;
 /// # }
 /// ```
 pub use types::Subsampling;
+
+/// Color space color input is stored in: YCbCr (default) or untransformed RGB.
+///
+/// # Example
+///
+/// ```no_run
+/// use mozjpeg_rs::{Encoder, JpegColorSpace, Preset};
+///
+/// # fn main() -> Result<(), mozjpeg_rs::Error> {
+/// # let pixels: Vec<u8> = vec![0; 100 * 100 * 3];
+/// // Keep R, G and B independent (no YCbCr transform, no subsampling)
+/// let jpeg = Encoder::new(Preset::default())
+///     .quality(90)
+///     .color_space(JpegColorSpace::Rgb)
+///     .encode_rgb(&pixels, 100, 100)?;
+/// # Ok(())
+/// # }
+/// ```
+pub use types::JpegColorSpace;
 
 /// Encoder preset controlling compression mode and optimization level.
 ///

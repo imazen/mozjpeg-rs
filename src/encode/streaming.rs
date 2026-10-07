@@ -147,6 +147,10 @@ impl StreamingEncoder {
     }
 
     /// Set chroma subsampling mode.
+    ///
+    /// [`Subsampling::Gray`] makes [`start_rgb`](Self::start_rgb) write a
+    /// grayscale JPEG: each RGB scanline is reduced to its luma as it is
+    /// buffered.
     pub fn subsampling(mut self, mode: Subsampling) -> Self {
         self.subsampling = mode;
         self
@@ -556,13 +560,21 @@ impl<W: Write> EncodingStream<W> {
         config: StreamingEncoder,
         width: u32,
         height: u32,
-        num_components: u8,
+        input_components: u8,
         writer: W,
     ) -> Result<Self> {
         // Validate dimensions
         if width == 0 || height == 0 {
             return Err(Error::InvalidDimensions { width, height });
         }
+
+        // Subsampling::Gray with RGB input writes a grayscale JPEG; scanlines
+        // are reduced to luma as they are buffered.
+        let num_components = if config.subsampling == Subsampling::Gray {
+            1
+        } else {
+            input_components
+        };
 
         // Check all resource limits. Ordered exactly as on the batch path:
         // after the zero-dimension check, before any allocation, marker write,
@@ -741,7 +753,7 @@ impl<W: Write> EncodingStream<W> {
             writer: marker_writer,
             width,
             num_components,
-            bytes_per_pixel: num_components,
+            bytes_per_pixel: input_components,
             subsampling: config.subsampling,
             mcu_height,
             mcu_width,
@@ -790,10 +802,20 @@ impl<W: Write> EncodingStream<W> {
                 (self.mcu_height - self.lines_in_buffer).min(lines_remaining) as usize;
 
             // Copy lines to buffer
-            let buffer_offset = self.lines_in_buffer as usize * bytes_per_line;
             let src_bytes = lines_to_copy * bytes_per_line;
-            self.scanline_buffer[buffer_offset..buffer_offset + src_bytes]
-                .copy_from_slice(&data[data_offset..data_offset + src_bytes]);
+            let src = &data[data_offset..data_offset + src_bytes];
+            if self.bytes_per_pixel == self.num_components {
+                let buffer_offset = self.lines_in_buffer as usize * bytes_per_line;
+                self.scanline_buffer[buffer_offset..buffer_offset + src_bytes].copy_from_slice(src);
+            } else {
+                // RGB input, grayscale output: keep only luma.
+                let buffer_offset = self.lines_in_buffer as usize * self.width as usize;
+                let dst = &mut self.scanline_buffer
+                    [buffer_offset..buffer_offset + lines_to_copy * self.width as usize];
+                for (g, px) in dst.iter_mut().zip(src.chunks_exact(3)) {
+                    *g = crate::color::rgb_to_gray(px[0], px[1], px[2]);
+                }
+            }
 
             self.lines_in_buffer += lines_to_copy as u32;
             data_offset += src_bytes;
@@ -1204,8 +1226,9 @@ impl<W: Write> EncodingStream<W> {
     pub fn finish(mut self) -> Result<W> {
         // Encode any remaining lines in the buffer (partial MCU row)
         if self.lines_in_buffer > 0 {
-            // Pad the buffer with the last line
-            let bytes_per_line = self.width as usize * self.bytes_per_pixel as usize;
+            // Pad the buffer with the last line (buffered lines hold
+            // `num_components` bytes per pixel, not the input's)
+            let bytes_per_line = self.width as usize * self.num_components as usize;
             let last_line_start = (self.lines_in_buffer as usize - 1) * bytes_per_line;
             let last_line =
                 self.scanline_buffer[last_line_start..last_line_start + bytes_per_line].to_vec();

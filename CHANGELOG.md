@@ -9,6 +9,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`JpegColorSpace` / `Encoder::color_space`** — store RGB/RGBA input
+  without a color transform (`JpegColorSpace::Rgb`), for data whose
+  channels are independent measurements (e.g. microscopy stain channels)
+  and must not bleed into each other through YCbCr conversion and chroma
+  subsampling (#10). Matches C mozjpeg's `jpeg_set_colorspace(JCS_RGB)`:
+  component IDs `'R','G','B'`, always 4:4:4, every component on
+  quantization table 0 and Huffman slot 0 (optimized tables are built from
+  the joint statistics), an Adobe APP14 marker with transform 0 in place
+  of the JFIF APP0, and C's all-purpose progressive script (successive
+  approximation on every channel). Output is byte-identical to upstream C
+  mozjpeg for baseline and progressive, optimized and standard Huffman
+  tables, and `TrellisMode::MozjpegExact { speed_level: 0 }`
+  (`tests/ffi_validation.rs`). Also available as
+  `MozjpegEncoderConfig::with_color_space` (zencodec) and through
+  `Encoder::to_c_mozjpeg()`. `Subsampling::Gray` with RGB, and planar
+  YCbCr input, are rejected with `Error::UnsupportedFeature`.
+
 - **`TrellisMode`** and **`TrellisMode::MozjpegExact`** — a public opt-in
   trellis-quantization mode that reproduces the patched C mozjpeg
   encoder's output byte-exactly. Select it with
@@ -56,6 +73,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   return. The module remains `#[doc(hidden)]` unstable tooling surface.
 
 ### Fixed
+
+- **`Subsampling::Gray` with color input** (#9): `encode_rgb`,
+  `encode_rgba` and their variants panicked with "index out of bounds" in
+  the SOS writer for progressive presets, and baseline presets silently
+  wrote a 1-component frame header over 3-component scan data (an
+  undecodable file). Color input with `Subsampling::Gray` now encodes its
+  luma (C's `rgb_gray_convert`) as a grayscale JPEG — byte-identical to
+  C mozjpeg's RGB -> `JCS_GRAYSCALE` encode. `encode_ycbcr_planar` with
+  `Subsampling::Gray` encodes the Y plane, `StreamingEncoder::start_rgb`
+  honors `Subsampling::Gray` instead of writing 4:4:4 YCbCr, and
+  `CMozjpeg` no longer makes libjpeg exit the process ("Unsupported color
+  conversion request").
 
 - **`CMozjpeg` EXIF marker** (`mozjpeg-sys-config`): the C-compat path
   wrote the raw TIFF payload as APP1 without the required `Exif\0\0`

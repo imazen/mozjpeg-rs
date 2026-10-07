@@ -175,6 +175,43 @@ pub fn generate_mozjpeg_max_compression_scans(num_components: u8) -> Vec<ScanInf
     scans
 }
 
+/// Generate C mozjpeg's JCP_MAX_COMPRESSION "all-purpose" scan script, used
+/// for every color space other than 3-component YCbCr (jcparam.c
+/// `jpeg_simple_progression`, the `jpeg_scan_bw.txt` branch). Unlike the
+/// YCbCr script it treats all components alike: each gets luma-style
+/// successive approximation.
+///
+/// Script (13 scans for 3 components, e.g. RGB):
+/// 1. DC all components (al=0)
+/// 2. each component 1-8 (al=2)
+/// 3. each component 9-63 (al=2)
+/// 4. each component refine 1-63 (ah=2, al=1)
+/// 5. each component refine 1-63 (ah=1, al=0)
+///
+/// For one component this is the same 5-scan script as
+/// [`generate_mozjpeg_max_compression_scans`]`(1)`.
+pub fn generate_mozjpeg_max_compression_generic_scans(num_components: u8) -> Vec<ScanInfo> {
+    let mut scans = Vec::new();
+
+    // fill_dc_scans: one interleaved DC scan when the components fit in a scan
+    if num_components as usize <= MAX_COMPS_IN_SCAN {
+        scans.push(ScanInfo::dc_scan(num_components));
+    } else {
+        for comp in 0..num_components {
+            scans.push(ScanInfo::dc_scan_single(comp));
+        }
+    }
+
+    // fill_scans: one scan per component for each band/approximation step
+    for (ss, se, ah, al) in [(1, 8, 0, 2), (9, 63, 0, 2), (1, 63, 2, 1), (1, 63, 1, 0)] {
+        for comp in 0..num_components {
+            scans.push(ScanInfo::ac_scan(comp, ss, se, ah, al));
+        }
+    }
+
+    scans
+}
+
 /// Generate C mozjpeg's jpeg_simple_progression scan script (optimize_scans=false).
 ///
 /// This exactly matches jcparam.c lines 961-979 - the "else" branch when
@@ -706,6 +743,29 @@ mod tests {
         for script in &candidates {
             assert!(validate_scan_script(script, 3).is_ok());
         }
+    }
+
+    #[test]
+    fn test_mozjpeg_max_compression_generic_scans() {
+        // jcparam.c jpeg_scan_bw branch for ncomps = 3 (e.g. JCS_RGB):
+        // fill_dc_scans(3,0,0) then fill_scans(3, ...) four times.
+        let scans = generate_mozjpeg_max_compression_generic_scans(3);
+        assert_eq!(scans.len(), 1 + 4 * 3);
+        assert_eq!(scans[0], ScanInfo::dc_scan(3));
+        let steps = [(1, 8, 0, 2), (9, 63, 0, 2), (1, 63, 2, 1), (1, 63, 1, 0)];
+        for (i, &(ss, se, ah, al)) in steps.iter().enumerate() {
+            for comp in 0..3u8 {
+                let scan = scans[1 + i * 3 + comp as usize];
+                assert_eq!(scan, ScanInfo::ac_scan(comp, ss, se, ah, al));
+            }
+        }
+        assert!(validate_scan_script(&scans, 3).is_ok());
+
+        // One component degenerates to the grayscale max-compression script.
+        assert_eq!(
+            generate_mozjpeg_max_compression_generic_scans(1),
+            generate_mozjpeg_max_compression_scans(1)
+        );
     }
 
     #[test]

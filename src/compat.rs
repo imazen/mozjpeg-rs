@@ -29,7 +29,7 @@
 
 use crate::consts::QuantTableIdx;
 use crate::error::{Error, Result};
-use crate::types::{Subsampling, TrellisConfig};
+use crate::types::{JpegColorSpace, Subsampling, TrellisConfig};
 
 /// Warnings from configuring a C mozjpeg encoder.
 ///
@@ -120,6 +120,7 @@ pub struct CMozjpeg {
     pub(crate) quality: u8,
     pub(crate) force_baseline: bool,
     pub(crate) subsampling: Subsampling,
+    pub(crate) color_space: JpegColorSpace,
     pub(crate) progressive: bool,
     pub(crate) optimize_huffman: bool,
     pub(crate) optimize_scans: bool,
@@ -179,27 +180,37 @@ impl CMozjpeg {
             if self.force_baseline { 1 } else { 0 },
         );
 
-        // Set subsampling factors
-        let (h_samp, v_samp) = match self.subsampling {
-            Subsampling::S444 => (1, 1),
-            Subsampling::S422 => (2, 1),
-            Subsampling::S420 => (2, 2),
-            Subsampling::S440 => (1, 2),
-            Subsampling::Gray => {
-                // Grayscale: single component
-                cinfo.input_components = 1;
-                cinfo.in_color_space = J_COLOR_SPACE::JCS_GRAYSCALE;
-                (1, 1)
+        if self.color_space == JpegColorSpace::Rgb {
+            if self.subsampling == Subsampling::Gray {
+                return Err(ConfigError::UnsupportedSubsampling(Subsampling::Gray));
             }
-        };
+            // R, G, B stored untransformed: component IDs 'R','G','B', all
+            // 1x1 on table 0, Adobe marker instead of JFIF. Must precede
+            // jpeg_simple_progression, which picks its script from it.
+            jpeg_set_colorspace(cinfo, J_COLOR_SPACE::JCS_RGB);
+        } else {
+            // Set subsampling factors
+            let (h_samp, v_samp) = match self.subsampling {
+                Subsampling::S444 => (1, 1),
+                Subsampling::S422 => (2, 1),
+                Subsampling::S420 => (2, 2),
+                Subsampling::S440 => (1, 2),
+                Subsampling::Gray => {
+                    // Grayscale output from the RGB input configured above:
+                    // libjpeg converts RGB -> Y itself (rgb_gray_convert).
+                    jpeg_set_colorspace(cinfo, J_COLOR_SPACE::JCS_GRAYSCALE);
+                    (1, 1)
+                }
+            };
 
-        if self.subsampling != Subsampling::Gray {
-            (*cinfo.comp_info.offset(0)).h_samp_factor = h_samp;
-            (*cinfo.comp_info.offset(0)).v_samp_factor = v_samp;
-            (*cinfo.comp_info.offset(1)).h_samp_factor = 1;
-            (*cinfo.comp_info.offset(1)).v_samp_factor = 1;
-            (*cinfo.comp_info.offset(2)).h_samp_factor = 1;
-            (*cinfo.comp_info.offset(2)).v_samp_factor = 1;
+            if self.subsampling != Subsampling::Gray {
+                (*cinfo.comp_info.offset(0)).h_samp_factor = h_samp;
+                (*cinfo.comp_info.offset(0)).v_samp_factor = v_samp;
+                (*cinfo.comp_info.offset(1)).h_samp_factor = 1;
+                (*cinfo.comp_info.offset(1)).v_samp_factor = 1;
+                (*cinfo.comp_info.offset(2)).h_samp_factor = 1;
+                (*cinfo.comp_info.offset(2)).v_samp_factor = 1;
+            }
         }
 
         // Huffman optimization
@@ -540,6 +551,12 @@ impl CMozjpeg {
         use mozjpeg_sys::*;
         use std::ptr;
 
+        if self.color_space == JpegColorSpace::Rgb {
+            return Err(Error::UnsupportedFeature(
+                "planar input is YCbCr; JpegColorSpace::Rgb needs RGB input",
+            ));
+        }
+
         // Calculate expected plane sizes based on subsampling
         let (h_factor, v_factor) = match self.subsampling {
             Subsampling::S444 => (1, 1),
@@ -797,6 +814,61 @@ mod tests {
         assert!(jpeg.len() > 100);
         assert_eq!(&jpeg[0..2], &[0xFF, 0xD8]);
         assert_eq!(&jpeg[jpeg.len() - 2..], &[0xFF, 0xD9]);
+    }
+
+    /// `Subsampling::Gray` with RGB input: C converts RGB -> Y itself. This
+    /// used to declare a 1-component input fed 3-byte rows, which libjpeg
+    /// rejects by exiting the process.
+    #[test]
+    fn test_c_mozjpeg_gray_subsampling_rgb_input() {
+        use crate::{PixelDensity, Subsampling, TrellisConfig};
+
+        let pixels: Vec<u8> = (0..48 * 40 * 3).map(|i| (i * 7 % 251) as u8).collect();
+        // No trellis/deringing: settings where Rust and C are byte-exact.
+        let encoder = Encoder::new(Preset::BaselineBalanced)
+            .quality(85)
+            .trellis(TrellisConfig::disabled())
+            .overshoot_deringing(false)
+            .pixel_density(PixelDensity::aspect_ratio(1, 1))
+            .subsampling(Subsampling::Gray);
+        let c_jpeg = encoder
+            .to_c_mozjpeg()
+            .encode_rgb(&pixels, 48, 40)
+            .expect("C encoding failed");
+        let rust_jpeg = encoder.encode_rgb(&pixels, 48, 40).unwrap();
+        assert_eq!(rust_jpeg, c_jpeg);
+    }
+
+    /// `JpegColorSpace::Rgb` maps to `jpeg_set_colorspace(JCS_RGB)`.
+    #[test]
+    fn test_c_mozjpeg_rgb_color_space() {
+        use crate::{Error, JpegColorSpace, Subsampling, TrellisConfig};
+
+        let pixels: Vec<u8> = (0..48 * 40 * 3).map(|i| (i * 7 % 251) as u8).collect();
+        for progressive in [false, true] {
+            let encoder = Encoder::new(Preset::BaselineBalanced)
+                .quality(85)
+                .progressive(progressive)
+                .trellis(TrellisConfig::disabled())
+                .overshoot_deringing(false)
+                .color_space(JpegColorSpace::Rgb);
+            let c_jpeg = encoder
+                .to_c_mozjpeg()
+                .encode_rgb(&pixels, 48, 40)
+                .expect("C encoding failed");
+            let rust_jpeg = encoder.encode_rgb(&pixels, 48, 40).unwrap();
+            assert_eq!(rust_jpeg, c_jpeg, "progressive={progressive}");
+        }
+
+        let rgb = Encoder::default().color_space(JpegColorSpace::Rgb);
+        let gray = rgb.clone().subsampling(Subsampling::Gray).to_c_mozjpeg();
+        assert!(gray.encode_rgb(&pixels, 48, 40).is_err());
+        let plane = vec![128u8; 16 * 16];
+        assert!(matches!(
+            rgb.to_c_mozjpeg()
+                .encode_ycbcr_planar(&plane, &plane, &plane, 16, 16),
+            Err(Error::UnsupportedFeature(_))
+        ));
     }
 
     #[test]
